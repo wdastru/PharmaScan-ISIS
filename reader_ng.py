@@ -2,6 +2,7 @@ import nmrglue as ng
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
+from matplotlib.widgets import CheckButtons 
 import json
 import re
 
@@ -57,16 +58,26 @@ def show_phase(data, p0, p1):
     plt.plot(np.real(phased))
     plt.show()
 
+def ppm_to_index(uc, user_ppm):
+    """
+    Given a UC object and a ppm value, return the closest index.
+    """
+    ppm_axis = uc.ppm_scale()  # full ppm axis
+    index = int(np.abs(ppm_axis - user_ppm).argmin())
+    return index
+
 base = Path(".")
 patient = "20251209_124252_31P_localizzato_muscolo_topo5F_Rotenone_cinetica_5uM_1_48"
-expt = "13"
+expt = "11"
 
 path = base / patient / expt
 method = path / "method"
 sat_trans_fl = parameter_extract(method, "PVM_SatTransFL")
 
 dic, data = ng.bruker.read(path)
-
+udic = ng.bruker.guess_udic(dic, data)
+uc = ng.fileio.bruker.fileiobase.uc_from_udic(udic, dim=1)
+ppm_axis = uc.ppm_scale()   # in ppm (requires spectrometer frequency metadata)
 n_exp = dic["acqu2s"]["TD"]
 
 with open("parameters.txt", "w", encoding="utf-8") as f:
@@ -75,31 +86,66 @@ with open("parameters.txt", "w", encoding="utf-8") as f:
     except Exception as e:
         print(f"🚫 Failed to save parameters.txt: {e}")
 
-plt.figure(figsize=(12, 6))
+fig, ax = plt.subplots(figsize=(12, 6))
+lines = []
+labels = []
+
+#plt.figure(figsize=(12, 6))
 
 loaded = {}     # {proc: np.ndarray}
 
 for i in range(n_exp):
     fid = data[i, :]
     fid = ng.bruker.remove_digital_filter(dic, data=fid)
+    fid_zf = ng.proc_base.zf_size(fid, size=2048)
     lb = 0.005  # line broadening in Hz
-    fid_apod = ng.proc_base.em(fid, lb=lb)
+    fid_apod = ng.proc_base.em(fid_zf, lb=lb)
     spectrum = ng.proc_base.fft(fid_apod)
     spectrum_phased = ng.proc_autophase.autops(spectrum, fn="acme")
+    spectrum_phased = spectrum_phased[::-1]   # inverts the spectrum
     loaded[i] = spectrum_phased
-    plt.plot(np.real(spectrum_phased), label=f"{sat_trans_fl[i]}", alpha=0.7)
+    
+    line, = ax.plot(
+        ppm_axis,
+        np.real(spectrum_phased),
+        label=f"{sat_trans_fl[i]}",
+        alpha=0.7,
+        linewidth=1.2,
+    )
+    lines.append(line)
+    labels.append(line.get_label())
+    #plt.plot(ppm_axis, np.real(spectrum_phased), label=f"{sat_trans_fl[i]}", alpha=0.7)
 
-plt.xlabel("Points")
+plt.gca().invert_xaxis()
+plt.xlabel("ppm")
 plt.ylabel("Intensity")
 plt.grid(True, alpha=0.3)
-plt.legend(ncol=3, fontsize=9)
+#plt.legend(loc="upper left", bbox_to_anchor=(1.05, 1), ncol=2, fontsize=9).set_loc()
 plt.tight_layout()
+
+
+rax = fig.add_axes([0.82, 0.15, 0.16, 0.70])  # adjust as needed
+visibility = [l.get_visible() for l in lines]
+checks = CheckButtons(rax, labels, visibility)
+
+def on_check(label):
+    idx = labels.index(label)
+    lines[idx].set_visible(not lines[idx].get_visible())
+    fig.canvas.draw_idle()
+
+checks.on_clicked(on_check)
+
+fig.tight_layout(rect=[0, 0, 0.80, 1])  # leave room for the checkbox panel
+
 plt.show(block=False)
 
 # Ask user for min and max index
 try:
-    start_idx = int(input("Enter the minimum index (start): "))
-    end_idx = int(input("Enter the maximum index (end): "))
+    start_ppm = int(input("Enter the minimum ppm (start): "))
+    end_ppm = int(input("Enter the maximum ppm (end): "))
+    
+    end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
+    start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
 
     if start_idx < 0 or end_idx <= start_idx:
         raise ValueError("Invalid range: end must be greater than start and both non-negative.")
@@ -114,7 +160,7 @@ for p, a in loaded.items():
     max_vals[p], max_indexes[p] = findMaxima(loaded[p], start=start_idx, end=end_idx)
 
 for p, max_val in max_vals.items():
-    print(f"proc {p}: max = {max_val} at index {max_indexes[p]}")
+    print(f"freq {sat_trans_fl[p]}: max at ppm {uc.ppm(max_indexes[p])}, index {max_indexes[p]}")
 
 if len(sat_trans_fl) == len(max_vals):
 
