@@ -2,7 +2,7 @@ import nmrglue as ng
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
-from matplotlib.widgets import CheckButtons 
+from matplotlib.widgets import CheckButtons, Button
 import json
 import re
 
@@ -66,6 +66,23 @@ def ppm_to_index(uc, user_ppm):
     index = int(np.abs(ppm_axis - user_ppm).argmin())
     return index
 
+def on_check(label):
+    idx = labels.index(label)
+    lines[idx].set_visible(not lines[idx].get_visible())
+    fig.canvas.draw_idle()
+    
+def check_all(event):
+    for i, l in enumerate(lines):
+        if not l.get_visible():      # only toggle if needed
+            checks.set_active(i)     # updates both checkbox + visibility
+    plt.draw()
+
+def uncheck_all(event):
+    for i, l in enumerate(lines):
+        if l.get_visible():          # only toggle if needed
+            checks.set_active(i)
+    plt.draw()
+
 base = Path(".")
 patient = "20251209_124252_31P_localizzato_muscolo_topo5F_Rotenone_cinetica_5uM_1_48"
 expt = "11"
@@ -90,8 +107,6 @@ fig, ax = plt.subplots(figsize=(12, 6))
 lines = []
 labels = []
 
-#plt.figure(figsize=(12, 6))
-
 loaded = {}     # {proc: np.ndarray}
 
 for i in range(n_exp):
@@ -108,32 +123,33 @@ for i in range(n_exp):
     line, = ax.plot(
         ppm_axis,
         np.real(spectrum_phased),
-        label=f"{sat_trans_fl[i]}",
+        label=f"{sat_trans_fl[i]:.2f}",
         alpha=0.7,
         linewidth=1.2,
     )
     lines.append(line)
     labels.append(line.get_label())
-    #plt.plot(ppm_axis, np.real(spectrum_phased), label=f"{sat_trans_fl[i]}", alpha=0.7)
 
 plt.gca().invert_xaxis()
 plt.xlabel("ppm")
 plt.ylabel("Intensity")
 plt.grid(True, alpha=0.3)
-#plt.legend(loc="upper left", bbox_to_anchor=(1.05, 1), ncol=2, fontsize=9).set_loc()
 plt.tight_layout()
 
-
-rax = fig.add_axes([0.82, 0.15, 0.16, 0.70])  # adjust as needed
+rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])  # adjust as needed
 visibility = [l.get_visible() for l in lines]
 checks = CheckButtons(rax, labels, visibility)
-
-def on_check(label):
-    idx = labels.index(label)
-    lines[idx].set_visible(not lines[idx].get_visible())
-    fig.canvas.draw_idle()
-
 checks.on_clicked(on_check)
+
+# --- Add "Check all" button ---
+ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
+btn_all = Button(ax_all, "Check all")
+btn_all.on_clicked(check_all)
+
+# --- Add "Uncheck all" button ---
+ax_none = fig.add_axes([0.90, 0.90, 0.09, 0.05])
+btn_none = Button(ax_none, "Uncheck all")
+btn_none.on_clicked(uncheck_all)
 
 fig.tight_layout(rect=[0, 0, 0.80, 1])  # leave room for the checkbox panel
 
