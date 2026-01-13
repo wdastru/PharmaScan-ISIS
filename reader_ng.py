@@ -112,7 +112,6 @@ with open("parameters.txt", "w", encoding="utf-8") as f:
 fig, ax = plt.subplots(figsize=(12, 6))
 lines = []
 labels = []
-
 loaded = {}     # {proc: np.ndarray}
 
 for i in range(n_exp):
@@ -163,9 +162,9 @@ plt.show(block=False)
 
 # Ask user for min and max index
 try:
-    start_ppm = int(input("Enter the minimum ppm (start): "))
-    end_ppm = int(input("Enter the maximum ppm (end): "))
-    
+    start_ppm = float(input("Enter the minimum ppm (start): "))
+    end_ppm = float(input("Enter the maximum ppm (end): "))
+
     end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
     start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
 
