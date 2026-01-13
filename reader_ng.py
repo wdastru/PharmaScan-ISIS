@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons, Button
 import json
 import re
+import tkinter as tk
+from tkinter import filedialog
 
 def findMaxima(arr, start=None, end=None):
     """
@@ -83,9 +85,13 @@ def uncheck_all(event):
             checks.set_active(i)
     plt.draw()
 
-base = Path(".")
-patient = "20251209_124252_31P_localizzato_muscolo_topo5F_Rotenone_cinetica_5uM_1_48"
-expt = "11"
+root = tk.Tk()
+root.withdraw()  # hide the main window
+full = Path(filedialog.askdirectory(title="Select a folder"))
+
+base = full.parent.parent
+patient = full.parent.name
+expt = full.name
 
 path = base / patient / expt
 method = path / "method"
