@@ -96,12 +96,15 @@ expt = full.name
 path = base / patient / expt
 method = path / "method"
 sat_trans_fl = parameter_extract(method, "PVM_SatTransFL")
+frq_work_offset_hz = parameter_extract(method, "PVM_FrqWorkOffset")
 
 dic, data = ng.bruker.read(path)
 udic = ng.bruker.guess_udic(dic, data)
 uc = ng.fileio.bruker.fileiobase.uc_from_udic(udic, dim=1)
 ppm_axis = uc.ppm_scale()   # in ppm (requires spectrometer frequency metadata)
+hz_axis = uc.hz_scale()   # in Hz
 n_exp = dic["acqu2s"]["TD"]
+bf1 = dic["acqus"]["BF1"]
 
 with open("parameters.txt", "w", encoding="utf-8") as f:
     try:
@@ -132,6 +135,7 @@ for i in range(n_exp):
         alpha=0.7,
         linewidth=1.2,
     )
+    
     lines.append(line)
     labels.append(line.get_label())
 
@@ -177,13 +181,16 @@ except ValueError as e:
 
 max_vals = {}
 max_indexes = {}
+max_freqs = {}
 for p, a in loaded.items():
     max_vals[p], max_indexes[p] = findMaxima(loaded[p], start=start_idx, end=end_idx)
-
-for p, max_val in max_vals.items():
-    print(f"freq {sat_trans_fl[p]}: max at ppm {uc.ppm(max_indexes[p])}, index {max_indexes[p]}")
-
+    
 if len(sat_trans_fl) == len(max_vals):
+
+    for p, max_val in max_vals.items():
+        print(f"sat_trans_fl[{p}] {sat_trans_fl[p]}: max at ppm {uc.ppm(max_indexes[p])} and freq {uc.hz(max_indexes[p])}")
+        delta = frq_work_offset_hz[0] - uc.hz(max_indexes[p])
+        sat_trans_fl[p] += delta
 
     plt.figure(figsize=(8, 5))
     plt.plot(list(sat_trans_fl), list(max_vals.values()), marker='o', linestyle='None', color='b')
