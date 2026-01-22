@@ -106,11 +106,11 @@ hz_axis = uc.hz_scale()   # in Hz
 n_exp = dic["acqu2s"]["TD"]
 bf1 = dic["acqus"]["BF1"]
 
-with open("parameters.txt", "w", encoding="utf-8") as f:
-    try:
-        json.dump(dic, f, indent=4)
-    except Exception as e:
-        print(f"🚫 Failed to save parameters.txt: {e}")
+#with open("parameters.txt", "w", encoding="utf-8") as f:
+#    try:
+#        json.dump(dic, f, indent=4)
+#    except Exception as e:
+#        print(f"🚫 Failed to save parameters.txt: {e}")
 
 fig, ax = plt.subplots(figsize=(12, 6))
 lines = []
@@ -181,21 +181,25 @@ except ValueError as e:
 
 max_vals = {}
 max_indexes = {}
-max_freqs = {}
+sat_trans_f1_ppm: list[float] = [0.0] * len(sat_trans_fl)
+
 for p, a in loaded.items():
     max_vals[p], max_indexes[p] = findMaxima(loaded[p], start=start_idx, end=end_idx)
     
 if len(sat_trans_fl) == len(max_vals):
 
     for p, max_val in max_vals.items():
-        print(f"sat_trans_fl[{p}] {sat_trans_fl[p]}: max at ppm {uc.ppm(max_indexes[p])} and freq {uc.hz(max_indexes[p])}")
+        #print(f"sat_trans_fl[{p}] {sat_trans_fl[p]}: max at ppm {uc.ppm(max_indexes[p])} and freq {uc.hz(max_indexes[p])}")
         delta = frq_work_offset_hz[0] - uc.hz(max_indexes[p])
         sat_trans_fl[p] += delta
-
+        sat_trans_f1_ppm[p] = sat_trans_fl[p] / bf1
+        print(f"{sat_trans_f1_ppm[p]}\t{list(max_vals.values())[p].real}")
+        
     plt.figure(figsize=(8, 5))
-    plt.plot(list(sat_trans_fl), list(max_vals.values()), marker='o', linestyle='None', color='b')
-    plt.title("Max Values vs Saturation Frequencies")
-    plt.xlabel("Saturation Frequencies")
+    plt.plot(list(sat_trans_f1_ppm), list(max_vals.values()), marker='o', linestyle='None', color='b')
+    plt.gca().invert_xaxis()
+    plt.title("Max Values vs Saturation ppm")
+    plt.xlabel("Saturation ppm")
     plt.ylabel("Max Value")
     plt.grid(True)
     plt.show(block=True)
