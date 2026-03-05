@@ -199,13 +199,7 @@ def uncheck_all(event: Any) -> None:
             checks.set_active(i)
     plt.draw()
 
-
-# ----------------------------------------------------------------------
-# MAIN
-# ----------------------------------------------------------------------
-
-if __name__ == "__main__":
-
+def main():
     # ---- Select experiment folder ----
     root = tk.Tk()
     root.withdraw()                     # hide the main Tk window
@@ -343,3 +337,10 @@ if __name__ == "__main__":
         plt.show(block=True)
     else:
         print("Number of saturation frequencies does not match number of processed series; skipping plot.")
+
+# ----------------------------------------------------------------------
+# MAIN
+# ----------------------------------------------------------------------
+
+if __name__ == "__main__":
+    main()    
