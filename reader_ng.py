@@ -189,7 +189,7 @@ def main() -> None:
     # ---- Extract parameters from method file ----
     sat_trans_fl = parameter_extract(method, "PVM_SatTransFL")   # Hz
     frq_work_offset_hz = parameter_extract(method, "PVM_FrqWorkOffset")  # Hz
-    
+
     # ---- Read Bruker data ----
     dic, data = ng.bruker.read(full)
     udic = ng.bruker.guess_udic(dic, data)
@@ -205,14 +205,18 @@ def main() -> None:
     loaded: Dict[int, np.ndarray] = {}
 
     for i in range(n_exp):
-        # ... processing code as before ...
+        # ---- Select experiment folder
         fid = data[i, :]
+
+        # ---- Remove Bruker digital filter
         fid = ng.bruker.remove_digital_filter(dic, data=fid)
 
         # Zero-fill to 2048 points
         fid_zf = ng.proc_base.zf_size(fid, size=2048)
-        # Line broadening (exponential) of 0.005 Hz
+
+        # Line broadening (exponential)
         fid_apod = ng.proc_base.em(fid_zf, lb=0.005)
+        
         # Fourier transform
         spectrum = ng.proc_base.fft(fid_apod)
 
