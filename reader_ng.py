@@ -199,6 +199,7 @@ def plot_with_spline(x: Union[List[float], np.ndarray],
     Notes
     -----
     If `scipy.interpolate.UnivariateSpline` is available, a spline fit is attempted.
+    If it fails or scipy is not installed, a quadratic polynomial fit is used as fallback.
     The fitted curve is displayed together with the original data points.
     """
     # Convert to numpy arrays and sort by x
