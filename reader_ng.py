@@ -166,82 +166,53 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
     index = int(np.abs(ppm_axis - user_ppm).argmin())
     return index
 
-
-# ----------------------------------------------------------------------
-# Callbacks for interactive widgets
-# ----------------------------------------------------------------------
-
-def on_check(label: str) -> None:
+def main() -> None:
     """
-    Callback for the CheckButtons: show/hide the corresponding line.
-    """
-    idx = labels.index(label)
-    lines[idx].set_visible(not lines[idx].get_visible())
-    fig.canvas.draw_idle()
+    Main routine of the script.
 
-
-def check_all(event: Any) -> None:
+    - Prompts the user to select a Bruker experiment folder.
+    - Reads the 'method' file to obtain saturation frequencies and offset.
+    - Loads and processes all FIDs (digital filter removal, zero‑filling,
+      line broadening, FFT, automatic phase correction, axis inversion).
+    - Displays all spectra with an interactive checkbox panel.
+    - Asks the user for a ppm range of interest.
+    - Finds the maximum intensity within that range for each spectrum.
+    - Corrects the saturation frequencies using the frequency offset.
+    - Plots the maximum values against the corrected saturation ppm.
     """
-    Callback for the "Check all" button: make all lines visible.
-    """
-    for i, l in enumerate(lines):
-        if not l.get_visible():
-            checks.set_active(i)       # updates checkbox and visibility
-    plt.draw()
-
-
-def uncheck_all(event: Any) -> None:
-    """
-    Callback for the "Uncheck all" button: hide all lines.
-    """
-    for i, l in enumerate(lines):
-        if l.get_visible():
-            checks.set_active(i)
-    plt.draw()
-
-def main():
     # ---- Select experiment folder ----
     root = tk.Tk()
     root.withdraw()                     # hide the main Tk window
     full = Path(filedialog.askdirectory(title="Select a folder"))
-    # Note: the following lines reconstruct a path that is not used further;
-    #       the actual path is 'full'.
-    base = full.parent.parent
-    patient = full.parent.name
-    expt = full.name
-    path = base / patient / expt         # actually path == full
-    method = path / "method"
+    method = full / "method"
 
     # ---- Extract parameters from method file ----
     sat_trans_fl = parameter_extract(method, "PVM_SatTransFL")   # Hz
     frq_work_offset_hz = parameter_extract(method, "PVM_FrqWorkOffset")  # Hz
+    
     # ---- Read Bruker data ----
-    dic, data = ng.bruker.read(path)           # parameter dictionary + FID
-    udic = ng.bruker.guess_udic(dic, data)     # unit dictionary
-    uc = ng.fileio.bruker.fileiobase.uc_from_udic(udic, dim=1)  # for conversions
-    ppm_axis = uc.ppm_scale()                  # ppm axis
-    hz_axis = uc.hz_scale()   # in Hz
-    n_exp = dic["acqu2s"]["TD"]                 # number of experiments (rows)
-    bf1 = dic["acqus"]["BF1"]                   # transmitter frequency in MHz
+    dic, data = ng.bruker.read(full)
+    udic = ng.bruker.guess_udic(dic, data)
+    uc = ng.fileio.bruker.fileiobase.uc_from_udic(udic, dim=1)
+    ppm_axis = uc.ppm_scale()
+    n_exp = dic["acqu2s"]["TD"]
+    bf1 = dic["acqus"]["BF1"]
 
-    # ---- Process spectra ----
+    # ---- Process spectra and create plot ----
     fig, ax = plt.subplots(figsize=(12, 6))
     lines: List[plt.Line2D] = []
     labels: List[str] = []
-    loaded: Dict[int, np.ndarray] = {}          # experiment index -> processed spectrum
+    loaded: Dict[int, np.ndarray] = {}
 
     for i in range(n_exp):
-        # Extract i-th FID
+        # ... processing code as before ...
         fid = data[i, :]
-        # Remove digital filter (if present)
         fid = ng.bruker.remove_digital_filter(dic, data=fid)
 
         # Zero-fill to 2048 points
         fid_zf = ng.proc_base.zf_size(fid, size=2048)
         # Line broadening (exponential) of 0.005 Hz
-        lb = 0.005
-        fid_apod = ng.proc_base.em(fid_zf, lb=lb)
-
+        fid_apod = ng.proc_base.em(fid_zf, lb=0.005)
         # Fourier transform
         spectrum = ng.proc_base.fft(fid_apod)
 
@@ -267,7 +238,27 @@ def main():
     ax.set_xlabel("ppm")
     ax.set_ylabel("Intensity")
     ax.grid(True, alpha=0.3)
-    plt.tight_layout()
+
+    # ----------------------------------------------------------------------
+    # Callbacks for interactive widgets
+    # to capture lines, labels, fig, checks
+    # ----------------------------------------------------------------------
+    def on_check(label: str) -> None:
+        idx = labels.index(label)
+        lines[idx].set_visible(not lines[idx].get_visible())
+        fig.canvas.draw_idle()
+
+    def check_all(event: Any) -> None:
+        for i, l in enumerate(lines):
+            if not l.get_visible():
+                checks.set_active(i)
+        plt.draw()
+
+    def uncheck_all(event: Any) -> None:
+        for i, l in enumerate(lines):
+            if l.get_visible():
+                checks.set_active(i)
+        plt.draw()
 
     # ---- CheckButtons panel ----
     rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])   # [left, bottom, width, height]
@@ -304,13 +295,12 @@ def main():
         print(f"Selected range: [{start_idx}, {end_idx}]")  # end-exclusive
     except ValueError as e:
         print(f"Error: {e}")
-        exit(1)
+        return
 
     # ---- Find maxima in the selected range ----
     max_vals: Dict[int, float] = {}
     max_indexes: Dict[int, int] = {}
-
-    for p, a in loaded.items():
+    for p in loaded:
         val, idx = findMaxima(loaded[p], start=start_idx, end=end_idx)
         max_vals[p] = val
         max_indexes[p] = idx
@@ -318,9 +308,8 @@ def main():
     # ---- Correct saturation frequencies and final plot ----
     if len(sat_trans_fl) == len(max_vals):
         sat_trans_f1_ppm: List[float] = [0.0] * len(sat_trans_fl)
-
-        for p in max_vals.keys():
-            # Calculate the offset from the reference
+        for p in max_vals:
+            # Calculate the offset from the reference            
             delta = frq_work_offset_hz[0] - uc.hz(max_indexes[p])
             sat_trans_fl[p] += delta
             sat_trans_f1_ppm[p] = sat_trans_fl[p] / bf1   # convert to ppm
@@ -328,7 +317,8 @@ def main():
 
         # Create a new figure with maxima vs saturation ppm
         plt.figure(figsize=(8, 5))
-        plt.plot(sat_trans_f1_ppm, list(max_vals.values()), marker='o', linestyle='None', color='b')
+        plt.plot(sat_trans_f1_ppm, list(max_vals.values()),
+                 marker='o', linestyle='None', color='b')
         plt.gca().invert_xaxis()
         plt.title("Max Values vs Saturation ppm")
         plt.xlabel("Saturation ppm")
