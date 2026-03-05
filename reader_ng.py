@@ -106,12 +106,6 @@ hz_axis = uc.hz_scale()   # in Hz
 n_exp = dic["acqu2s"]["TD"]
 bf1 = dic["acqus"]["BF1"]
 
-#with open("parameters.txt", "w", encoding="utf-8") as f:
-#    try:
-#        json.dump(dic, f, indent=4)
-#    except Exception as e:
-#        print(f"🚫 Failed to save parameters.txt: {e}")
-
 fig, ax = plt.subplots(figsize=(12, 6))
 lines = []
 labels = []
