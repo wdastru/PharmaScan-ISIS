@@ -15,7 +15,8 @@ from matplotlib.widgets import CheckButtons, Button
 import re
 import tkinter as tk
 from tkinter import filedialog
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict, Any, Union
+from scipy.interpolate import UnivariateSpline
 
 # ----------------------------------------------------------------------
 # Utility functions
@@ -166,13 +167,98 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
     index = int(np.abs(ppm_axis - user_ppm).argmin())
     return index
 
+def plot_with_spline(x: Union[List[float], np.ndarray],
+                     y: Union[List[float], np.ndarray],
+                     smoothing: float = 0.0,
+                     title: str = "Max Values vs Saturation ppm",
+                     xlabel: str = "Saturation ppm",
+                     ylabel: str = "Max Value",
+                     invert_x: bool = True) -> None:
+    """
+    Plot data points and a spline fit (or polynomial fallback) through them.
+
+    Parameters
+    ----------
+    x : array-like
+        x-coordinates of the data points.
+    y : array-like
+        y-coordinates of the data points.
+    smoothing : float, default 0.0
+        Smoothing factor for the spline:
+        - 0.0 → exact interpolation (passes through all points)
+        - >0  → smoothing spline; larger values give a smoother curve.
+    title : str, optional
+        Title of the plot.
+    xlabel : str, optional
+        Label for the x-axis.
+    ylabel : str, optional
+        Label for the y-axis.
+    invert_x : bool, default True
+        If True, invert the x-axis (useful for ppm scales where high values are on the left).
+
+    Notes
+    -----
+    If `scipy.interpolate.UnivariateSpline` is available, a spline fit is attempted.
+    The fitted curve is displayed together with the original data points.
+    """
+    # Convert to numpy arrays and sort by x
+    x = np.asarray(x)
+    y = np.asarray(y)
+    sort_idx = np.argsort(x)
+    x_sorted = x[sort_idx]
+    y_sorted = y[sort_idx]
+
+    fit_successful = False
+    try:
+        spline = UnivariateSpline(x_sorted, y_sorted, s=smoothing)
+        fit_successful = True
+        # Generate smooth curve
+        x_fit = np.linspace(x_sorted.min(), x_sorted.max(), 200)
+        y_fit = spline(x_fit)
+        fit_label = f"Spline (s={smoothing})"
+    except ImportError:
+        print("scipy not available – using polynomial fallback.")
+    except Exception as e:
+        print(f"Spline fit failed: {e} – using polynomial fallback.")
+
+    if not fit_successful:
+        try:
+            # Quadratic polynomial fallback
+            coeffs = np.polyfit(x_sorted, y_sorted, 2)
+            poly = np.poly1d(coeffs)
+            x_fit = np.linspace(x_sorted.min(), x_sorted.max(), 200)
+            y_fit = poly(x_fit)
+            fit_label = "Polynomial (deg 2) fallback"
+        except Exception as e:
+            print(f"Polynomial fit also failed: {e}")
+            x_fit, y_fit = None, None
+            fit_label = None
+
+    # Create the plot
+    plt.figure(figsize=(8, 5))
+    plt.plot(x_sorted, y_sorted, 'o', color='b', label='Data')
+
+    if fit_successful or (x_fit is not None and y_fit is not None):
+        plt.plot(x_fit, y_fit, 'r-', label=fit_label)
+
+    if invert_x:
+        plt.gca().invert_xaxis()
+
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.grid(True)
+    if fit_successful or (x_fit is not None and y_fit is not None):
+        plt.legend()
+    plt.show(block=True)
+
 def main() -> None:
     """
     Main routine of the script.
 
     - Prompts the user to select a Bruker experiment folder.
     - Reads the 'method' file to obtain saturation frequencies and offset.
-    - Loads and processes all FIDs (digital filter removal, zero‑filling,
+    - Loads and processes all FIDs (digital filter removal, zero-filling,
       line broadening, FFT, automatic phase correction, axis inversion).
     - Displays all spectra with an interactive checkbox panel.
     - Asks the user for a ppm range of interest.
@@ -320,55 +406,18 @@ def main() -> None:
             sat_trans_f1_ppm[p] = sat_trans_fl[p] / bf1   # convert to ppm
             print(f"{sat_trans_f1_ppm[p]}\t{max_vals[p]}")
 
-        # Prepare data for fitting
-        x_vals = np.array(sat_trans_f1_ppm)
-        y_vals = np.array(list(max_vals.values()))
-
-        # Sort by x (important for plotting the curve)
-        sort_idx = np.argsort(x_vals)
-        x_sorted = x_vals[sort_idx]
-        y_sorted = y_vals[sort_idx]
-
-        # ---- Attempt spline interpolation / smoothing (requires scipy) ----
-        fit_successful = False
-        try:
-            from scipy.interpolate import UnivariateSpline
-
-            # ---------- ADJUST SMOOTHING HERE ----------
-            # smoothing = 0   -> exact interpolation (passes through all points)
-            # smoothing > 0   -> smoothing spline; larger value = smoother curve
-            smoothing = 0.0   # <-- change this value to tune smoothness
-            # -------------------------------------------
-
-            spline = UnivariateSpline(x_sorted, y_sorted, s=smoothing)
-            fit_successful = True
-
-            # Generate smooth curve for plotting
-            x_fit = np.linspace(x_sorted.min(), x_sorted.max(), 200)
-            y_fit = spline(x_fit)
-
-            print(f"\nSpline fit (smoothing factor = {smoothing}) completed.")
-
-        except ImportError:
-            print("\nscipy not installed – cannot perform spline fit.")
-        except Exception as e:
-            print(f"\nSpline fit failed: {e}")
-
-        # ---- Final plot with data and fitted curve ----
-        plt.figure(figsize=(8, 5))
-        plt.plot(x_sorted, y_sorted, 'o', color='b', label='Data')
-
-        if fit_successful or ('y_fit' in locals() and y_fit is not None):
-            plt.plot(x_fit, y_fit, 'r-', label='Spline')
-
-        plt.gca().invert_xaxis()
-        plt.title("Max Values vs Saturation ppm")
-        plt.xlabel("Saturation ppm")
-        plt.ylabel("Max Value")
-        plt.grid(True)
-        if fit_successful or ('y_fit' in locals() and y_fit is not None):
-            plt.legend()
-        plt.show(block=True)
+        # ---- Call the new plotting function ----
+        # You can adjust the smoothing factor here:
+        smoothing_factor = 0.0   # <-- change this to tune smoothness
+        plot_with_spline(
+            x=sat_trans_f1_ppm,
+            y=list(max_vals.values()),
+            smoothing=smoothing_factor,
+            title="Max Values vs Saturation ppm",
+            xlabel="Saturation ppm",
+            ylabel="Max Value",
+            invert_x=True
+        )
 
     else:
         print("Number of saturation frequencies does not match number of processed series; skipping plot.")
