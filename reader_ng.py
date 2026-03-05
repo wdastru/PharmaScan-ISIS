@@ -167,6 +167,7 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
     index = int(np.abs(ppm_axis - user_ppm).argmin())
     return index
 
+
 def plot_with_spline(x: Union[List[float], np.ndarray],
                      y: Union[List[float], np.ndarray],
                      smoothing: float = 0.0,
