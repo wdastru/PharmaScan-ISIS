@@ -167,6 +167,7 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
     index = int(np.abs(ppm_axis - user_ppm).argmin())
     return index
 
+
 def plot_with_spline(x: Union[List[float], np.ndarray],
                      y: Union[List[float], np.ndarray],
                      smoothing: float = 0.0,
@@ -335,18 +336,18 @@ def main() -> None:
     # Callbacks for interactive widgets
     # to capture lines, labels, fig, checks
     # ----------------------------------------------------------------------
-    def on_check(label: str) -> None:
+    def _on_check(label: str) -> None:
         idx = labels.index(label)
         lines[idx].set_visible(not lines[idx].get_visible())
         fig.canvas.draw_idle()
 
-    def check_all(event: Any) -> None:
+    def _check_all(event: Any) -> None:
         for i, l in enumerate(lines):
             if not l.get_visible():
                 checks.set_active(i)
         plt.draw()
 
-    def uncheck_all(event: Any) -> None:
+    def _uncheck_all(event: Any) -> None:
         for i, l in enumerate(lines):
             if l.get_visible():
                 checks.set_active(i)
@@ -356,17 +357,17 @@ def main() -> None:
     rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])   # [left, bottom, width, height]
     visibility = [l.get_visible() for l in lines]
     checks = CheckButtons(rax, labels, visibility)
-    checks.on_clicked(on_check)
+    checks.on_clicked(_on_check)
 
     # "Check all" button
     ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
     btn_all = Button(ax_all, "Check all")
-    btn_all.on_clicked(check_all)
+    btn_all.on_clicked(_check_all)
 
     # "Uncheck all" button
     ax_none = fig.add_axes([0.90, 0.90, 0.09, 0.05])
     btn_none = Button(ax_none, "Uncheck all")
-    btn_none.on_clicked(uncheck_all)
+    btn_none.on_clicked(_uncheck_all)
 
     fig.tight_layout(rect=[0, 0, 0.80, 1])       # leave space on the right for widgets
 
