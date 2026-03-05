@@ -237,7 +237,7 @@ def main() -> None:
         )
         lines.append(line)
         labels.append(line.get_label())
-        
+
     # Main plot settings
     ax.invert_xaxis()                           # decreasing ppm from left to right
     ax.set_xlabel("ppm")
@@ -320,16 +320,56 @@ def main() -> None:
             sat_trans_f1_ppm[p] = sat_trans_fl[p] / bf1   # convert to ppm
             print(f"{sat_trans_f1_ppm[p]}\t{max_vals[p]}")
 
-        # Create a new figure with maxima vs saturation ppm
+        # Prepare data for fitting
+        x_vals = np.array(sat_trans_f1_ppm)
+        y_vals = np.array(list(max_vals.values()))
+
+        # Sort by x (important for plotting the curve)
+        sort_idx = np.argsort(x_vals)
+        x_sorted = x_vals[sort_idx]
+        y_sorted = y_vals[sort_idx]
+
+        # ---- Attempt spline interpolation / smoothing (requires scipy) ----
+        fit_successful = False
+        try:
+            from scipy.interpolate import UnivariateSpline
+
+            # ---------- ADJUST SMOOTHING HERE ----------
+            # smoothing = 0   -> exact interpolation (passes through all points)
+            # smoothing > 0   -> smoothing spline; larger value = smoother curve
+            smoothing = 0.0   # <-- change this value to tune smoothness
+            # -------------------------------------------
+
+            spline = UnivariateSpline(x_sorted, y_sorted, s=smoothing)
+            fit_successful = True
+
+            # Generate smooth curve for plotting
+            x_fit = np.linspace(x_sorted.min(), x_sorted.max(), 200)
+            y_fit = spline(x_fit)
+
+            print(f"\nSpline fit (smoothing factor = {smoothing}) completed.")
+
+        except ImportError:
+            print("\nscipy not installed – cannot perform spline fit.")
+        except Exception as e:
+            print(f"\nSpline fit failed: {e}")
+
+        # ---- Final plot with data and fitted curve ----
         plt.figure(figsize=(8, 5))
-        plt.plot(sat_trans_f1_ppm, list(max_vals.values()),
-                 marker='o', linestyle='None', color='b')
+        plt.plot(x_sorted, y_sorted, 'o', color='b', label='Data')
+
+        if fit_successful or ('y_fit' in locals() and y_fit is not None):
+            plt.plot(x_fit, y_fit, 'r-', label='Spline')
+
         plt.gca().invert_xaxis()
         plt.title("Max Values vs Saturation ppm")
         plt.xlabel("Saturation ppm")
         plt.ylabel("Max Value")
         plt.grid(True)
+        if fit_successful or ('y_fit' in locals() and y_fit is not None):
+            plt.legend()
         plt.show(block=True)
+
     else:
         print("Number of saturation frequencies does not match number of processed series; skipping plot.")
 
