@@ -167,6 +167,7 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
     index = int(np.abs(ppm_axis - user_ppm).argmin())
     return index
 
+
 def plot_with_spline(x: Union[List[float], np.ndarray],
                      y: Union[List[float], np.ndarray],
                      smoothing: float = 0.0,
@@ -199,6 +200,7 @@ def plot_with_spline(x: Union[List[float], np.ndarray],
     Notes
     -----
     If `scipy.interpolate.UnivariateSpline` is available, a spline fit is attempted.
+    If it fails or scipy is not installed, a quadratic polynomial fit is used as fallback.
     The fitted curve is displayed together with the original data points.
     """
     # Convert to numpy arrays and sort by x
