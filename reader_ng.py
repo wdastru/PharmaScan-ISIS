@@ -1,50 +1,104 @@
+"""
+reader_ng.py
+
+Processing of Bruker NMR data for saturation transfer experiments.
+Reads FIDs, applies corrections, displays spectra with interactive checkboxes,
+allows the user to select a ppm range, and calculates maxima to generate
+a saturation transfer curve.
+"""
+
 import nmrglue as ng
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons, Button
-import json
 import re
 import tkinter as tk
 from tkinter import filedialog
+from typing import List, Optional, Tuple, Dict, Any
 
-def findMaxima(arr, start=None, end=None):
+# ----------------------------------------------------------------------
+# Utility functions
+# ----------------------------------------------------------------------
+
+def findMaxima(arr: np.ndarray,
+               start: Optional[int] = None,
+               end: Optional[int] = None) -> Tuple[float, int]:
     """
-    Return the maximum value in arr[start:end].
-    If start/end are None, use the full array.
+    Find the maximum value and its index in a slice of the array.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        1D array to search.
+    start : Optional[int], default None
+        Start index (inclusive). If None, starts at 0.
+    end : Optional[int], default None
+        End index (exclusive). If None or > len(arr), uses len(arr).
+
+    Returns
+    -------
+    Tuple[float, int]
+        (maximum value, index of the maximum in the original array).
     """
     if start is None:
         start = 0
     if end is None or end > len(arr):
         end = len(arr)
-    
+
     sub_arr = arr[start:end]
     max_val = sub_arr.max()
-    max_idx = sub_arr.argmax() + start  # adjust index to original array
-    return max_val, max_idx
+    max_idx = sub_arr.argmax() + start
+    return float(max_val), int(max_idx)
 
-def parameter_extract(file_path: Path, PARAMETER: str) -> list[float]:
+
+def parameter_extract(file_path: Path, PARAMETER: str) -> List[float]:
+    """
+    Extract numerical values following a Bruker parameter header in a text file
+    (e.g., method).
+
+    Expected format:
+        ##$PARAMETER= ( N )
+        val1 val2 ... valN
+
+    Parameters
+    ----------
+    file_path : Path
+        Path to the file (e.g., method).
+    PARAMETER : str
+        Parameter name (e.g., "PVM_SatTransFL").
+
+    Returns
+    -------
+    List[float]
+        List of N numerical values.
+
+    Raises
+    ------
+    ValueError
+        If the header is not found or if fewer numbers than N are extracted.
+    """
     if not file_path.exists():
         print(f"{file_path} file not found. Aborting.")
         exit(1)
 
     text = file_path.read_text(encoding="utf-8", errors="ignore")
 
+    # Look for the parameter header: ##$PARAMETER= ( N )
     hdr_pattern = rf"##\${PARAMETER}=\(\s*(?P<N>\d+)\s*\)"
     hdr_match = re.search(hdr_pattern, text)
     if not hdr_match:
         raise ValueError(f"Parameter header '##${PARAMETER}=( N )' not found in {file_path} file.")
-    else:
-        N = int(hdr_match.group("N"))
-
+    N = int(hdr_match.group("N"))
     print(f"{PARAMETER} dimension: {N}")
 
-    start_pos = hdr_match.end() # position atfer the match
-    tail = text[start_pos:]     # the rest of the text after the match
+    # The rest of the text after the header
+    start_pos = hdr_match.end()
+    tail = text[start_pos:]
 
+    # Extract all numbers (integers or floats, including scientific notation)
     num_pattern = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
     vals = re.findall(num_pattern, tail)
-
     print(f"Found {len(vals)} numerical values after for {PARAMETER}")
 
     if len(vals) < N:
@@ -52,150 +106,240 @@ def parameter_extract(file_path: Path, PARAMETER: str) -> list[float]:
 
     return [float(v) for v in vals[:N]]
 
-def apply_phase(data, p0, p1):
+
+def apply_phase(data: np.ndarray, p0: float, p1: float) -> np.ndarray:
+    """
+    Apply zero-order and first-order phase correction to a complex spectrum.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Complex spectrum.
+    p0 : float
+        Zero-order phase (degrees).
+    p1 : float
+        First-order phase (degrees).
+
+    Returns
+    -------
+    np.ndarray
+        Phase-corrected spectrum (complex).
+    """
     return ng.proc_base.ps(data, p0=p0, p1=p1)
 
-def show_phase(data, p0, p1):
+
+def show_phase(data: np.ndarray, p0: float, p1: float) -> None:
+    """
+    Display a plot of the real part of the spectrum after phase correction.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Complex spectrum.
+    p0 : float
+        Zero-order phase (degrees).
+    p1 : float
+        First-order phase (degrees).
+    """
     phased = apply_phase(data, p0, p1)
     plt.plot(np.real(phased))
     plt.show()
 
-def ppm_to_index(uc, user_ppm):
+
+def ppm_to_index(uc: Any, user_ppm: float) -> int:
     """
-    Given a UC object and a ppm value, return the closest index.
+    Convert a ppm value to the nearest index on the frequency axis.
+
+    Parameters
+    ----------
+    uc : nmrglue unit conversion object
+        Obtained from uc_from_udic.
+    user_ppm : float
+        Desired ppm value.
+
+    Returns
+    -------
+    int
+        Corresponding index.
     """
-    ppm_axis = uc.ppm_scale()  # full ppm axis
+    ppm_axis = uc.ppm_scale()          # full ppm array
     index = int(np.abs(ppm_axis - user_ppm).argmin())
     return index
 
-def on_check(label):
+
+# ----------------------------------------------------------------------
+# Callbacks for interactive widgets
+# ----------------------------------------------------------------------
+
+def on_check(label: str) -> None:
+    """
+    Callback for the CheckButtons: show/hide the corresponding line.
+    """
     idx = labels.index(label)
     lines[idx].set_visible(not lines[idx].get_visible())
     fig.canvas.draw_idle()
-    
-def check_all(event):
+
+
+def check_all(event: Any) -> None:
+    """
+    Callback for the "Check all" button: make all lines visible.
+    """
     for i, l in enumerate(lines):
-        if not l.get_visible():      # only toggle if needed
-            checks.set_active(i)     # updates both checkbox + visibility
+        if not l.get_visible():
+            checks.set_active(i)       # updates checkbox and visibility
     plt.draw()
 
-def uncheck_all(event):
+
+def uncheck_all(event: Any) -> None:
+    """
+    Callback for the "Uncheck all" button: hide all lines.
+    """
     for i, l in enumerate(lines):
-        if l.get_visible():          # only toggle if needed
+        if l.get_visible():
             checks.set_active(i)
     plt.draw()
 
-root = tk.Tk()
-root.withdraw()  # hide the main window
-full = Path(filedialog.askdirectory(title="Select a folder"))
 
-base = full.parent.parent
-patient = full.parent.name
-expt = full.name
+# ----------------------------------------------------------------------
+# MAIN
+# ----------------------------------------------------------------------
 
-path = base / patient / expt
-method = path / "method"
-sat_trans_fl = parameter_extract(method, "PVM_SatTransFL")
-frq_work_offset_hz = parameter_extract(method, "PVM_FrqWorkOffset")
+if __name__ == "__main__":
 
-dic, data = ng.bruker.read(path)
-udic = ng.bruker.guess_udic(dic, data)
-uc = ng.fileio.bruker.fileiobase.uc_from_udic(udic, dim=1)
-ppm_axis = uc.ppm_scale()   # in ppm (requires spectrometer frequency metadata)
-hz_axis = uc.hz_scale()   # in Hz
-n_exp = dic["acqu2s"]["TD"]
-bf1 = dic["acqus"]["BF1"]
+    # ---- Select experiment folder ----
+    root = tk.Tk()
+    root.withdraw()                     # hide the main Tk window
+    full = Path(filedialog.askdirectory(title="Select a folder"))
+    # Note: the following lines reconstruct a path that is not used further;
+    #       the actual path is 'full'.
+    base = full.parent.parent
+    patient = full.parent.name
+    expt = full.name
+    path = base / patient / expt         # actually path == full
+    method = path / "method"
 
-fig, ax = plt.subplots(figsize=(12, 6))
-lines = []
-labels = []
-loaded = {}     # {proc: np.ndarray}
+    # ---- Extract parameters from method file ----
+    sat_trans_fl = parameter_extract(method, "PVM_SatTransFL")   # Hz
+    frq_work_offset_hz = parameter_extract(method, "PVM_FrqWorkOffset")  # Hz
+    # ---- Read Bruker data ----
+    dic, data = ng.bruker.read(path)           # parameter dictionary + FID
+    udic = ng.bruker.guess_udic(dic, data)     # unit dictionary
+    uc = ng.fileio.bruker.fileiobase.uc_from_udic(udic, dim=1)  # for conversions
+    ppm_axis = uc.ppm_scale()                  # ppm axis
+    hz_axis = uc.hz_scale()   # in Hz
+    n_exp = dic["acqu2s"]["TD"]                 # number of experiments (rows)
+    bf1 = dic["acqus"]["BF1"]                   # transmitter frequency in MHz
 
-for i in range(n_exp):
-    fid = data[i, :]
-    fid = ng.bruker.remove_digital_filter(dic, data=fid)
-    fid_zf = ng.proc_base.zf_size(fid, size=2048)
-    lb = 0.005  # line broadening in Hz
-    fid_apod = ng.proc_base.em(fid_zf, lb=lb)
-    spectrum = ng.proc_base.fft(fid_apod)
-    spectrum_phased = ng.proc_autophase.autops(spectrum, fn="acme")
-    spectrum_phased = spectrum_phased[::-1]   # inverts the spectrum
-    loaded[i] = spectrum_phased
-    
-    line, = ax.plot(
-        ppm_axis,
-        np.real(spectrum_phased),
-        label=f"{sat_trans_fl[i]:.2f}",
-        alpha=0.7,
-        linewidth=1.2,
-    )
-    
-    lines.append(line)
-    labels.append(line.get_label())
+    # ---- Process spectra ----
+    fig, ax = plt.subplots(figsize=(12, 6))
+    lines: List[plt.Line2D] = []
+    labels: List[str] = []
+    loaded: Dict[int, np.ndarray] = {}          # experiment index -> processed spectrum
 
-plt.gca().invert_xaxis()
-plt.xlabel("ppm")
-plt.ylabel("Intensity")
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
+    for i in range(n_exp):
+        # Extract i-th FID
+        fid = data[i, :]
+        # Remove digital filter (if present)
+        fid = ng.bruker.remove_digital_filter(dic, data=fid)
 
-rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])  # adjust as needed
-visibility = [l.get_visible() for l in lines]
-checks = CheckButtons(rax, labels, visibility)
-checks.on_clicked(on_check)
+        # Zero-fill to 2048 points
+        fid_zf = ng.proc_base.zf_size(fid, size=2048)
+        # Line broadening (exponential) of 0.005 Hz
+        lb = 0.005
+        fid_apod = ng.proc_base.em(fid_zf, lb=lb)
 
-# --- Add "Check all" button ---
-ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
-btn_all = Button(ax_all, "Check all")
-btn_all.on_clicked(check_all)
+        # Fourier transform
+        spectrum = ng.proc_base.fft(fid_apod)
 
-# --- Add "Uncheck all" button ---
-ax_none = fig.add_axes([0.90, 0.90, 0.09, 0.05])
-btn_none = Button(ax_none, "Uncheck all")
-btn_none.on_clicked(uncheck_all)
+        # Automatic phase correction (ACME method)
+        spectrum_phased = ng.proc_autophase.autops(spectrum, fn="acme")
 
-fig.tight_layout(rect=[0, 0, 0.80, 1])  # leave room for the checkbox panel
+        # Invert the axis (left to right: decreasing ppm)
+        spectrum_phased = spectrum_phased[::-1]
+        loaded[i] = spectrum_phased
 
-plt.show(block=False)
+        # Plot the real part
+        line, = ax.plot(
+            ppm_axis,
+            np.real(spectrum_phased),
+            label=f"{sat_trans_fl[i]:.2f}",
+            alpha=0.7,
+            linewidth=1.2,
+        )
+        lines.append(line)
+        labels.append(line.get_label())
+    # Main plot settings
+    ax.invert_xaxis()                           # decreasing ppm from left to right
+    ax.set_xlabel("ppm")
+    ax.set_ylabel("Intensity")
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
 
-# Ask user for min and max index
-try:
-    start_ppm = float(input("Enter the minimum ppm (start): "))
-    end_ppm = float(input("Enter the maximum ppm (end): "))
+    # ---- CheckButtons panel ----
+    rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])   # [left, bottom, width, height]
+    visibility = [l.get_visible() for l in lines]
+    checks = CheckButtons(rax, labels, visibility)
+    checks.on_clicked(on_check)
 
-    end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
-    start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
+    # "Check all" button
+    ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
+    btn_all = Button(ax_all, "Check all")
+    btn_all.on_clicked(check_all)
 
-    if start_idx < 0 or end_idx <= start_idx:
-        raise ValueError("Invalid range: end must be greater than start and both non-negative.")
+    # "Uncheck all" button
+    ax_none = fig.add_axes([0.90, 0.90, 0.09, 0.05])
+    btn_none = Button(ax_none, "Uncheck all")
+    btn_none.on_clicked(uncheck_all)
 
-    print(f"Selected range: [{start_idx}, {end_idx}]")  # end-exclusive
-except ValueError as e:
-    print(f"Error: {e}")
+    fig.tight_layout(rect=[0, 0, 0.80, 1])       # leave space on the right for widgets
 
-max_vals = {}
-max_indexes = {}
-sat_trans_f1_ppm: list[float] = [0.0] * len(sat_trans_fl)
+    # Show the figure (non-blocking)
+    plt.show(block=False)
 
-for p, a in loaded.items():
-    max_vals[p], max_indexes[p] = findMaxima(loaded[p], start=start_idx, end=end_idx)
-    
-if len(sat_trans_fl) == len(max_vals):
+    # ---- User input for ppm range ----
+    try:
+        start_ppm = float(input("Enter the minimum ppm (start): "))
+        end_ppm = float(input("Enter the maximum ppm (end): "))
 
-    for p, max_val in max_vals.items():
-        #print(f"sat_trans_fl[{p}] {sat_trans_fl[p]}: max at ppm {uc.ppm(max_indexes[p])} and freq {uc.hz(max_indexes[p])}")
-        delta = frq_work_offset_hz[0] - uc.hz(max_indexes[p])
-        sat_trans_fl[p] += delta
-        sat_trans_f1_ppm[p] = sat_trans_fl[p] / bf1
-        print(f"{sat_trans_f1_ppm[p]}\t{list(max_vals.values())[p].real}")
-        
-    plt.figure(figsize=(8, 5))
-    plt.plot(list(sat_trans_f1_ppm), list(max_vals.values()), marker='o', linestyle='None', color='b')
-    plt.gca().invert_xaxis()
-    plt.title("Max Values vs Saturation ppm")
-    plt.xlabel("Saturation ppm")
-    plt.ylabel("Max Value")
-    plt.grid(True)
-    plt.show(block=True)
-else:
-    print("Number of saturation frequencies does not match number of processed series; skipping plot.")    
+        end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
+        start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
+
+        if start_idx < 0 or end_idx <= start_idx:
+            raise ValueError("Invalid range: end must be greater than start and both non-negative.")
+
+        print(f"Selected range: [{start_idx}, {end_idx}]")  # end-exclusive
+    except ValueError as e:
+        print(f"Error: {e}")
+        exit(1)
+
+    # ---- Find maxima in the selected range ----
+    max_vals: Dict[int, float] = {}
+    max_indexes: Dict[int, int] = {}
+
+    for p, a in loaded.items():
+        val, idx = findMaxima(loaded[p], start=start_idx, end=end_idx)
+        max_vals[p] = val
+        max_indexes[p] = idx
+
+    # ---- Correct saturation frequencies and final plot ----
+    if len(sat_trans_fl) == len(max_vals):
+        sat_trans_f1_ppm: List[float] = [0.0] * len(sat_trans_fl)
+
+        for p in max_vals.keys():
+            # Calculate the offset from the reference
+            delta = frq_work_offset_hz[0] - uc.hz(max_indexes[p])
+            sat_trans_fl[p] += delta
+            sat_trans_f1_ppm[p] = sat_trans_fl[p] / bf1   # convert to ppm
+            print(f"{sat_trans_f1_ppm[p]}\t{max_vals[p]}")
+
+        # Create a new figure with maxima vs saturation ppm
+        plt.figure(figsize=(8, 5))
+        plt.plot(sat_trans_f1_ppm, list(max_vals.values()), marker='o', linestyle='None', color='b')
+        plt.gca().invert_xaxis()
+        plt.title("Max Values vs Saturation ppm")
+        plt.xlabel("Saturation ppm")
+        plt.ylabel("Max Value")
+        plt.grid(True)
+        plt.show(block=True)
+    else:
+        print("Number of saturation frequencies does not match number of processed series; skipping plot.")
