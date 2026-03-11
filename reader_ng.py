@@ -66,7 +66,6 @@ def find_maxima(arr: np.ndarray,
     max_idx = sub_arr.argmax() + start
     return float(max_val), int(max_idx)
 
-
 def parameter_extract(file_path: Path, PARAMETER: str) -> List[float]:
     """
     Extract numerical values following a Bruker parameter header in a text file
@@ -94,8 +93,7 @@ def parameter_extract(file_path: Path, PARAMETER: str) -> List[float]:
         If the header is not found or if fewer numbers than N are extracted.
     """
     if not file_path.exists():
-        print(f"{file_path} file not found. Aborting.")
-        exit(1)
+        raise FileNotFoundError(f"{file_path} file not found.")
 
     text = file_path.read_text(encoding="utf-8", errors="ignore")
 
@@ -121,7 +119,6 @@ def parameter_extract(file_path: Path, PARAMETER: str) -> List[float]:
 
     return [float(v) for v in vals[:N]]
 
-
 def apply_phase(data: np.ndarray, p0: float, p1: float) -> np.ndarray:
     """
     Apply zero-order and first-order phase correction to a complex spectrum.
@@ -142,7 +139,6 @@ def apply_phase(data: np.ndarray, p0: float, p1: float) -> np.ndarray:
     """
     return ng.proc_base.ps(data, p0=p0, p1=p1)
 
-
 def show_phase(data: np.ndarray, p0: float, p1: float) -> None:
     """
     Display a plot of the real part of the spectrum after phase correction.
@@ -159,7 +155,6 @@ def show_phase(data: np.ndarray, p0: float, p1: float) -> None:
     phased = apply_phase(data, p0, p1)
     plt.plot(np.real(phased))
     plt.show()
-
 
 def ppm_to_index(uc: Any, user_ppm: float) -> int:
     """
@@ -182,18 +177,16 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
     return index
 
 def compute_regions_integrals(x_fit, y_fit) -> Dict[str, float]:
-    def region_integral(bounds, x_fit, y_fit) -> float:
-        integral: float = 0.0
-        for i, x in enumerate(x_fit):
-            if x < bounds[0] or x > bounds[1]:
-                continue
-            else:
-                integral += (1 - y_fit[i])
-        return integral
+
+    def _region_integral(bounds, x_fit, y_fit) -> float:
+        mask: List[np.bool] = (x_fit >= bounds[0]) & (x_fit <= bounds[1])
+        if not np.any(mask):
+            return 0.0
+        return np.trapezoid(1 - y_fit[mask], x_fit[mask])
 
     region_integrals: Dict[str, float] = {
         region_name:
-        region_integral(bounds = region_bounds, x_fit = x_fit, y_fit = y_fit) for region_name, region_bounds in REGIONS.items()
+        _region_integral(bounds = region_bounds, x_fit = x_fit, y_fit = y_fit) for region_name, region_bounds in REGIONS.items()
                               }
     
     return region_integrals
@@ -415,6 +408,11 @@ def plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz):
     ax.set_ylabel("Intensity")
     ax.grid(True, alpha=0.3)
 
+    # ---- CheckButtons panel ----
+    rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])   # [left, bottom, width, height]
+    visibility = [l.get_visible() for l in lines]
+    checks = CheckButtons(rax, labels, visibility)
+
     # ----------------------------------------------------------------------
     # Callbacks for interactive widgets
     # to capture lines, labels, fig, checks
@@ -436,10 +434,6 @@ def plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz):
                 checks.set_active(i)
         plt.draw()
 
-    # ---- CheckButtons panel ----
-    rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])   # [left, bottom, width, height]
-    visibility = [l.get_visible() for l in lines]
-    checks = CheckButtons(rax, labels, visibility)
     checks.on_clicked(_on_check)
 
     # "Check all" button
@@ -504,11 +498,15 @@ def ask_user_for_ppm_range(uc) -> Tuple[int, int]:
             print(f"Unexpected error: {e}. Please try again.")
             
 def correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf1):
+    """
+    Calcola le frequenze di saturazione corrette (in ppm) e restituisce il fit.
+    NOTA: la lista sat_trans_hz viene modificata in-place con le frequenze corrette in Hz.
+    """    
     sat_trans_f1_ppm: List[float] = [0.0] * len(sat_trans_hz)
     for exp_idx in max_vals:
         # Calculate the offset from the reference            
         delta: float = work_offset_hz[0] - uc.hz(max_indexes[exp_idx])
-        sat_trans_hz[exp_idx] += delta
+        sat_trans_hz[exp_idx] += delta  # modifica voluta
         sat_trans_f1_ppm[exp_idx] = sat_trans_hz[exp_idx] / bf1   # convert to ppm
     
     return fit_curve(
@@ -536,9 +534,16 @@ def main() -> None:
     folder: Path = select_experiment_folder()
     
     # ---- Extract parameters from method file ----
-    sat_trans_hz: float
-    work_offset_hz: float
-    (sat_trans_hz, work_offset_hz) = extract_parameters(folder=folder)
+    sat_trans_hz: List[float]
+    work_offset_hz: List[float]
+    try:
+        sat_trans_hz, work_offset_hz = extract_parameters(folder=folder)
+    except FileNotFoundError as e:
+        print(f"Errore: {e}")
+        return
+    except ValueError as e:  # se parameter_extract solleva ValueError per altri motivi
+        print(f"Errore nel formato dei parametri: {e}")
+        return
 
     # ---- Read Bruker data ----
     dic: Dict
@@ -549,6 +554,11 @@ def main() -> None:
     bf1: float
     (dic, data, uc, ppm_axis, n_exp, bf1) = load_spectra(folder=folder)
 
+    # ---- Verifica che ci siano esperimenti ----
+    if n_exp <= 0:
+        print("Errore: nessun esperimento trovato (n_exp = 0). Impossibile proseguire.")
+        return
+    
     # ---- Process data ----
     spectra: Dict
     spectra = process_spectra(data=data, dic=dic, n_exp=n_exp)
