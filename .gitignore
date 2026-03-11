@@ -1,4 +1,5 @@
-__pycache__/
 2025*/
-pdoc/
+__pycache__/
+docs/
 parameters.txt
+pdoc/
