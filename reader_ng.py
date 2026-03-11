@@ -8,10 +8,14 @@ a saturation transfer curve.
 """
 
 import nmrglue as ng
+from nmrglue.fileio.fileiobase import unit_conversion
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons, Button
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
+from matplotlib.lines import Line2D
 import re
 import tkinter as tk
 from tkinter import filedialog
@@ -32,7 +36,7 @@ REGIONS: dict[str, List[float]] = {
 # Utility functions
 # ----------------------------------------------------------------------
 
-def findMaxima(arr: np.ndarray,
+def find_maxima(arr: np.ndarray,
                start: Optional[int] = None,
                end: Optional[int] = None) -> Tuple[float, int]:
     """
@@ -177,16 +181,36 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
     index = int(np.abs(ppm_axis - user_ppm).argmin())
     return index
 
+def compute_regions_integrals(x_fit, y_fit) -> Dict[str, float]:
+    def region_integral(bounds, x_fit, y_fit) -> float:
+        integral: float = 0.0
+        for i, x in enumerate(x_fit):
+            if x < bounds[0] or x > bounds[1]:
+                continue
+            else:
+                integral += (1 - y_fit[i])
+        return integral
 
-def plot_with_spline(x: Union[List[float], np.ndarray],
-                     y: Union[List[float], np.ndarray],
-                     smoothing: float = 0.0,
-                     title: str = "Max Values vs Saturation ppm",
-                     xlabel: str = "Saturation ppm",
-                     ylabel: str = "Max Value",
-                     invert_x: bool = True) -> Dict[str, float]:
+    region_integrals: Dict[str, float] = {
+        region_name:
+        region_integral(bounds = region_bounds, x_fit = x_fit, y_fit = y_fit) for region_name, region_bounds in REGIONS.items()
+                              }
+    
+    return region_integrals
+
+def plot_data_with_spline(
+        x: Union[List[float], np.ndarray],
+        y: Union[List[float], np.ndarray],
+        x_fit: Union[List[float], np.ndarray],
+        y_fit: Union[List[float], np.ndarray],
+        title: str = "Max Values vs Saturation ppm",
+        xlabel: str = "Saturation ppm",
+        ylabel: str = "Max Value",
+        fit_label: str = "",
+        invert_x: bool = True
+    ) -> Dict[str, float]:
     """
-    Plot data points and a spline fit (or polynomial fallback) through them.
+    Plot data points and a spline fit through them.
 
     Parameters
     ----------
@@ -213,48 +237,12 @@ def plot_with_spline(x: Union[List[float], np.ndarray],
     If it fails or scipy is not installed, a quadratic polynomial fit is used as fallback.
     The fitted curve is displayed together with the original data points.
     """
-    # Convert to numpy arrays and sort by x
-    x = np.asarray(x)
-    y = np.asarray(y)
-    sort_idx = np.argsort(x)
-    x_sorted = x[sort_idx]
-    y_sorted = y[sort_idx]
 
-    fit_successful = False
-    x_fit: np.ndarray
-    y_fit: np.ndarray
-    try:
-        spline = UnivariateSpline(x_sorted, y_sorted, s=smoothing)
-        fit_successful = True
-        # Generate smooth curve
-        x_fit = np.linspace(x_sorted.min(), x_sorted.max(), 200)
-        y_fit = spline(x_fit)
-        fit_label = f"Spline (s={smoothing})"
-    except ImportError:
-        print("scipy not available - using polynomial fallback.")
-    except Exception as e:
-        print(f"Spline fit failed: {e} - using polynomial fallback.")
-
-    def region_integral(bounds, x_fit, y_fit) -> float:
-        integral: float = 0.0
-        for i, x in enumerate(x_fit):
-            if x < bounds[0] or x > bounds[1]:
-                continue
-            else:
-                integral += (1 - y_fit[i])
-        return integral
-
-    region_integrals: Dict[str, float] = {
-        region_name:
-        region_integral(bounds = region_bounds, x_fit = x_fit, y_fit = y_fit) for region_name, region_bounds in REGIONS.items()
-                              }
-        
     # Create the plot
     plt.figure(figsize=(8, 5))
-    plt.plot(x_sorted, y_sorted, 'o', color='b', label='Data')
+    plt.plot(x, y, 'o', color='b', label='Data')
 
-    if fit_successful or (x_fit is not None and y_fit is not None):
-        plt.plot(x_fit, y_fit, 'r-', label = fit_label)
+    plt.plot(x_fit, y_fit, 'r-', label = fit_label)
 
     if invert_x:
         plt.gca().invert_xaxis()
@@ -263,78 +251,158 @@ def plot_with_spline(x: Union[List[float], np.ndarray],
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.grid(True)
-    if fit_successful or (x_fit is not None and y_fit is not None):
-        plt.legend()
+    plt.legend()
     plt.show(block=False)
 
-    return region_integrals
-
-def main() -> None:
+def fit_curve(x: Union[List[float], np.ndarray],
+              y: Union[List[float], np.ndarray],
+              smoothing: float = 0.0,
+              n_points: int = 200) -> Dict[str, Any]:
     """
-    Main routine of the script.
+    Esegue lo spline fit dei dati.
 
-    - Prompts the user to select a Bruker experiment folder.
-    - Reads the 'method' file to obtain saturation frequencies and offset.
-    - Loads and processes all FIDs (digital filter removal, zero-filling,
-      line broadening, FFT, automatic phase correction, axis inversion).
-    - Displays all spectra with an interactive checkbox panel.
-    - Asks the user for a ppm range of interest.
-    - Finds the maximum intensity within that range for each spectrum.
-    - Corrects the saturation frequencies using the frequency offset.
-    - Plots the maximum values against the corrected saturation ppm.
+    Parameters
+    ----------
+    x, y : array-like
+        Dati originali.
+    smoothing : float
+        Fattore di smoothing per la spline (0 = interpolazione esatta).
+    n_points : int
+        Numero di punti per la curva fitted.
+
+    Returns
+    -------
+    dict con chiavi:
+        'x_sorted' : np.ndarray
+        'y_sorted' : np.ndarray
+        'x_fit' : np.ndarray o None se fit fallito
+        'y_fit' : np.ndarray o None se fit fallito
+        'fit_label' : str (vuota se fallito)
+        'fit_successful' : bool
     """
-    # ---- Select experiment folder ----
+    x = np.asarray(x)
+    y = np.asarray(y)
+    sort_idx = np.argsort(x)
+    x_sorted = x[sort_idx]
+    y_sorted = y[sort_idx]
+
+    fit_successful = False
+    x_fit = None
+    y_fit = None
+    fit_label = ""
+
+    try:
+        spline = UnivariateSpline(x_sorted, y_sorted, s=smoothing)
+        fit_successful = True
+        x_fit = np.linspace(x_sorted.min(), x_sorted.max(), n_points)
+        y_fit = spline(x_fit)
+        fit_label = f"Spline (s={smoothing})"
+    except ImportError:
+        print("scipy not available - cannot perform spline fit.")
+    except Exception as e:
+        print(f"Spline fit failed: {e}")
+
+    return {
+        'x_sorted': x_sorted,
+        'y_sorted': y_sorted,
+        'x_fit': x_fit,
+        'y_fit': y_fit,
+        'fit_label': fit_label,
+        'fit_successful': fit_successful
+    }
+
+def plot_integrals_regions(integrals):
+    # Estrai etichette e valori
+    labels: List[str] = list(integrals.keys())
+    values: List[float] = list(integrals.values())
+
+    # Crea il grafico a barre
+    plt.figure(figsize=(10, 6))
+    bars: plt.BarContainer = plt.bar(labels, values, color='skyblue', edgecolor='black')
+
+    # Aggiungi titolo ed etichette assi
+    plt.title('Intensità per regione')
+    plt.xlabel('Regione')
+    plt.ylabel('Intensità')
+
+    # Ruota le etichette sull'asse x per leggibilità (opzionale)
+    plt.xticks(rotation=45, ha='right')
+
+    # Aggiungi i valori sopra le barre (opzionale)
+    for bar, val in zip(bars, values):
+        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02 * max(values),
+                f'{val:.2f}', ha='center', va='bottom', fontsize=9)
+
+    # Mostra il grafico
+    plt.tight_layout()  # Per evitare sovrapposizioni
+    plt.show()  
+
+def select_experiment_folder() -> Path:
+    """Mostra una finestra di dialogo e restituisce il percorso della cartella selezionata."""
     root = tk.Tk()
-    root.withdraw()                     # hide the main Tk window
-    full = Path(filedialog.askdirectory(title="Select a folder"))
-    method = full / "method"
+    root.withdraw()
+    folder = Path(filedialog.askdirectory(title="Select a folder"))
+    return folder
 
-    # ---- Extract parameters from method file ----
-    sat_trans_fl = parameter_extract(method, "PVM_SatTransFL")   # Hz
-    frq_work_offset_hz = parameter_extract(method, "PVM_FrqWorkOffset")  # Hz
+def extract_parameters(folder: Path) -> Tuple[List[float], List[float]]:
+    """Estrae PVM_SatTransFL e PVM_FrqWorkOffset dal file method."""
+    method = folder / "method"
+    sat_hz = parameter_extract(method, "PVM_SatTransFL")
+    offset_hz = parameter_extract(method, "PVM_FrqWorkOffset")
+    return sat_hz, offset_hz
 
-    # ---- Read Bruker data ----
-    dic, data = ng.bruker.read(full)
-    udic = ng.bruker.guess_udic(dic, data)
-    uc = ng.fileio.bruker.fileiobase.uc_from_udic(udic, dim=1)
-    ppm_axis = uc.ppm_scale()
-    n_exp = dic["acqu2s"]["TD"]
-    bf1 = dic["acqus"]["BF1"]
+def load_spectra(folder: Path):
+    dic: dict
+    data: np.ndarray
+    dic, data = ng.bruker.read(folder)
+    udic: dict = ng.bruker.guess_udic(dic, data)
+    uc: unit_conversion = ng.fileio.bruker.fileiobase.uc_from_udic(udic, dim=1)
+    ppm_axis: np.ndarray = uc.ppm_scale()
+    n_exp: int = dic["acqu2s"]["TD"]
+    bf1: float = dic["acqus"]["BF1"]
 
-    # ---- Process spectra and create plot ----
-    fig, ax = plt.subplots(figsize=(12, 6))
-    lines: List[plt.Line2D] = []
-    labels: List[str] = []
-    loaded: Dict[int, np.ndarray] = {}
+    return dic, data, uc, ppm_axis, n_exp, bf1
 
-    for i in range(n_exp):
+def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
+    spectra: Dict[int, np.ndarray] = {}
+
+    for exp_idx in range(n_exp):
         # ---- Select experiment folder
-        fid = data[i, :]
+        fid: np.ndarray = data[exp_idx , :]
 
         # ---- Remove Bruker digital filter
         fid = ng.bruker.remove_digital_filter(dic, data=fid)
 
         # Zero-fill to 2048 points
-        fid_zf = ng.proc_base.zf_size(fid, size=2048)
+        fid_zf: np.ndarray = ng.proc_base.zf_size(fid, size=2048)
 
         # Line broadening (exponential)
-        fid_apod = ng.proc_base.em(fid_zf, lb=0.005)
+        fid_apod: np.ndarray = ng.proc_base.em(fid_zf, lb=0.005)
         
         # Fourier transform
-        spectrum = ng.proc_base.fft(fid_apod)
+        spectrum: np.ndarray = ng.proc_base.fft(fid_apod)
 
         # Automatic phase correction (ACME method)
-        spectrum_phased = ng.proc_autophase.autops(spectrum, fn="acme")
+        spectrum_phased: np.ndarray = ng.proc_autophase.autops(spectrum, fn="acme")
 
         # Invert the axis (left to right: decreasing ppm)
         spectrum_phased = spectrum_phased[::-1]
-        loaded[i] = spectrum_phased
+        spectra[exp_idx] = spectrum_phased
+    
+    return spectra
 
+def plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz):
+    lines: List[plt.Line2D] = []
+    labels: List[str] = []
+    fig: Figure
+    ax: Axes
+    fig, ax = plt.subplots(figsize=(12, 6))
+    for exp_idx in range(n_exp):
         # Plot the real part
         line, = ax.plot(
             ppm_axis,
-            np.real(spectrum_phased),
-            label=f"{sat_trans_fl[i]:.2f}",
+            np.real(spectra[exp_idx]),
+            label=f"{sat_trans_hz[exp_idx]:.2f}",
             alpha=0.7,
             linewidth=1.2,
         )
@@ -389,91 +457,143 @@ def main() -> None:
     # Show the figure (non-blocking)
     plt.show(block=False)
 
-    # ---- User input for ppm range ----
-    try:
-        start_ppm = float(input("Enter the minimum ppm (start): "))
-        end_ppm = float(input("Enter the maximum ppm (end): "))
-
-        end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
-        start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
-
-        if start_idx < 0 or end_idx <= start_idx:
-            raise ValueError("Invalid range: end must be greater than start and both non-negative.")
-
-        print(f"Selected range: [{start_idx}, {end_idx}]")  # end-exclusive
-    except ValueError as e:
-        print(f"Error: {e}")
-        return
-
+def find_max_vals(spectra, start_idx, end_idx):
     # ---- Find maxima in the selected range ----
     max_vals: Dict[int, float] = {}
     max_indexes: Dict[int, int] = {}
-    max_of_max: float = 0.0
-    for p in loaded:
-        val, idx = findMaxima(loaded[p], start=start_idx, end=end_idx)
-        if val > max_of_max:
-            max_of_max = val
-        max_vals[p] = val
-        max_indexes[p] = idx
+    global_max_value: float = 0.0
+    for exp_idx in spectra:
+        val: float
+        idx: int
+        val, idx = find_maxima(spectra[exp_idx], start=start_idx, end=end_idx)
+        if val > global_max_value:
+            global_max_value = val
+        max_vals[exp_idx] = val
+        max_indexes[exp_idx] = idx
 
     # ---- Normalize max_vals ----
-    for i, val in max_vals.items():
-        max_vals[i] /= max_of_max
+    for exp_idx , val in max_vals.items():
+        max_vals[exp_idx ] /= global_max_value
 
-    integrals: Dict[str, float] = {}
+    return max_vals, max_indexes
+
+def ask_user_for_ppm_range(uc) -> Tuple[int, int]:
+    """
+    Richiede all'utente di inserire l'intervallo in ppm (min e max).
+    Ripete la richiesta finché non vengono forniti valori validi.
+    Restituisce gli indici start_idx, end_idx corrispondenti.
+    """
+    while True:
+        try:
+            start_ppm = float(input("Enter the minimum ppm (start): "))
+            end_ppm = float(input("Enter the maximum ppm (end): "))
+
+            end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
+            start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
+
+            if start_idx < 0 or end_idx <= start_idx:
+                print("Invalid range: end must be greater than start and both non-negative. Please try again.")
+                continue
+
+            print(f"Selected range: [{start_idx}, {end_idx}]")  # end-exclusive
+            return start_idx, end_idx
+
+        except ValueError as e:
+            print(f"Input error: {e}. Please enter valid numbers.")
+        except Exception as e:
+            print(f"Unexpected error: {e}. Please try again.")
+            
+def correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf1):
+    sat_trans_f1_ppm: List[float] = [0.0] * len(sat_trans_hz)
+    for exp_idx in max_vals:
+        # Calculate the offset from the reference            
+        delta: float = work_offset_hz[0] - uc.hz(max_indexes[exp_idx])
+        sat_trans_hz[exp_idx] += delta
+        sat_trans_f1_ppm[exp_idx] = sat_trans_hz[exp_idx] / bf1   # convert to ppm
+    
+    return fit_curve(
+        x=sat_trans_f1_ppm,
+        y=list(max_vals.values()),
+        smoothing=0.0,
+        n_points=200,
+    )
+
+def main() -> None:
+    """
+    Main routine of the script.
+
+    - Prompts the user to select a Bruker experiment folder.
+    - Reads the 'method' file to obtain saturation frequencies and offset.
+    - Loads and processes all FIDs (digital filter removal, zero-filling,
+      line broadening, FFT, automatic phase correction, axis inversion).
+    - Displays all spectra with an interactive checkbox panel.
+    - Asks the user for a ppm range of interest.
+    - Finds the maximum intensity within that range for each spectrum.
+    - Corrects the saturation frequencies using the frequency offset.
+    - Plots the maximum values against the corrected saturation ppm.
+    """
+    # ---- Select experiment folder ----
+    folder: Path = select_experiment_folder()
+    
+    # ---- Extract parameters from method file ----
+    sat_trans_hz: float
+    work_offset_hz: float
+    (sat_trans_hz, work_offset_hz) = extract_parameters(folder=folder)
+
+    # ---- Read Bruker data ----
+    dic: Dict
+    data: np.ndarray
+    uc: unit_conversion
+    ppm_axis: np.ndarray
+    n_exp: int
+    bf1: float
+    (dic, data, uc, ppm_axis, n_exp, bf1) = load_spectra(folder=folder)
+
+    # ---- Process data ----
+    spectra: Dict
+    spectra = process_spectra(data=data, dic=dic, n_exp=n_exp)
+
+    # ---- Plot spectra ----
+    plot_spectra(spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
+
+    # ---- User input for ppm range ----
+    start_idx: int
+    end_idx: int
+    (start_idx, end_idx) = ask_user_for_ppm_range(uc=uc)
+
+    # ---- Find normalized maxima along the spectra ----
+    max_vals: Dict[int, float]
+    max_indexes: Dict[int, float]
+    (max_vals, max_indexes) = find_max_vals(spectra=spectra, start_idx=start_idx, end_idx=end_idx)
 
     # ---- Correct saturation frequencies and final plot ----
-    if len(sat_trans_fl) == len(max_vals):
-        sat_trans_f1_ppm: List[float] = [0.0] * len(sat_trans_fl)
-        for p in max_vals:
-            # Calculate the offset from the reference            
-            delta = frq_work_offset_hz[0] - uc.hz(max_indexes[p])
-            sat_trans_fl[p] += delta
-            sat_trans_f1_ppm[p] = sat_trans_fl[p] / bf1   # convert to ppm
-            print(f"{sat_trans_f1_ppm[p]}\t{max_vals[p]}")
-
-        # ---- Call the new plotting function ----
-        # You can adjust the smoothing factor here:
-        smoothing_factor = 0.0   # <-- change this to tune smoothness
-        integrals = plot_with_spline(
-            x=sat_trans_f1_ppm,
-            y=list(max_vals.values()),
-            smoothing=smoothing_factor,
-            title="Max Values vs Saturation ppm",
-            xlabel="Saturation ppm",
-            ylabel="Max Value",
-            invert_x=True
+    if len(sat_trans_hz) == len(max_vals):
+        
+        fit_result: Dict[str, Any] = correct_sat_freq(
+            sat_trans_hz=sat_trans_hz, 
+            max_vals=max_vals,
+            max_indexes=max_indexes,
+            work_offset_hz=work_offset_hz,
+            uc=uc,
+            bf1=bf1,
         )
+        
+        if fit_result["fit_successful"]:
+            plot_data_with_spline(
+                x=fit_result["x_sorted"],
+                y=fit_result["y_sorted"],
+                x_fit=fit_result["x_fit"],
+                y_fit=fit_result["y_fit"],
+                title="Max Values vs Saturation ppm",
+                xlabel="Saturation ppm",
+                ylabel="Max Value",
+                invert_x=True
+            )
+            region_integrals = compute_regions_integrals(x_fit=fit_result["x_fit"], y_fit=fit_result["y_fit"])
+            plot_integrals_regions(region_integrals)
 
     else:
         print("Number of saturation frequencies does not match number of processed series; skipping plot.")
-
-    # Estrai etichette e valori
-    labels: List[str] = list(integrals.keys())
-    values: List[float] = list(integrals.values())
-
-    # Crea il grafico a barre
-    plt.figure(figsize=(10, 6))
-    bars: plt.BarContainer = plt.bar(labels, values, color='skyblue', edgecolor='black')
-
-    # Aggiungi titolo ed etichette assi
-    plt.title('Intensità per regione')
-    plt.xlabel('Regione')
-    plt.ylabel('Intensità')
-
-    # Ruota le etichette sull'asse x per leggibilità (opzionale)
-    plt.xticks(rotation=45, ha='right')
-
-    # Aggiungi i valori sopra le barre (opzionale)
-    for bar, val in zip(bars, values):
-        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02 * max(values),
-                f'{val:.2f}', ha='center', va='bottom', fontsize=9)
-
-    # Mostra il grafico
-    plt.tight_layout()  # Per evitare sovrapposizioni
-    plt.show()    
-
-    pass
 
 # ----------------------------------------------------------------------
 # MAIN
