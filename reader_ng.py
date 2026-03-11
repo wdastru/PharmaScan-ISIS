@@ -378,6 +378,29 @@ def extract_parameters(folder: Path) -> Tuple[List[float], List[float]]:
     return sat_hz, offset_hz
 
 def load_spectra(folder: Path):
+    """
+    Legge i dati Bruker dalla cartella selezionata.
+
+    Parameters
+    ----------
+    folder : Path
+        Percorso della cartella dell'esperimento.
+
+    Returns
+    -------
+    dic : dict
+        Dizionario dei parametri Bruker.
+    data : np.ndarray
+        Array dei FID (2D: esperimenti x punti).
+    uc : unit_conversion
+        Oggetto per la conversione tra ppm, Hz e indici.
+    ppm_axis : np.ndarray
+        Array dei valori ppm corrispondenti agli indici.
+    n_exp : int
+        Numero di esperimenti (FID) acquisiti.
+    bf1 : float
+        Frequenza di base in MHz.
+    """
     dic: dict
     data: np.ndarray
     dic, data = ng.bruker.read(folder)
@@ -390,6 +413,24 @@ def load_spectra(folder: Path):
     return dic, data, uc, ppm_axis, n_exp, bf1
 
 def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
+    """
+    Elabora ogni FID: rimozione filtro digitale, zero‑filling, line broadening,
+    FFT, correzione di fase automatica e inversione dell'asse.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Array 2D dei FID (righe = esperimenti).
+    dic : dict
+        Dizionario dei parametri Bruker.
+    n_exp : int
+        Numero di esperimenti.
+
+    Returns
+    -------
+    spectra : Dict[int, np.ndarray]
+        Dizionario con chiave indice esperimento e valore spettro complesso elaborato.
+    """
     spectra: Dict[int, np.ndarray] = {}
 
     for exp_idx in range(n_exp):
@@ -418,6 +459,21 @@ def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
     return spectra
 
 def plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz):
+    """
+    Crea un plot interattivo di tutti gli spettri con checkbox per mostrare/nascondere
+    ogni traccia.
+
+    Parameters
+    ----------
+    spectra : Dict[int, np.ndarray]
+        Dizionario degli spettri elaborati.
+    n_exp : int
+        Numero di esperimenti.
+    ppm_axis : np.ndarray
+        Asse dei ppm.
+    sat_trans_hz : List[float]
+        Frequenze di saturazione in Hz (usate come etichette).
+    """
     lines: List[plt.Line2D] = []
     labels: List[str] = []
     fig: Figure
@@ -485,6 +541,26 @@ def plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz):
     plt.show(block=False)
 
 def find_max_vals(spectra, start_idx, end_idx):
+    """
+    Trova il valore massimo in ogni spettro all'interno dell'intervallo di indici
+    [start_idx, end_idx) e normalizza tutti i massimi rispetto al massimo globale.
+
+    Parameters
+    ----------
+    spectra : Dict[int, np.ndarray]
+        Dizionario degli spettri elaborati.
+    start_idx : int
+        Indice di inizio (inclusivo).
+    end_idx : int
+        Indice di fine (esclusivo).
+
+    Returns
+    -------
+    max_vals : Dict[int, float]
+        Dizionario con chiave indice esperimento e valore massimo normalizzato.
+    max_indexes : Dict[int, int]
+        Dizionario con chiave indice esperimento e indice del massimo (originale).
+    """
     # ---- Find maxima in the selected range ----
     max_vals: Dict[int, float] = {}
     max_indexes: Dict[int, int] = {}
