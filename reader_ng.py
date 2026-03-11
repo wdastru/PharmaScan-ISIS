@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons, Button
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
-from matplotlib.lines import Line2D
 import re
 import tkinter as tk
 from tkinter import filedialog
@@ -176,10 +175,10 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
     index = int(np.abs(ppm_axis - user_ppm).argmin())
     return index
 
-def compute_regions_integrals(x_fit, y_fit) -> Dict[str, float]:
+def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str, float]:
 
     def _region_integral(bounds, x_fit, y_fit) -> float:
-        mask: List[np.bool] = (x_fit >= bounds[0]) & (x_fit <= bounds[1])
+        mask: np.ndarray = (x_fit >= bounds[0]) & (x_fit <= bounds[1])
         if not np.any(mask):
             return 0.0
         return np.trapezoid(1 - y_fit[mask], x_fit[mask])
@@ -201,7 +200,7 @@ def plot_data_with_spline(
         ylabel: str = "Max Value",
         fit_label: str = "",
         invert_x: bool = True
-    ) -> Dict[str, float]:
+    ) -> None:
     """
     Plot data points and a spline fit through them.
 
@@ -304,7 +303,7 @@ def fit_curve(x: Union[List[float], np.ndarray],
         'fit_successful': fit_successful
     }
 
-def plot_integrals_regions(integrals):
+def plot_integrals_regions(integrals: Dict[str, float]) -> None:
     # Estrai etichette e valori
     labels: List[str] = list(integrals.keys())
     values: List[float] = list(integrals.values())
@@ -573,7 +572,7 @@ def main() -> None:
 
     # ---- Find normalized maxima along the spectra ----
     max_vals: Dict[int, float]
-    max_indexes: Dict[int, float]
+    max_indexes: Dict[int, int]
     (max_vals, max_indexes) = find_max_vals(spectra=spectra, start_idx=start_idx, end_idx=end_idx)
 
     # ---- Correct saturation frequencies and final plot ----
