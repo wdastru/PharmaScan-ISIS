@@ -176,8 +176,40 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
     return index
 
 def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str, float]:
+    """
+    Calcola gli integrali di regione per tutte le regioni definite in REGIONS.
+
+    Parameters
+    ----------
+    x_fit : np.ndarray
+        Array delle ascisse (ppm) della curva fitted.
+    y_fit : np.ndarray
+        Array delle ordinate (intensità normalizzate) della curva fitted.
+
+    Returns
+    -------
+    Dict[str, float]
+        Dizionario con chiavi i nomi delle regioni e valori gli integrali calcolati.
+    """
 
     def _region_integral(bounds, x_fit, y_fit) -> float:
+        """
+        Calcola l'integrale di (1 - y) nell'intervallo [bounds[0], bounds[1]].
+
+        Parameters
+        ----------
+        bounds : list o tupla di due float
+            Limiti inferiore e superiore dell'intervallo in ppm.
+        x_fit : np.ndarray
+            Array delle ascisse.
+        y_fit : np.ndarray
+            Array delle ordinate.
+
+        Returns
+        -------
+        float
+            Valore dell'integrale.
+        """
         mask: np.ndarray = (x_fit >= bounds[0]) & (x_fit <= bounds[1])
         if not np.any(mask):
             return 0.0
@@ -210,30 +242,24 @@ def plot_data_with_spline(
         x-coordinates of the data points.
     y : array-like
         y-coordinates of the data points.
-    smoothing : float, default 0.0
-        Smoothing factor for the spline:
-        - 0.0 → exact interpolation (passes through all points)
-        - >0  → smoothing spline; larger values give a smoother curve.
+    x_fit : array-like
+        x-coordinates of the fitted curve.
+    y_fit : array-like
+        y-coordinates of the fitted curve.
     title : str, optional
         Title of the plot.
     xlabel : str, optional
         Label for the x-axis.
     ylabel : str, optional
         Label for the y-axis.
+    fit_label : str, optional
+        Label for the fitted curve (used in legend).
     invert_x : bool, default True
         If True, invert the x-axis (useful for ppm scales where high values are on the left).
-
-    Notes
-    -----
-    If `scipy.interpolate.UnivariateSpline` is available, a spline fit is attempted.
-    If it fails or scipy is not installed, a quadratic polynomial fit is used as fallback.
-    The fitted curve is displayed together with the original data points.
     """
-
     # Create the plot
     plt.figure(figsize=(8, 5))
     plt.plot(x, y, 'o', color='b', label='Data')
-
     plt.plot(x_fit, y_fit, 'r-', label = fit_label)
 
     if invert_x:
@@ -304,6 +330,14 @@ def fit_curve(x: Union[List[float], np.ndarray],
     }
 
 def plot_integrals_regions(integrals: Dict[str, float]) -> None:
+    """
+    Crea un grafico a barre degli integrali di regione.
+
+    Parameters
+    ----------
+    integrals : Dict[str, float]
+        Dizionario con i nomi delle regioni e i rispettivi integrali.
+    """
     # Estrai etichette e valori
     labels: List[str] = list(integrals.keys())
     values: List[float] = list(integrals.values())
@@ -609,4 +643,4 @@ def main() -> None:
 # ----------------------------------------------------------------------
 
 if __name__ == "__main__":
-    main()    
+    main()
