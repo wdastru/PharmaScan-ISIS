@@ -872,6 +872,7 @@ def main() -> None:
         folders.append(folder)
     
     for folder in folders:
+        folder_name_short: str = f"…{folder.parent.name[-32:]}"
         # ---- Extract parameters from method file ----
         sat_trans_hz: List[float]
         work_offset_hz: List[float]
@@ -926,7 +927,7 @@ def main() -> None:
         max_indexes: Dict[int, int]
         (max_vals, max_indexes) = find_max_vals(spectra=spectra, start_idx=start_idx, end_idx=end_idx)
         
-        #spline_fig: Figure
+        spline_fig: Figure
         #integrals_fig: Figure
 
         # ---- Correct saturation frequencies and final plot ----
@@ -942,18 +943,18 @@ def main() -> None:
             )
             
             if fit_result["fit_successful"]:
-                #spline_fig = plot_data_with_spline(
-                #    x=fit_result["x_sorted"],
-                #    y=fit_result["y_sorted"],
-                #    x_fit=fit_result["x_fit"],
-                #    y_fit=fit_result["y_fit"],
-                #    title="Max Values vs Saturation ppm",
-                #    xlabel="Saturation ppm",
-                #    ylabel="Max Value",
-                #    invert_x=True
-                #)
+                spline_fig = plot_data_with_spline(
+                    x=fit_result["x_sorted"],
+                    y=fit_result["y_sorted"],
+                    x_fit=fit_result["x_fit"],
+                    y_fit=fit_result["y_fit"],
+                    title=folder_name_short,
+                    xlabel="Saturation ppm",
+                    ylabel="Max Value",
+                    invert_x=True
+                )
                 region_integrals: Dict[str, float] = compute_regions_integrals(x_fit=fit_result["x_fit"], y_fit=fit_result["y_fit"])
-                region_integrals_dict[folder.parent.name] = region_integrals
+                region_integrals_dict[folder_name_short] = region_integrals
                 #integrals_fig = plot_integrals_regions(integrals=region_integrals, labels=folder)
 
         else:
