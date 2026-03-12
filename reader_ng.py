@@ -32,6 +32,12 @@ REGIONS: dict[str, List[float]] = {
 }
 
 # ----------------------------------------------------------------------
+# GLOBALS
+# ----------------------------------------------------------------------
+start_ppm: float|None = None
+end_ppm: float|None = None
+
+# ----------------------------------------------------------------------
 # Utility functions
 # ----------------------------------------------------------------------
 
@@ -665,15 +671,12 @@ def ask_user_for_ppm_range(uc) -> Tuple[int, int]:
             start_ppm = float(input("Enter the minimum ppm (start): "))
             end_ppm = float(input("Enter the maximum ppm (end): "))
 
-            end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
-            start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
-
-            if start_idx < 0 or end_idx <= start_idx:
-                print("Invalid range: end must be greater than start and both non-negative. Please try again.")
+            if end_ppm <= start_ppm:
+                print("Invalid range: end must be greater than start. Please try again.")
                 continue
 
-            print(f"Selected range: [{start_idx}, {end_idx}]")  # end-exclusive
-            return start_idx, end_idx
+            print(f"Selected range: [{start_ppm}, {end_ppm}]")  # end-exclusive
+            return start_ppm, end_ppm
 
         except ValueError as e:
             print(f"Input error: {e}. Please enter valid numbers.")
@@ -709,6 +712,38 @@ def ask_yes_no(prompt):
             return False
         print("Please answer with y or n.")
 
+def ask_int(prompt: str, min_val: int = None, max_val: int = None) -> int:
+    """
+    Chiede all'utente di inserire un intero e lo restituisce.
+
+    Parameters
+    ----------
+    prompt : str
+        Il messaggio da mostrare all'utente.
+    min_val : int, optional
+        Se specificato, impone un valore minimo (incluso).
+    max_val : int, optional
+        Se specificato, impone un valore massimo (incluso).
+
+    Returns
+    -------
+    int
+        L'intero inserito dall'utente.
+    """
+    while True:
+        answer = input(f"{prompt} ").strip()
+        try:
+            value = int(answer)
+            if min_val is not None and value < min_val:
+                print(f"Errore: il valore deve essere >= {min_val}.")
+                continue
+            if max_val is not None and value > max_val:
+                print(f"Errore: il valore deve essere <= {max_val}.")
+                continue
+            return value
+        except ValueError:
+            print("Errore: inserire un numero intero valido.")
+
 def main() -> None:
     """
     Main routine of the script.
@@ -723,18 +758,24 @@ def main() -> None:
     - Corrects the saturation frequencies using the frequency offset.
     - Plots the maximum values against the corrected saturation ppm.
     """
+    global start_ppm, end_ppm
+    
     folders: List[Path] = []
     region_integrals_list: List[Dict[str, float]] = []
     
     with_ref: bool = ask_yes_no("Reference folder?")
+    with_multiple: bool = ask_yes_no("Multiple folders?")
+    if with_multiple:
+        multiple_amount: int = ask_int("How many?")
 
     # ---- Select reference folder ----
     if with_ref:
         folder_ref: Path = select_experiment_folder(title="Select reference folder")
         folders.append(folder_ref)
     # ---- Select experiment folder ----
-    folder: Path = select_experiment_folder(title="Select a folder")
-    folders.append(folder)
+    for n in range(multiple_amount):
+        folder: Path = select_experiment_folder(title="Select a folder")
+        folders.append(folder)
     
     for folder in folders:
         # ---- Extract parameters from method file ----
@@ -773,7 +814,13 @@ def main() -> None:
         # ---- User input for ppm range ----
         start_idx: int
         end_idx: int
-        (start_idx, end_idx) = ask_user_for_ppm_range(uc=uc)
+        if not start_ppm or not end_ppm:
+            (start_ppm, end_ppm) = ask_user_for_ppm_range(uc=uc)
+            start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
+            end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
+            if start_idx < 0 or end_idx < 0:
+                print("Invalid range: end and start indexes have to be both non-negative. Exiting.")
+                return
 
         # ---- Find normalized maxima along the spectra ----
         max_vals: Dict[int, float]
