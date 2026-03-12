@@ -329,45 +329,119 @@ def fit_curve(x: Union[List[float], np.ndarray],
         'fit_successful': fit_successful
     }
 
-def plot_integrals_regions(integrals: Dict[str, float]) -> None:
+def plot_integrals_regions(
+    integrals: Union[Dict[str, float], List[Dict[str, float]]],
+    labels: Optional[List[str]] = None,
+    colors: Optional[List[str]] = None,
+    title: str = 'Intensità per regione',
+    xlabel: str = 'Regione',
+    ylabel: str = 'Intensità',
+    figsize: tuple = (12, 6),
+    show_values: bool = True
+) -> None:
     """
-    Crea un grafico a barre degli integrali di regione.
+    Crea un grafico a barre (singolo o raggruppato) degli integrali di regione.
 
     Parameters
     ----------
-    integrals : Dict[str, float]
-        Dizionario con i nomi delle regioni e i rispettivi integrali.
+    integrals : Dict[str, float] or List[Dict[str, float]]
+        - Se è un dizionario: grafico a barre singolo.
+        - Se è una lista di dizionari: grafico a barre raggruppate (tutti i dizionari
+          devono avere le stesse chiavi/regioni).
+    labels : list of str, optional
+        Etichette per i gruppi di barre (solo per il caso raggruppato).
+        Se non fornite, verranno usati 'Gruppo 1', 'Gruppo 2', ...
+    colors : list of str, optional
+        Colori per le diverse serie. Se non forniti, verrà usato il colormap predefinito.
+    title, xlabel, ylabel : str
+        Titolo e etichette assi.
+    figsize : tuple
+        Dimensione della figura (larghezza, altezza).
+    show_values : bool
+        Se True, mostra i valori sopra le barre.
     """
-    # Estrai etichette e valori
-    labels: List[str] = list(integrals.keys())
-    values: List[float] = list(integrals.values())
+    # Determina se è una lista o un dizionario singolo
+    is_list: bool = isinstance(integrals, list)
+    
+    if not is_list:
+        # Caso singolo dizionario (comportamento originale)
+        integrals = [integrals]  # Converti in lista per unificare la logica
 
-    # Crea il grafico a barre
-    plt.figure(figsize=(10, 6))
-    bars: plt.BarContainer = plt.bar(labels, values, color='skyblue', edgecolor='black')
+    # Verifica che tutti i dizionari abbiano le stesse chiavi
+    if len(integrals) > 1:
+        keys_set: List[set[str]] = [set(d.keys()) for d in integrals]
+        if not all(k == keys_set[0] for k in keys_set):
+            raise ValueError("Tutti i dizionari devono avere le stesse chiavi (regioni).")
+    
+    # Estrai le etichette comuni (regioni) dal primo dizionario
+    region_labels: List[str] = list(integrals[0].keys())
+    n_regions: int = len(region_labels)
+    n_series: int = len(integrals)
 
-    # Aggiungi titolo ed etichette assi
-    plt.title('Intensità per regione')
-    plt.xlabel('Regione')
-    plt.ylabel('Intensità')
+    # Prepara i valori: matrice (n_series x n_regions)
+    values_matrix: List = []
+    for d in integrals:
+        values_matrix.append([d[reg] for reg in region_labels])
+    values_matrix = np.array(values_matrix)  # shape: (n_series, n_regions)
 
-    # Ruota le etichette sull'asse x per leggibilità (opzionale)
-    plt.xticks(rotation=45, ha='right')
+    # Crea il grafico
+    plt.figure(figsize=figsize)
+    
+    # Larghezza di ogni barra e posizioni
+    bar_width: float = 0.8 / n_series if n_series > 1 else 0.6
+    x = np.arange(n_regions)  # posizioni delle regioni sull'asse x
+    
+    # Colori
+    if colors is None:
+        colors = plt.cm.tab10(np.linspace(0, 1, n_series))
+    else:
+        # Se i colori sono meno delle serie, ripeti
+        if len(colors) < n_series:
+            colors = colors * (n_series // len(colors) + 1)
+        colors = colors[:n_series]
 
-    # Aggiungi i valori sopra le barre (opzionale)
-    for bar, val in zip(bars, values):
-        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02 * max(values),
-                f'{val:.2f}', ha='center', va='bottom', fontsize=9)
+    # Etichette per la legenda (solo se più serie)
+    if labels is None and n_series > 1:
+        labels = [f'Gruppo {i+1}' for i in range(n_series)]
+    elif labels is None:
+        labels = ['']  # non serve legenda
 
-    # Mostra il grafico
-    plt.tight_layout()  # Per evitare sovrapposizioni
-    plt.show()  
+    # Disegna le barre
+    bars_list: List = []
+    for i in range(n_series):
+        offset: float = (i - n_series/2 + 0.5) * bar_width
+        bars: plt.BarContainer = plt.bar(x + offset, values_matrix[i], width=bar_width,
+                       label=labels[i] if n_series > 1 else None,
+                       color=colors[i], edgecolor='black', linewidth=0.5)
+        bars_list.append(bars)
 
-def select_experiment_folder() -> Path:
+    # Aggiungi valori sopra le barre se richiesto
+    if show_values:
+        for i, bars in enumerate(bars_list):
+            for bar, val in zip(bars, values_matrix[i]):
+                height: float = bar.get_height()
+                # Posiziona il testo sopra la barra
+                plt.text(bar.get_x() + bar.get_width()/2, height + 0.02 * values_matrix.max(),
+                         f'{val:.2f}', ha='center', va='bottom', fontsize=8)
+
+    # Imposta etichette e titolo
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.xticks(x, region_labels, rotation=45, ha='right')
+    
+    # Aggiungi legenda se più serie
+    if n_series > 1:
+        plt.legend()
+    
+    plt.tight_layout()
+    plt.show()
+
+def select_experiment_folder(title: str = "Select a folder") -> Path:
     """Mostra una finestra di dialogo e restituisce il percorso della cartella selezionata."""
     root = tk.Tk()
     root.withdraw()
-    folder = Path(filedialog.askdirectory(title="Select a folder"))
+    folder = Path(filedialog.askdirectory(title=title))
     return folder
 
 def extract_parameters(folder: Path) -> Tuple[List[float], List[float]]:
@@ -625,6 +699,16 @@ def correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf
         n_points=200,
     )
 
+def ask_yes_no(prompt):
+    """Ask the user a yes/no question and return True for yes, False for no."""
+    while True:
+        answer = input(prompt + " (y/n): ").strip().lower()
+        if answer in ('y'):
+            return True
+        if answer in ('n'):
+            return False
+        print("Please answer with y or n.")
+
 def main() -> None:
     """
     Main routine of the script.
@@ -639,84 +723,94 @@ def main() -> None:
     - Corrects the saturation frequencies using the frequency offset.
     - Plots the maximum values against the corrected saturation ppm.
     """
+    folders: List[Path] = []
+    region_integrals_list: List[Dict[str, float]] = []
+    
+    with_ref: bool = ask_yes_no("Reference folder?")
+
+    # ---- Select reference folder ----
+    if with_ref:
+        folder_ref: Path = select_experiment_folder(title="Select reference folder")
+        folders.append(folder_ref)
     # ---- Select experiment folder ----
-    folder: Path = select_experiment_folder()
+    folder: Path = select_experiment_folder(title="Select a folder")
+    folders.append(folder)
     
-    # ---- Extract parameters from method file ----
-    sat_trans_hz: List[float]
-    work_offset_hz: List[float]
-    try:
-        sat_trans_hz, work_offset_hz = extract_parameters(folder=folder)
-    except FileNotFoundError as e:
-        print(f"Errore: {e}")
-        return
-    except ValueError as e:  # se parameter_extract solleva ValueError per altri motivi
-        print(f"Errore nel formato dei parametri: {e}")
-        return
+    for folder in folders:
+        # ---- Extract parameters from method file ----
+        sat_trans_hz: List[float]
+        work_offset_hz: List[float]
+        try:
+            sat_trans_hz, work_offset_hz = extract_parameters(folder=folder)
+        except FileNotFoundError as e:
+            print(f"Errore: {e}")
+            return
+        except ValueError as e:  # se parameter_extract solleva ValueError per altri motivi
+            print(f"Errore nel formato dei parametri: {e}")
+            return
 
-    # ---- Read Bruker data ----
-    dic: Dict
-    data: np.ndarray
-    uc: unit_conversion
-    ppm_axis: np.ndarray
-    n_exp: int
-    bf1: float
-    (dic, data, uc, ppm_axis, n_exp, bf1) = load_spectra(folder=folder)
+        # ---- Read Bruker data ----
+        dic: Dict
+        data: np.ndarray
+        uc: unit_conversion
+        ppm_axis: np.ndarray
+        n_exp: int
+        bf1: float
+        (dic, data, uc, ppm_axis, n_exp, bf1) = load_spectra(folder=folder)
 
-    # ---- Verifica che ci siano esperimenti ----
-    if n_exp <= 0:
-        print("Errore: nessun esperimento trovato (n_exp = 0). Impossibile proseguire.")
-        return
-    
-    # ---- Process data ----
-    spectra: Dict
-    spectra = process_spectra(data=data, dic=dic, n_exp=n_exp)
-
-    # ---- Plot spectra ----
-    plot_spectra(spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
-
-    # ---- User input for ppm range ----
-    start_idx: int
-    end_idx: int
-    (start_idx, end_idx) = ask_user_for_ppm_range(uc=uc)
-
-    # ---- Find normalized maxima along the spectra ----
-    max_vals: Dict[int, float]
-    max_indexes: Dict[int, int]
-    (max_vals, max_indexes) = find_max_vals(spectra=spectra, start_idx=start_idx, end_idx=end_idx)
-
-    # ---- Correct saturation frequencies and final plot ----
-    if len(sat_trans_hz) == len(max_vals):
+        # ---- Verifica che ci siano esperimenti ----
+        if n_exp <= 0:
+            print("Errore: nessun esperimento trovato (n_exp = 0). Impossibile proseguire.")
+            return
         
-        fit_result: Dict[str, Any] = correct_sat_freq(
-            sat_trans_hz=sat_trans_hz, 
-            max_vals=max_vals,
-            max_indexes=max_indexes,
-            work_offset_hz=work_offset_hz,
-            uc=uc,
-            bf1=bf1,
-        )
-        
-        if fit_result["fit_successful"]:
-            plot_data_with_spline(
-                x=fit_result["x_sorted"],
-                y=fit_result["y_sorted"],
-                x_fit=fit_result["x_fit"],
-                y_fit=fit_result["y_fit"],
-                title="Max Values vs Saturation ppm",
-                xlabel="Saturation ppm",
-                ylabel="Max Value",
-                invert_x=True
+        # ---- Process data ----
+        spectra: Dict
+        spectra = process_spectra(data=data, dic=dic, n_exp=n_exp)
+
+        # ---- Plot spectra ----
+        plot_spectra(spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
+
+        # ---- User input for ppm range ----
+        start_idx: int
+        end_idx: int
+        (start_idx, end_idx) = ask_user_for_ppm_range(uc=uc)
+
+        # ---- Find normalized maxima along the spectra ----
+        max_vals: Dict[int, float]
+        max_indexes: Dict[int, int]
+        (max_vals, max_indexes) = find_max_vals(spectra=spectra, start_idx=start_idx, end_idx=end_idx)
+
+        # ---- Correct saturation frequencies and final plot ----
+        if len(sat_trans_hz) == len(max_vals):
+            
+            fit_result: Dict[str, Any] = correct_sat_freq(
+                sat_trans_hz=sat_trans_hz, 
+                max_vals=max_vals,
+                max_indexes=max_indexes,
+                work_offset_hz=work_offset_hz,
+                uc=uc,
+                bf1=bf1,
             )
-            region_integrals = compute_regions_integrals(x_fit=fit_result["x_fit"], y_fit=fit_result["y_fit"])
-            plot_integrals_regions(region_integrals)
+            
+            if fit_result["fit_successful"]:
+                plot_data_with_spline(
+                    x=fit_result["x_sorted"],
+                    y=fit_result["y_sorted"],
+                    x_fit=fit_result["x_fit"],
+                    y_fit=fit_result["y_fit"],
+                    title="Max Values vs Saturation ppm",
+                    xlabel="Saturation ppm",
+                    ylabel="Max Value",
+                    invert_x=True
+                )
+                region_integrals: Dict[str, float] = compute_regions_integrals(x_fit=fit_result["x_fit"], y_fit=fit_result["y_fit"])
+                region_integrals_list.append(region_integrals)
+                plot_integrals_regions(region_integrals)
 
-    else:
-        print("Number of saturation frequencies does not match number of processed series; skipping plot.")
+        else:
+            print("Number of saturation frequencies does not match number of processed series; skipping plot.")
 
-# ----------------------------------------------------------------------
-# MAIN
-# ----------------------------------------------------------------------
+    plot_integrals_regions(region_integrals_list)
 
 if __name__ == "__main__":
     main()
