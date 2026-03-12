@@ -238,7 +238,7 @@ def plot_data_with_spline(
         ylabel: str = "Max Value",
         fit_label: str = "",
         invert_x: bool = True
-    ) -> None:
+    ) -> Figure:
     """
     Plot data points and a spline fit through them.
 
@@ -264,7 +264,7 @@ def plot_data_with_spline(
         If True, invert the x-axis (useful for ppm scales where high values are on the left).
     """
     # Create the plot
-    plt.figure(figsize=(8, 5))
+    fig: Figure = plt.figure(figsize=(8, 5))
     plt.plot(x, y, 'o', color='b', label='Data')
     plt.plot(x_fit, y_fit, 'r-', label = fit_label)
 
@@ -277,6 +277,8 @@ def plot_data_with_spline(
     plt.grid(True)
     plt.legend()
     plt.show(block=False)
+
+    return fig
 
 def fit_curve(x: Union[List[float], np.ndarray],
               y: Union[List[float], np.ndarray],
@@ -343,28 +345,11 @@ def plot_integrals_regions(
     xlabel: str = 'Regione',
     ylabel: str = 'Intensità',
     figsize: tuple = (12, 6),
-    show_values: bool = True
-) -> None:
+    show_values: bool = True,
+    reference: Optional[bool] = False
+) -> Figure:
     """
     Crea un grafico a barre (singolo o raggruppato) degli integrali di regione.
-
-    Parameters
-    ----------
-    integrals : Dict[str, float] or List[Dict[str, float]]
-        - Se è un dizionario: grafico a barre singolo.
-        - Se è una lista di dizionari: grafico a barre raggruppate (tutti i dizionari
-          devono avere le stesse chiavi/regioni).
-    labels : list of str, optional
-        Etichette per i gruppi di barre (solo per il caso raggruppato).
-        Se non fornite, verranno usati 'Gruppo 1', 'Gruppo 2', ...
-    colors : list of str, optional
-        Colori per le diverse serie. Se non forniti, verrà usato il colormap predefinito.
-    title, xlabel, ylabel : str
-        Titolo e etichette assi.
-    figsize : tuple
-        Dimensione della figura (larghezza, altezza).
-    show_values : bool
-        Se True, mostra i valori sopra le barre.
     """
     # Determina se è una lista o un dizionario singolo
     is_list: bool = isinstance(integrals, list)
@@ -382,6 +367,7 @@ def plot_integrals_regions(
     # Estrai le etichette comuni (regioni) dal primo dizionario
     region_labels: List[str] = list(integrals[0].keys())
     n_regions: int = len(region_labels)
+    
     n_series: int = len(integrals)
 
     # Prepara i valori: matrice (n_series x n_regions)
@@ -391,8 +377,10 @@ def plot_integrals_regions(
     values_matrix = np.array(values_matrix)  # shape: (n_series, n_regions)
 
     # Crea il grafico
-    plt.figure(figsize=figsize)
-    
+    fig_absolute: Figure
+    ax_absolute: Axes
+    fig_absolute, ax_absolute = plt.subplots(figsize=figsize)
+
     # Larghezza di ogni barra e posizioni
     bar_width: float = 0.8 / n_series if n_series > 1 else 0.6
     x = np.arange(n_regions)  # posizioni delle regioni sull'asse x
@@ -416,7 +404,7 @@ def plot_integrals_regions(
     bars_list: List = []
     for i in range(n_series):
         offset: float = (i - n_series/2 + 0.5) * bar_width
-        bars: plt.BarContainer = plt.bar(x + offset, values_matrix[i], width=bar_width,
+        bars: plt.BarContainer = ax_absolute.bar(x + offset, values_matrix[i], width=bar_width,
                        label=labels[i] if n_series > 1 else None,
                        color=colors[i], edgecolor='black', linewidth=0.5)
         bars_list.append(bars)
@@ -426,22 +414,128 @@ def plot_integrals_regions(
         for i, bars in enumerate(bars_list):
             for bar, val in zip(bars, values_matrix[i]):
                 height: float = bar.get_height()
+                y_text = height + 0.02 * values_matrix.max()
                 # Posiziona il testo sopra la barra
-                plt.text(bar.get_x() + bar.get_width()/2, height + 0.02 * values_matrix.max(),
-                         f'{val:.2f}', ha='center', va='bottom', fontsize=8)
+                ax_absolute.text(
+                    bar.get_x() + bar.get_width()/2, 
+                    y_text,
+                    f'{val:.2e}', 
+                    ha='center', 
+                    va='bottom', 
+                    fontsize=8,
+                    rotation=90
+                )
 
     # Imposta etichette e titolo
-    plt.title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.xticks(x, region_labels, rotation=45, ha='right')
+    ax_absolute.set_title(title)
+    ax_absolute.set_xlabel(xlabel)
+    ax_absolute.set_ylabel(ylabel)
+    ax_absolute.set_xticks(x, region_labels, rotation=45, ha='right')
     
     # Aggiungi legenda se più serie
-    if n_series > 1:
-        plt.legend()
+    ax_absolute.legend()
+    fig_absolute.tight_layout()
+
+    if reference:
+
+        labels = labels[1:]
+        colors = colors[1:]
+
+        integrals_referenced: List[Dict[str, float]] = []
+        if reference:
+            for index, integral in enumerate(integrals[1:]):
+                d: Dict[str, float] = {}
+                for key, integral in integral.items():
+                    d[key] = 100 * (integral / integrals[0][key] -1)
+                integrals_referenced.append(d)
+        
+        n_series -= 1
+
+        # Prepara i valori: matrice (n_series x n_regions)
+        values_matrix: List = []
+        for d in integrals_referenced:
+            values_matrix.append([d[reg] for reg in region_labels])
+        values_matrix = np.array(values_matrix)  # shape: (n_series, n_regions)
+
+        vmin = values_matrix.min()
+        vmax = values_matrix.max()
+        value_offset = 0.02 * (vmax - vmin)  # offset relativo all'altezza totale del grafico
+
+        # Crea il grafico
+        fig_referenced: Figure
+        ax_referenced: Axes
+        fig_referenced, ax_referenced = plt.subplots(figsize=figsize)
+
+        # Larghezza di ogni barra e posizioni
+        bar_width: float = 0.8 / n_series if n_series > 1 else 0.6
+        x = np.arange(n_regions)  # posizioni delle regioni sull'asse x
+        
+        # Colori
+        if colors is None:
+            colors = plt.cm.tab10(np.linspace(0, 1, n_series))
+        else:
+            # Se i colori sono meno delle serie, ripeti
+            if len(colors) < n_series:
+                colors = colors * (n_series // len(colors) + 1)
+            colors = colors[:n_series]
+
+        # Etichette per la legenda (solo se più serie)
+        if labels is None and n_series > 1:
+            labels = [f'Gruppo {i+1}' for i in range(n_series)]
+        elif labels is None:
+            labels = ['']  # non serve legenda
+
+        # Disegna le barre
+        bars_list: List = []
+        if reference:
+            for i in range(n_series):
+                offset: float = (i - n_series/2 + 0.5) * bar_width
+                bars: plt.BarContainer = ax_referenced.bar(x + offset, values_matrix[i], width=bar_width,
+                            label=labels[i] if n_series > 1 else None,
+                            color=colors[i], edgecolor='black', linewidth=0.5)
+                bars_list.append(bars)
+
+
+        # Aggiungi valori sopra le barre se richiesto
+        if show_values:
+            for i, bars in enumerate(bars_list):
+                for bar, val in zip(bars, values_matrix[i]):
+                    y_text: float = bar.get_height()
+                    va: str
+                    if val >= 0:
+                        y_text += value_offset
+                        va = 'bottom'   # allineamento verticale: testo sopra la barra
+                    else:
+                        y_text -= value_offset  # sotto la barra (valore negativo)
+                        va = 'top'       # allineamento verticale: testo sotto (per non invadere)
+
+                    # Posiziona il testo sopra la barra
+                    ax_referenced.text(
+                        bar.get_x() + bar.get_width()/2, 
+                        y_text,
+                        f'{val:.2f}', 
+                        ha='center', 
+                        va=va, 
+                        fontsize=8, 
+                        rotation=90
+                    )
+
+        # Imposta etichette e titolo
+        ax_referenced.set_title(title)
+        ax_referenced.set_xlabel(xlabel)
+        ax_referenced.set_ylabel(ylabel)
+        ax_referenced.set_xticks(x, region_labels, rotation=45, ha='right')
+        
+        # Aggiungi legenda se più serie
+        ax_referenced.legend()
+        fig_referenced.tight_layout()
     
-    plt.tight_layout()
-    plt.show()
+    plt.show(block=True)
+    
+    if reference:
+        return fig_absolute, fig_referenced
+    else:
+        return fig_absolute
 
 def select_experiment_folder(title: str = "Select a folder") -> Path:
     """Mostra una finestra di dialogo e restituisce il percorso della cartella selezionata."""
@@ -538,7 +632,7 @@ def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
     
     return spectra
 
-def plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz):
+def plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
     """
     Crea un plot interattivo di tutti gli spettri con checkbox per mostrare/nascondere
     ogni traccia.
@@ -619,6 +713,7 @@ def plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz):
 
     # Show the figure (non-blocking)
     plt.show(block=False)
+    return fig
 
 def find_max_vals(spectra, start_idx, end_idx):
     """
@@ -761,12 +856,11 @@ def main() -> None:
     global start_ppm, end_ppm
     
     folders: List[Path] = []
-    region_integrals_list: List[Dict[str, float]] = []
+    region_integrals_dict: Dict[str, Dict[str, float]] = {}
     
     with_ref: bool = ask_yes_no("Reference folder?")
     with_multiple: bool = ask_yes_no("Multiple folders?")
-    if with_multiple:
-        multiple_amount: int = ask_int("How many?")
+    multiple_amount: int = ask_int("How many?") if with_multiple else 1
 
     # ---- Select reference folder ----
     if with_ref:
@@ -808,24 +902,32 @@ def main() -> None:
         spectra: Dict
         spectra = process_spectra(data=data, dic=dic, n_exp=n_exp)
 
-        # ---- Plot spectra ----
-        plot_spectra(spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
-
         # ---- User input for ppm range ----
         start_idx: int
         end_idx: int
         if not start_ppm or not end_ppm:
+            # ---- Plot spectra ----
+            spectra_fig: Figure = plot_spectra(
+                spectra=spectra, 
+                n_exp=n_exp, 
+                ppm_axis=ppm_axis, 
+                sat_trans_hz=sat_trans_hz
+            )
             (start_ppm, end_ppm) = ask_user_for_ppm_range(uc=uc)
             start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
             end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
             if start_idx < 0 or end_idx < 0:
                 print("Invalid range: end and start indexes have to be both non-negative. Exiting.")
                 return
-
+            plt.close(spectra_fig)
+            
         # ---- Find normalized maxima along the spectra ----
         max_vals: Dict[int, float]
         max_indexes: Dict[int, int]
         (max_vals, max_indexes) = find_max_vals(spectra=spectra, start_idx=start_idx, end_idx=end_idx)
+        
+        #spline_fig: Figure
+        #integrals_fig: Figure
 
         # ---- Correct saturation frequencies and final plot ----
         if len(sat_trans_hz) == len(max_vals):
@@ -840,24 +942,31 @@ def main() -> None:
             )
             
             if fit_result["fit_successful"]:
-                plot_data_with_spline(
-                    x=fit_result["x_sorted"],
-                    y=fit_result["y_sorted"],
-                    x_fit=fit_result["x_fit"],
-                    y_fit=fit_result["y_fit"],
-                    title="Max Values vs Saturation ppm",
-                    xlabel="Saturation ppm",
-                    ylabel="Max Value",
-                    invert_x=True
-                )
+                #spline_fig = plot_data_with_spline(
+                #    x=fit_result["x_sorted"],
+                #    y=fit_result["y_sorted"],
+                #    x_fit=fit_result["x_fit"],
+                #    y_fit=fit_result["y_fit"],
+                #    title="Max Values vs Saturation ppm",
+                #    xlabel="Saturation ppm",
+                #    ylabel="Max Value",
+                #    invert_x=True
+                #)
                 region_integrals: Dict[str, float] = compute_regions_integrals(x_fit=fit_result["x_fit"], y_fit=fit_result["y_fit"])
-                region_integrals_list.append(region_integrals)
-                plot_integrals_regions(region_integrals)
+                region_integrals_dict[folder.parent.name] = region_integrals
+                #integrals_fig = plot_integrals_regions(integrals=region_integrals, labels=folder)
 
         else:
             print("Number of saturation frequencies does not match number of processed series; skipping plot.")
 
-    plot_integrals_regions(region_integrals_list)
+        #plt.close(spline_fig)
+        #plt.close(integrals_fig)
+
+    plot_integrals_regions(
+        integrals=list(region_integrals_dict.values()),
+        labels=list(region_integrals_dict.keys()),
+        reference=with_ref
+    )
 
 if __name__ == "__main__":
     main()
