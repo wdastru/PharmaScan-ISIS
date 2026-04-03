@@ -219,7 +219,8 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
         mask: np.ndarray = (x_fit >= bounds[0]) & (x_fit <= bounds[1])
         if not np.any(mask):
             return 0.0
-        return np.trapezoid(1 - y_fit[mask], x_fit[mask])
+        area: np.float64 = np.trapezoid(1 - y_fit[mask], x_fit[mask])
+        return area
 
     region_integrals: Dict[str, float] = {
         region_name:
@@ -872,7 +873,7 @@ def main() -> None:
         folders.append(folder)
     
     for folder in folders:
-        folder_name_short: str = f"…{folder.parent.name[-32:]}"
+        folder_name_short: str = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
         # ---- Extract parameters from method file ----
         sat_trans_hz: List[float]
         work_offset_hz: List[float]
