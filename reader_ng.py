@@ -438,6 +438,8 @@ def plot_integrals_regions(
 
     if reference:
 
+        title = "Intensità relative alla prima serie (100% = riferimento)"
+
         labels = labels[1:]
         colors = colors[1:]
 
