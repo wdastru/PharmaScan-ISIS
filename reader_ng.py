@@ -22,8 +22,9 @@ from typing import List, Optional, Tuple, Dict, Any, Union
 from scipy.interpolate import UnivariateSpline
 
 REGIONS: dict[str, List[float]] = {
-    "G6P/G3P": [6.7, 7.0],
-    "3PG/F6P": [5.8, 6.7],
+    "SP": [5.6, 7.5],
+    #"G6P/G3P": [6.7, 7.0],
+    #"3PG/F6P": [5.8, 6.7],
     "Pi": [4.5, 5.2],
     "PDE": [3.5, 4.0],
     "PEP": [1.5, 3.0],
@@ -188,7 +189,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
     Parameters
     ----------
     x_fit : np.ndarray
-        Array delle ascisse (ppm) della curva fitted.
+        Array delle asycisse (ppm) della curva fitted.
     y_fit : np.ndarray
         Array delle ordinate (intensità normalizzate) della curva fitted.
 
@@ -198,7 +199,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
         Dizionario con chiavi i nomi delle regioni e valori gli integrali calcolati.
     """
 
-    def _region_integral(bounds, x_fit, y_fit) -> float:
+    def _region_integral(bounds, x_fit, y_fit, _region_name: str) -> float:
         """
         Calcola l'integrale di (1 - y) nell'intervallo [bounds[0], bounds[1]].
 
@@ -219,12 +220,15 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
         mask: np.ndarray = (x_fit >= bounds[0]) & (x_fit <= bounds[1])
         if not np.any(mask):
             return 0.0
-        area: np.float64 = np.trapezoid(1 - y_fit[mask], x_fit[mask])
+        upper_area: np.float64 = np.trapezoid(1 - y_fit[mask], x_fit[mask])
+        bottom_area: np.float64 = np.trapezoid(y_fit[mask], x_fit[mask])
+        total_area = upper_area + bottom_area
+        area = bottom_area
         return area
 
     region_integrals: Dict[str, float] = {
         region_name:
-        _region_integral(bounds = region_bounds, x_fit = x_fit, y_fit = y_fit) for region_name, region_bounds in REGIONS.items()
+        _region_integral(bounds = region_bounds, x_fit = x_fit, y_fit = y_fit, _region_name=region_name) for region_name, region_bounds in REGIONS.items()
                               }
     
     return region_integrals
