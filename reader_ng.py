@@ -713,7 +713,7 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
     ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
     btn_all = Button(ax_all, "Check all")
     btn_all.on_clicked(_check_all)
-
+    
     # "Uncheck all" button
     ax_none = fig.add_axes([0.90, 0.90, 0.09, 0.05])
     btn_none = Button(ax_none, "Uncheck all")
