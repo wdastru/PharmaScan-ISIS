@@ -20,6 +20,8 @@ import tkinter as tk
 from tkinter import filedialog
 from typing import List, Optional, Tuple, Dict, Any, Union
 from scipy.interpolate import UnivariateSpline
+from scipy.interpolate import make_smoothing_spline
+from scipy.interpolate import PchipInterpolator
 import json
 
 REGIONS: dict[str, List[float]] = {
@@ -344,7 +346,9 @@ def fit_curve(x, y, smoothing=0.0, n_points=200) -> Dict[str, Any]:
     y_fit = None
     fit_label = ""
     try:
-        spline = UnivariateSpline(x_sorted, y_sorted, s=smoothing)
+        #spline = UnivariateSpline(x_sorted, y_sorted, s=smoothing)
+        #spline = make_smoothing_spline(x_sorted, y_sorted, lam=smoothing)
+        spline = PchipInterpolator(x_sorted, y_sorted)
         fit_successful = True
         x_fit = np.linspace(x_sorted.min(), x_sorted.max(), n_points)
         y_fit = spline(x_fit)
@@ -797,9 +801,10 @@ def correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf
     for exp_idx in max_vals:
         # Calculate the offset from the reference  
         delta = work_offset_hz[0] - uc.hz(max_indexes[exp_idx])
-        sat_trans_hz[exp_idx] += delta
+        if not sat_trans_hz[exp_idx] == 0.0:
+            sat_trans_hz[exp_idx] += delta
         sat_trans_f1_ppm[exp_idx] = sat_trans_hz[exp_idx] / bf1
-    return fit_curve(x=sat_trans_f1_ppm, y=list(max_vals.values()), smoothing=0.0, n_points=200)
+    return fit_curve(x=sat_trans_f1_ppm, y=list(max_vals.values()), smoothing=0.02, n_points=200)
 
 def ask_yes_no(prompt: str, default: Optional[bool] = None) -> bool:
     """
