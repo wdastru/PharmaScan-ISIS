@@ -660,31 +660,25 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
     sat_trans_hz : List[float]
         Frequenze di saturazione in Hz (usate come etichette).
     """
-    lines: List[plt.Line2D] = []
-    labels: List[str] = []
-    fig: Figure
-    ax: Axes
     fig, ax = plt.subplots(figsize=(12, 6))
+    lines = []
+    labels = []
     for exp_idx in range(n_exp):
-        # Plot the real part
-        line, = ax.plot(
-            ppm_axis,
-            np.real(spectra[exp_idx]),
-            label=f"{sat_trans_hz[exp_idx]:.2f}",
-            alpha=0.7,
-            linewidth=1.2,
-        )
+        line, = ax.plot(ppm_axis, np.real(spectra[exp_idx]),
+                        label=f"{sat_trans_hz[exp_idx]:.2f}",
+                        alpha=0.7, linewidth=1.2)
         lines.append(line)
         labels.append(line.get_label())
 
     # Main plot settings
-    ax.invert_xaxis()                           # decreasing ppm from left to right
+    ax.invert_xaxis()
     ax.set_xlabel("ppm")
     ax.set_ylabel("Intensity")
     ax.grid(True, alpha=0.3)
+    ax.set_title(title)
 
     # ---- CheckButtons panel ----
-    rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])   # [left, bottom, width, height]
+    rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])
     visibility = [l.get_visible() for l in lines]
     checks = CheckButtons(rax, labels, visibility)
 
@@ -692,22 +686,24 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
     # Callbacks for interactive widgets
     # to capture lines, labels, fig, checks
     # ----------------------------------------------------------------------
-    def _on_check(label: str) -> None:
+    def _on_check(label):
         idx = labels.index(label)
         lines[idx].set_visible(not lines[idx].get_visible())
         fig.canvas.draw_idle()
 
-    def _check_all(event: Any) -> None:
-        for i, l in enumerate(lines):
-            if not l.get_visible():
-                checks.set_active(i)
-        plt.draw()
+    def _check_all(event):
+        for i, line in enumerate(lines):
+            if not line.get_visible():
+                line.set_visible(True)
+                checks.lines[i].set_visible(True)
+        fig.canvas.draw_idle()
 
-    def _uncheck_all(event: Any) -> None:
-        for i, l in enumerate(lines):
-            if l.get_visible():
-                checks.set_active(i)
-        plt.draw()
+    def _uncheck_all(event):
+        for i, line in enumerate(lines):
+            if line.get_visible():
+                line.set_visible(False)
+                checks.lines[i].set_visible(False)
+        fig.canvas.draw_idle()
 
     checks.on_clicked(_on_check)
 
@@ -715,16 +711,13 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
     ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
     btn_all = Button(ax_all, "Check all")
     btn_all.on_clicked(_check_all)
-
+    
     # "Uncheck all" button
     ax_none = fig.add_axes([0.90, 0.90, 0.09, 0.05])
     btn_none = Button(ax_none, "Uncheck all")
     btn_none.on_clicked(_uncheck_all)
 
-    fig.tight_layout(rect=[0, 0, 0.80, 1])       # leave space on the right for widgets
-
-    # Show the figure (non-blocking)
-    ax.set_title(title, loc="center")
+    fig.tight_layout(rect=[0, 0, 0.80, 1])
     plt.show(block=False)
     return fig
 
@@ -902,6 +895,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
 
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
+    plt.ion()   # <-- interactive mode ON
     folders = config["folders"]
     with_ref = config.get("with_ref", False)
     start_ppm = config.get("start_ppm")
@@ -910,6 +904,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     
     region_integrals_dict = {}
     
+    spectrum_figures = []   # <-- store figure objects
     for idx, folder in enumerate(folders):
         folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
         try:
@@ -924,10 +919,12 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             return
         
         spectra = process_spectra(data, dic, n_exp)
-        spectra_fig = plot_spectra(title=f"Spectra - {folder_name_short}", spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
+        fig: Figure = plot_spectra(title=f"Spectra - {folder_name_short}", spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
+        spectrum_figures.append(fig)   # <-- keep reference to the figure
         
         # Se i ppm non sono ancora noti, chiediamo usando la prima cartella
         if ppm_missing and idx == 0:
+            plt.pause(0.05) # <-- keep figures alive
             start_ppm, end_ppm = ask_user_for_ppm_range(uc)
             # Aggiorna la configurazione
             config["start_ppm"] = start_ppm
@@ -958,6 +955,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 region_integrals_dict[folder_name_short] = region_integrals
         else:
             print(f"Numero di frequenze di saturazione non corrispondente per {folder}")
+        
+    pass
     
     plot_integrals_regions(
         integrals=list(region_integrals_dict.values()),
