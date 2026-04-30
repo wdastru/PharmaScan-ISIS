@@ -20,6 +20,7 @@ import tkinter as tk
 from tkinter import filedialog
 from typing import List, Optional, Tuple, Dict, Any, Union
 from scipy.interpolate import UnivariateSpline
+import json
 
 REGIONS: dict[str, List[float]] = {
     "SP": [5.6, 7.5],
@@ -37,6 +38,38 @@ REGIONS: dict[str, List[float]] = {
 # ----------------------------------------------------------------------
 start_ppm: float|None = None
 end_ppm: float|None = None
+
+# ----------------------------------------------------------------------
+# Configuration file handling
+# ----------------------------------------------------------------------
+CONFIG_FILE = Path(__file__).parent / "reader_ng_config.json"
+
+def load_config() -> Dict[str, Any]:
+    """Carica la configurazione dal file JSON se esiste."""
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                config = json.load(f)
+            # Converti i percorsi delle cartelle da stringhe a Path
+            if "folders" in config:
+                config["folders"] = [Path(p) for p in config["folders"]]
+            return config
+        except Exception as e:
+            print(f"Errore nel caricamento della configurazione: {e}")
+    return {}
+
+def save_config(config: Dict[str, Any]) -> None:
+    """Salva la configurazione nel file JSON."""
+    # Crea una copia convertendo i Path in stringhe
+    to_save = config.copy()
+    if "folders" in to_save:
+        to_save["folders"] = [str(p) for p in to_save["folders"]]
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(to_save, f, indent=4)
+        print(f"Configurazione salvata in {CONFIG_FILE}")
+    except Exception as e:
+        print(f"Errore nel salvataggio della configurazione: {e}")
 
 # ----------------------------------------------------------------------
 # Utility functions
@@ -762,29 +795,44 @@ def find_max_vals(spectra, start_idx, end_idx):
 
     return max_vals, max_indexes
 
-def ask_user_for_ppm_range(uc) -> Tuple[int, int]:
+def ask_user_for_ppm_range(uc, default_start: Optional[float] = None, default_end: Optional[float] = None) -> Tuple[float, float]:
     """
     Richiede all'utente di inserire l'intervallo in ppm (min e max).
+    Se forniti default_start e default_end, li mostra come suggeriti.
     Ripete la richiesta finché non vengono forniti valori validi.
-    Restituisce gli indici start_idx, end_idx corrispondenti.
+    Restituisce start_ppm, end_ppm.
     """
     while True:
         try:
-            start_ppm = float(input("Enter the minimum ppm (start): "))
-            end_ppm = float(input("Enter the maximum ppm (end): "))
-
+            start_prompt = "Enter the minimum ppm (start)"
+            end_prompt = "Enter the maximum ppm (end)"
+            if default_start is not None:
+                start_prompt += f" (default {default_start})"
+            if default_end is not None:
+                end_prompt += f" (default {default_end})"
+            
+            start_input = input(f"{start_prompt}: ").strip()
+            end_input = input(f"{end_prompt}: ").strip()
+            
+            start_ppm = float(start_input) if start_input else default_start
+            end_ppm = float(end_input) if end_input else default_end
+            
+            if start_ppm is None or end_ppm is None:
+                print("Valori non validi. Inserire entrambi i valori.")
+                continue
+            
             if end_ppm <= start_ppm:
                 print("Invalid range: end must be greater than start. Please try again.")
                 continue
-
-            print(f"Selected range: [{start_ppm}, {end_ppm}]")  # end-exclusive
+                
+            print(f"Selected range: [{start_ppm}, {end_ppm}]")
             return start_ppm, end_ppm
 
         except ValueError as e:
             print(f"Input error: {e}. Please enter valid numbers.")
         except Exception as e:
             print(f"Unexpected error: {e}. Please try again.")
-            
+
 def correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf1):
     """
     Calcola le frequenze di saturazione corrette (in ppm) e restituisce il fit.
@@ -804,17 +852,30 @@ def correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf
         n_points=200,
     )
 
-def ask_yes_no(prompt):
-    """Ask the user a yes/no question and return True for yes, False for no."""
+def ask_yes_no(prompt: str, default: Optional[bool] = None) -> bool:
+    """
+    Ask the user a yes/no question and return True for yes, False for no.
+    default: default value if user presses Enter.
+    """
+    default_prompt = ""
+    if default is True:
+        default_prompt = " (Y/n)"
+    elif default is False:
+        default_prompt = " (y/N)"
+    else:
+        default_prompt = " (y/n)"
+    
     while True:
-        answer = input(prompt + " (y/n): ").strip().lower()
+        answer = input(prompt + default_prompt + ": ").strip().lower()
+        if not answer and default is not None:
+            return default
         if answer in ('y'):
             return True
         if answer in ('n'):
             return False
         print("Please answer with y or n.")
 
-def ask_int(prompt: str, min_val: int = None, max_val: int = None) -> int:
+def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Optional[int] = None) -> int:
     """
     Chiede all'utente di inserire un intero e lo restituisce.
 
@@ -832,8 +893,11 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None) -> int:
     int
         L'intero inserito dall'utente.
     """
+    default_prompt = f" (default {default})" if default is not None else ""
     while True:
-        answer = input(f"{prompt} ").strip()
+        answer = input(f"{prompt}{default_prompt}: ").strip()
+        if not answer and default is not None:
+            return default
         try:
             value = int(answer)
             if min_val is not None and value < min_val:
@@ -862,18 +926,105 @@ def main() -> None:
     """
     global start_ppm, end_ppm
     
+    # Carica la configurazione salvata in precedenza
+    config = load_config()
+    
+    # Se esiste una configurazione completa, usala senza alcuna interazione
+    if config and "folders" in config and "start_ppm" in config and "end_ppm" in config:
+        print("Configurazione trovata. Esecuzione automatica senza richieste.")
+        folders = config["folders"]
+        with_ref = config.get("with_ref", False)
+        # with_multiple e multiple_amount sono impliciti nella lunghezza di folders meno presenza di ref
+        # ma per sicurezza li carichiamo comunque
+        start_ppm = config["start_ppm"]
+        end_ppm = config["end_ppm"]
+        
+        # Verifica che tutte le cartelle esistano ancora
+        missing = [f for f in folders if not f.exists()]
+        if missing:
+            print("Errore: una o più cartelle salvate non esistono più:")
+            for m in missing:
+                print(f"  - {m}")
+            print("Elimina il file di configurazione per rieseguire la configurazione interattiva.")
+            return
+        
+        # Se tutto ok, procedi direttamente all'elaborazione
+        region_integrals_dict: Dict[str, Dict[str, float]] = {}
+        
+        for folder in folders:
+            folder_name_short: str = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
+            # Estrai parametri
+            try:
+                sat_trans_hz, work_offset_hz = extract_parameters(folder=folder)
+            except (FileNotFoundError, ValueError) as e:
+                print(f"Errore nella cartella {folder}: {e}")
+                return
+            
+            # Carica spettri
+            dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder=folder)
+            if n_exp <= 0:
+                print(f"Errore: nessun esperimento in {folder}")
+                return
+            
+            spectra = process_spectra(data=data, dic=dic, n_exp=n_exp)
+            
+            # Calcola indici dall'intervallo ppm salvato
+            start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
+            end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
+            if start_idx < 0 or end_idx < 0:
+                print("Intervallo ppm non valido (indici negativi).")
+                return
+            
+            max_vals, max_indexes = find_max_vals(spectra=spectra, start_idx=start_idx, end_idx=end_idx)
+            
+            if len(sat_trans_hz) == len(max_vals):
+                fit_result = correct_sat_freq(
+                    sat_trans_hz=sat_trans_hz,
+                    max_vals=max_vals,
+                    max_indexes=max_indexes,
+                    work_offset_hz=work_offset_hz,
+                    uc=uc,
+                    bf1=bf1,
+                )
+                if fit_result["fit_successful"]:
+                    plot_data_with_spline(
+                        x=fit_result["x_sorted"],
+                        y=fit_result["y_sorted"],
+                        x_fit=fit_result["x_fit"],
+                        y_fit=fit_result["y_fit"],
+                        title=folder_name_short,
+                        xlabel="Saturation ppm",
+                        ylabel="Max Value",
+                        invert_x=True
+                    )
+                    region_integrals = compute_regions_integrals(x_fit=fit_result["x_fit"], y_fit=fit_result["y_fit"])
+                    region_integrals_dict[folder_name_short] = region_integrals
+            else:
+                print(f"Numero di frequenze di saturazione non corrispondente per {folder}")
+        
+        plot_integrals_regions(
+            integrals=list(region_integrals_dict.values()),
+            labels=list(region_integrals_dict.keys()),
+            reference=with_ref
+        )
+        return
+    
+    # -------------------------------------------------------------
+    # Se non c'è configurazione, esegui la procedura interattiva originale
+    # -------------------------------------------------------------
+    print("Nessuna configurazione precedente trovata. Avvio configurazione interattiva.")
+    with_ref = ask_yes_no("Reference folder?", default=False)
+    with_multiple = ask_yes_no("Multiple folders?", default=False)
+    multiple_amount = ask_int("How many?", min_val=1, default=1) if with_multiple else 1
+
     folders: List[Path] = []
     region_integrals_dict: Dict[str, Dict[str, float]] = {}
-    
-    with_ref: bool = ask_yes_no("Reference folder?")
-    with_multiple: bool = ask_yes_no("Multiple folders?")
-    multiple_amount: int = ask_int("How many?") if with_multiple else 1
 
     # ---- Select reference folder ----
     if with_ref:
         folder_ref: Path = select_experiment_folder(title="Select reference folder")
         folders.append(folder_ref)
-    # ---- Select experiment folder ----
+    # ---- Select experiment folder(s) ----
     for n in range(multiple_amount):
         folder: Path = select_experiment_folder(title="Select a folder")
         folders.append(folder)
@@ -888,34 +1039,25 @@ def main() -> None:
         except FileNotFoundError as e:
             print(f"Errore: {e}")
             return
-        except ValueError as e:  # se parameter_extract solleva ValueError per altri motivi
+        except ValueError as e:
             print(f"Errore nel formato dei parametri: {e}")
             return
 
         # ---- Read Bruker data ----
-        dic: Dict
-        data: np.ndarray
-        uc: unit_conversion
-        ppm_axis: np.ndarray
-        n_exp: int
-        bf1: float
-        (dic, data, uc, ppm_axis, n_exp, bf1) = load_spectra(folder=folder)
+        dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder=folder)
 
-        # ---- Verifica che ci siano esperimenti ----
         if n_exp <= 0:
             print("Errore: nessun esperimento trovato (n_exp = 0). Impossibile proseguire.")
             return
         
-        # ---- Process data ----
-        spectra: Dict
         spectra = process_spectra(data=data, dic=dic, n_exp=n_exp)
 
-        # ---- User input for ppm range ----
+        # ---- User input for ppm range (chiedi solo se non già definito) ----
         start_idx: int
         end_idx: int
-        if not start_ppm or not end_ppm:
-            # ---- Plot spectra ----
-            spectra_fig: Figure = plot_spectra(
+        if start_ppm is None or end_ppm is None:
+            # Plot spettri interattivi
+            spectra_fig = plot_spectra(
                 spectra=spectra, 
                 n_exp=n_exp, 
                 ppm_axis=ppm_axis, 
@@ -928,19 +1070,16 @@ def main() -> None:
                 print("Invalid range: end and start indexes have to be both non-negative. Exiting.")
                 return
             plt.close(spectra_fig)
+        else:
+            start_idx = ppm_to_index(uc=uc, user_ppm=end_ppm)
+            end_idx = ppm_to_index(uc=uc, user_ppm=start_ppm)
             
-        # ---- Find normalized maxima along the spectra ----
-        max_vals: Dict[int, float]
-        max_indexes: Dict[int, int]
-        (max_vals, max_indexes) = find_max_vals(spectra=spectra, start_idx=start_idx, end_idx=end_idx)
+        # ---- Find normalized maxima ----
+        max_vals, max_indexes = find_max_vals(spectra=spectra, start_idx=start_idx, end_idx=end_idx)
         
-        spline_fig: Figure
-        #integrals_fig: Figure
-
         # ---- Correct saturation frequencies and final plot ----
         if len(sat_trans_hz) == len(max_vals):
-            
-            fit_result: Dict[str, Any] = correct_sat_freq(
+            fit_result = correct_sat_freq(
                 sat_trans_hz=sat_trans_hz, 
                 max_vals=max_vals,
                 max_indexes=max_indexes,
@@ -950,7 +1089,7 @@ def main() -> None:
             )
             
             if fit_result["fit_successful"]:
-                spline_fig = plot_data_with_spline(
+                plot_data_with_spline(
                     x=fit_result["x_sorted"],
                     y=fit_result["y_sorted"],
                     x_fit=fit_result["x_fit"],
@@ -960,15 +1099,22 @@ def main() -> None:
                     ylabel="Max Value",
                     invert_x=True
                 )
-                region_integrals: Dict[str, float] = compute_regions_integrals(x_fit=fit_result["x_fit"], y_fit=fit_result["y_fit"])
+                region_integrals = compute_regions_integrals(x_fit=fit_result["x_fit"], y_fit=fit_result["y_fit"])
                 region_integrals_dict[folder_name_short] = region_integrals
-                #integrals_fig = plot_integrals_regions(integrals=region_integrals, labels=folder)
 
         else:
             print("Number of saturation frequencies does not match number of processed series; skipping plot.")
 
-        #plt.close(spline_fig)
-        #plt.close(integrals_fig)
+    # ---- Salva la configurazione per la prossima esecuzione ----
+    config_to_save = {
+        "with_ref": with_ref,
+        "with_multiple": with_multiple,
+        "multiple_amount": multiple_amount,
+        "start_ppm": start_ppm,
+        "end_ppm": end_ppm,
+        "folders": folders,  # lista di Path
+    }
+    save_config(config_to_save)
 
     plot_integrals_regions(
         integrals=list(region_integrals_dict.values()),
