@@ -642,13 +642,15 @@ def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
         spectra[exp_idx] = spectrum_phased
     return spectra
 
-def plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
+def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
     """
     Crea un plot interattivo di tutti gli spettri con checkbox per mostrare/nascondere
     ogni traccia.
 
     Parameters
     ----------
+    title : str
+        Titolo del plot.
     spectra : Dict[int, np.ndarray]
         Dizionario degli spettri elaborati.
     n_exp : int
@@ -722,6 +724,7 @@ def plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
     fig.tight_layout(rect=[0, 0, 0.80, 1])       # leave space on the right for widgets
 
     # Show the figure (non-blocking)
+    ax.set_title(title, loc="center")
     plt.show(block=False)
     return fig
 
@@ -921,12 +924,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             return
         
         spectra = process_spectra(data, dic, n_exp)
+        spectra_fig = plot_spectra(title=f"Spectra - {folder_name_short}", spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
         
         # Se i ppm non sono ancora noti, chiediamo usando la prima cartella
         if ppm_missing and idx == 0:
-            spectra_fig = plot_spectra(spectra, n_exp, ppm_axis, sat_trans_hz)
             start_ppm, end_ppm = ask_user_for_ppm_range(uc)
-            plt.close(spectra_fig)
             # Aggiorna la configurazione
             config["start_ppm"] = start_ppm
             config["end_ppm"] = end_ppm
