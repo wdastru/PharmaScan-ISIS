@@ -87,10 +87,11 @@ def select_or_create_config() -> Tuple[str, Dict[str, Any]]:
     for i, cf in enumerate(config_files, 1):
         print(f"{i}. {cf.stem}")
     print(f"{len(config_files)+1}. Nuova configurazione")
+    print(f"{len(config_files)+2}. Nessuna configurazione")
     
     while True:
         try:
-            choice = input(f"\nScegli (1-{len(config_files)+1}): ").strip()
+            choice = input(f"\nScegli (1-{len(config_files)+2}): ").strip()
             idx = int(choice)
             if 1 <= idx <= len(config_files):
                 name = config_files[idx-1].stem
@@ -105,6 +106,8 @@ def select_or_create_config() -> Tuple[str, Dict[str, Any]]:
                     print("Configurazione già esistente. Scegli un altro nome.")
                     continue
                 return name, {}
+            elif idx == len(config_files) + 2:
+                return "", {}
             else:
                 print("Scelta non valida.")
         except ValueError:
@@ -870,8 +873,9 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
 def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
     """Rende completa la configurazione chiedendo i dati mancanti (cartelle, opzioni)."""
     # Se mancano le cartelle, chiedi tutto
-    if not config_data.get("folders"):
-        print(f"Configurazione '{config_name}' senza cartelle definite. Procedura interattiva.")
+    if not config_data.get("folders") or config_name == "":
+        if config_name:
+            print(f"Configurazione '{config_name}' senza cartelle definite. Procedura interattiva.")
         with_ref = ask_yes_no("Reference folder?", default=config_data.get("with_ref", False))
         with_multiple = ask_yes_no("Multiple folders?", default=config_data.get("with_multiple", False))
         multiple_amount = ask_int("How many?", min_val=1, default=config_data.get("multiple_amount", 1)) if with_multiple else 1
@@ -936,8 +940,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # Aggiorna la configurazione
             config["start_ppm"] = start_ppm
             config["end_ppm"] = end_ppm
+
             config["ppm_missing"] = False
-            save_config(config_name, config)
+            if config_name:
+                save_config(config_name, config)
         elif ppm_missing and idx > 0:
             print("Errore: ppm non definiti e non siamo alla prima cartella. Questo non dovrebbe accadere.")
             return
@@ -962,6 +968,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 region_integrals_dict[folder_name_short] = region_integrals
         else:
             print(f"Numero di frequenze di saturazione non corrispondente per {folder}")
+
+        pass
         
     pass
     
