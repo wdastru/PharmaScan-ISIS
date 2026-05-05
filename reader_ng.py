@@ -765,7 +765,6 @@ def find_max_vals(spectra, start_idx, end_idx):
     for exp_idx in max_vals:
         max_vals[exp_idx] /= global_max
     return max_vals, max_indexes
-
 def ask_user_for_ppm_range(uc, default_start=None, default_end=None) -> Tuple[float, float]:
     """
     Richiede all'utente di inserire l'intervallo in ppm (min e max).
