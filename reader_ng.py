@@ -917,27 +917,43 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     ppm_missing: bool = config.get("ppm_missing", False)
     
     fit_results: List = []
+    z_dic: dict = {}
     region_integrals_dict = {}
     
     spectrum_figures = []   # <-- store figure objects
     for idx, folder in enumerate(folders):
         folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
+        z_dic[folder_name_short] = {}
+        
+        # ----------------------------------------------------------------------
+        # Extract sat_trans_hz and work_offset_hz parameters from folder files
+        # ----------------------------------------------------------------------
         try:
             sat_trans_hz, work_offset_hz = extract_parameters(folder)
+            z_dic[folder_name_short]["sat_trans_hz"] = sat_trans_hz
+            z_dic[folder_name_short]["work_offset_hz"] = work_offset_hz
         except (FileNotFoundError, ValueError) as e:
             print(f"Errore in {folder}: {e}")
             return
         
+        # ----------------------------------------------------------------------
+        # Load spectra
+        # ----------------------------------------------------------------------
         dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
         if n_exp <= 0:
             print(f"Nessun esperimento in {folder}")
             return
         
+        # ----------------------------------------------------------------------
+        # Process and plot spectra
+        # ----------------------------------------------------------------------
         spectra = process_spectra(data, dic, n_exp)
         fig: Figure = plot_spectra(title=f"Spectra - {folder_name_short}", spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
         spectrum_figures.append(fig)   # <-- keep reference to the figure
         
+        # ----------------------------------------------------------------------
         # Se i ppm non sono ancora noti, chiediamo usando la prima cartella
+        # ----------------------------------------------------------------------
         if ppm_missing and idx == 0:
             plt.pause(0.05) # <-- keep figures alive
             start_ppm, end_ppm = ask_user_for_ppm_range(uc)
@@ -959,30 +975,60 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             print("Indici ppm non validi.")
             return
         
+        # ----------------------------------------------------------------------
+        # Find max values and indexes in the ppm range (z-spectra)
+        # ----------------------------------------------------------------------
         max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
+        z_dic[folder_name_short].update({
+            "max_vals": max_vals, 
+            "max_indexes": max_indexes,
+        })
         
-        if len(sat_trans_hz) == len(max_vals):
-            fit_result = correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf1)
+        pass
+
+    # ----------------------------------------------------------------------
+    # Fit z-spectra 
+    # ----------------------------------------------------------------------
+    for name, z in z_dic.items():
+        if len(z["sat_trans_hz"]) == len(z["max_vals"]):
+            fit_result = correct_sat_freq(
+                z["sat_trans_hz"], 
+                z["max_vals"], 
+                z["max_indexes"], 
+                z["work_offset_hz"], 
+                uc, 
+                bf1
+            )
             if fit_result["fit_successful"]:
-                fit_results.append(fit_result)
+                z_dic[name]["fit_result"] = fit_result
                 plot_data_with_spline(
-                    fit_result["x_sorted"], fit_result["y_sorted"],
-                    fit_result["x_fit"], fit_result["y_fit"],
-                    title=folder_name_short, invert_x=True
+                    z_dic[name]["fit_result"]["x_sorted"],  
+                    z_dic[name]["fit_result"]["y_sorted"],
+                    z_dic[name]["fit_result"]["x_fit"], 
+                    z_dic[name]["fit_result"]["y_fit"],
+                    title=name, invert_x=True
                 )
             else:
-                print(f"Fit fallito per {folder}")    
+                print(f"Fit fallito per {name}")    
         else:
-            print(f"Numero di frequenze di saturazione non corrispondente per {folder}")
-
-        pass
+            print(f"Numero di frequenze di saturazione non corrispondente per {name}")
     
-    for (folder, fit_result) in zip(folders, fit_results):
-        folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
-        region_integrals = compute_regions_integrals(fit_result["x_fit"], fit_result["y_fit"])
-        region_integrals_dict[folder_name_short] = region_integrals
+        # ----------------------------------------------------------------------
+        # Calculate integrals
+        # ----------------------------------------------------------------------
+        region_integrals = compute_regions_integrals(
+            z["fit_result"]["x_fit"], 
+            z["fit_result"]["y_fit"]
+        )
+        region_integrals_dict[name] = region_integrals
+        z_dic[name]["integrals"] = {}
+        z_dic[name]["integrals"].update(region_integrals)
+    
         pass
 
+    # ----------------------------------------------------------------------
+    # Plot integrals
+    # ----------------------------------------------------------------------
     plot_integrals_regions(
         integrals=list(region_integrals_dict.values()),
         labels=list(region_integrals_dict.keys()),
