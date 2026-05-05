@@ -36,7 +36,7 @@ REGIONS: dict[str, List[float]] = {
 }
 
 # ----------------------------------------------------------------------
-# Configuration handling (multiple named configs)
+# Configuration handling
 # ----------------------------------------------------------------------
 CONFIG_DIR = Path(__file__).parent / "configs"
 
@@ -765,6 +765,7 @@ def find_max_vals(spectra, start_idx, end_idx):
     for exp_idx in max_vals:
         max_vals[exp_idx] /= global_max
     return max_vals, max_indexes
+
 def ask_user_for_ppm_range(uc, default_start=None, default_end=None) -> Tuple[float, float]:
     """
     Richiede all'utente di inserire l'intervallo in ppm (min e max).
@@ -876,16 +877,19 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         if config_name:
             print(f"Configurazione '{config_name}' senza cartelle definite. Procedura interattiva.")
         with_ref = ask_yes_no("Reference folder?", default=config_data.get("with_ref", False))
+        multiple_amount_ref = ask_int("How many?", min_val=1, default=config_data.get("multiple_amount_ref", 1)) if with_ref else 1
         with_multiple = ask_yes_no("Multiple folders?", default=config_data.get("with_multiple", False))
         multiple_amount = ask_int("How many?", min_val=1, default=config_data.get("multiple_amount", 1)) if with_multiple else 1
         
         folders = []
         if with_ref:
-            folders.append(select_experiment_folder(title="Select reference folder"))
+            for _ in range(multiple_amount_ref):
+                folders.append(select_experiment_folder(title="Select reference folder(s)"))
         for _ in range(multiple_amount):
-            folders.append(select_experiment_folder(title="Select a folder"))
+            folders.append(select_experiment_folder(title="Select folder(s)"))
         
         config_data["with_ref"] = with_ref
+        config_data["multiple_amount_ref"] = multiple_amount_ref
         config_data["with_multiple"] = with_multiple
         config_data["multiple_amount"] = multiple_amount
         config_data["folders"] = folders
