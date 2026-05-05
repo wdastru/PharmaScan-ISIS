@@ -907,11 +907,11 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
     plt.ion()   # <-- interactive mode ON
-    folders = config["folders"]
-    with_ref = config.get("with_ref", False)
-    start_ppm = config.get("start_ppm")
-    end_ppm = config.get("end_ppm")
-    ppm_missing = config.get("ppm_missing", False)
+    folders: List[Path] = config["folders"]
+    with_ref: bool = config.get("with_ref", False)
+    start_ppm: float = config.get("start_ppm")
+    end_ppm: float = config.get("end_ppm")
+    ppm_missing: bool = config.get("ppm_missing", False)
     
     region_integrals_dict = {}
     
@@ -942,6 +942,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             config["end_ppm"] = end_ppm
 
             config["ppm_missing"] = False
+            ppm_missing = False
             if config_name:
                 save_config(config_name, config)
         elif ppm_missing and idx > 0:
