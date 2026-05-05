@@ -916,6 +916,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     end_ppm: float = config.get("end_ppm")
     ppm_missing: bool = config.get("ppm_missing", False)
     
+    fit_results: List = []
     region_integrals_dict = {}
     
     spectrum_figures = []   # <-- store figure objects
@@ -963,20 +964,25 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         if len(sat_trans_hz) == len(max_vals):
             fit_result = correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf1)
             if fit_result["fit_successful"]:
+                fit_results.append(fit_result)
                 plot_data_with_spline(
                     fit_result["x_sorted"], fit_result["y_sorted"],
                     fit_result["x_fit"], fit_result["y_fit"],
                     title=folder_name_short, invert_x=True
                 )
-                region_integrals = compute_regions_integrals(fit_result["x_fit"], fit_result["y_fit"])
-                region_integrals_dict[folder_name_short] = region_integrals
+            else:
+                print(f"Fit fallito per {folder}")    
         else:
             print(f"Numero di frequenze di saturazione non corrispondente per {folder}")
 
         pass
-        
-    pass
     
+    for (folder, fit_result) in zip(folders, fit_results):
+        folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
+        region_integrals = compute_regions_integrals(fit_result["x_fit"], fit_result["y_fit"])
+        region_integrals_dict[folder_name_short] = region_integrals
+        pass
+
     plot_integrals_regions(
         integrals=list(region_integrals_dict.values()),
         labels=list(region_integrals_dict.keys()),
