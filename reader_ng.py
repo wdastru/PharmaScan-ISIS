@@ -7,6 +7,8 @@ allows the user to select a ppm range, and calculates maxima to generate
 a saturation transfer curve.
 """
 
+from collections import defaultdict
+
 import nmrglue as ng
 from nmrglue.fileio.fileiobase import unit_conversion
 import numpy as np
@@ -467,7 +469,7 @@ def plot_integrals_regions(
 
     if reference:
 
-        title = "Intensità relative alla prima serie (100% = riferimento)"
+        title = "Intensità relative al riferimento"
 
         labels = labels[1:]
         colors = colors[1:]
@@ -908,15 +910,16 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     plt.ion()   # <-- interactive mode ON
     folders: List[Path] = config["folders"]
     with_ref: bool = config.get("with_ref", False)
+    multiple_amount_ref: int = config.get("multiple_amount_ref", 1)
     start_ppm: float = config.get("start_ppm")
     end_ppm: float = config.get("end_ppm")
     ppm_missing: bool = config.get("ppm_missing", False)
-    
-    fit_results: List = []
     z_dic: dict = {}
     region_integrals_dict = {}
-    
     spectrum_figures = []   # <-- store figure objects
+    ref_max_vals = defaultdict(float)
+    ref_max_indexes = defaultdict(int)
+    
     for idx, folder in enumerate(folders):
         folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
         z_dic[folder_name_short] = {}
@@ -972,16 +975,27 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             return
         
         # ----------------------------------------------------------------------
-        # Find max values and indexes in the ppm range (z-spectra)
+        # Find max values and indexes in the ppm range (the z-spectra)
         # ----------------------------------------------------------------------
         max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
         z_dic[folder_name_short].update({
             "max_vals": max_vals, 
             "max_indexes": max_indexes,
         })
-        
-        pass
 
+        if idx < multiple_amount_ref:
+            for k, (idx, v) in enumerate(zip(max_indexes.values(), max_vals.values())):   # assumes same keys in val_dict
+                ref_max_indexes[k] += idx / multiple_amount_ref
+                ref_max_vals[k] += v / multiple_amount_ref
+    
+    for k, idx in enumerate(ref_max_indexes.values()):
+        ref_max_indexes[k] = round(ref_max_indexes[k])
+
+    z_dic["reference"] = {
+        "max_indexes": ref_max_indexes,
+        "max_vals": ref_max_vals, 
+    }
+        
     # ----------------------------------------------------------------------
     # Fit z-spectra 
     # ----------------------------------------------------------------------
