@@ -1,0 +1,7 @@
+202*/
+__pycache__/
+docs/
+parameters.txt
+pdoc/
+configs/
+.vscode/settings.json
