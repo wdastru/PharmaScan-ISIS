@@ -275,6 +275,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
             return 0.0
         bottom_area = np.trapezoid(y_fit[mask], x_fit[mask])
         return bottom_area
+    
     return {region: _region_integral(bounds, x_fit, y_fit) for region, bounds in REGIONS.items()}
 
 def plot_data_with_spline(x, y, x_fit, y_fit, title="Max Values vs Saturation ppm",
@@ -377,7 +378,8 @@ def plot_integrals_regions(
     ylabel: str = 'Intensità',
     figsize: tuple = (12, 6),
     show_values: bool = True,
-    reference: Optional[bool] = False
+    reference: Optional[bool] = False,
+    multiple_amount_ref: Optional[int] = 0
 ) -> Figure:
     """
     Crea un grafico a barre (singolo o raggruppato) degli integrali di regione.
@@ -1064,7 +1066,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     plot_integrals_regions(
         integrals=list(region_integrals_dict.values()),
         labels=list(region_integrals_dict.keys()),
-        reference=with_ref
+        reference=with_ref,
+        multiple_amount_ref=multiple_amount_ref if with_ref else 0
     )
 
 def main() -> None:
