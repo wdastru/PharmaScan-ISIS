@@ -917,13 +917,15 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     z_dic: dict = {}
     region_integrals_dict = {}
     spectrum_figures = []   # <-- store figure objects
-    ref_max_vals = defaultdict(float)
-    ref_max_indexes = defaultdict(int)
+    ref_max_vals: defaultdict[float] = defaultdict(float)
+    ref_max_indexes: defaultdict[int] = defaultdict(int)
+    ref_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies
+    ref_work_offset_hz: List[float] = [] # reference work offset frequency
     
     for idx, folder in enumerate(folders):
         folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
         z_dic[folder_name_short] = {}
-        
+
         # ----------------------------------------------------------------------
         # Extract sat_trans_hz and work_offset_hz parameters from folder files
         # ----------------------------------------------------------------------
@@ -935,6 +937,12 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             print(f"Errore in {folder}: {e}")
             return
         
+        if idx < multiple_amount_ref:
+            if ref_work_offset_hz == []:
+                ref_work_offset_hz = work_offset_hz
+            elif ref_work_offset_hz != work_offset_hz:
+                print(f"{colored('Error', 'red', attrs=['bold'])}: different work_offset_hz in reference folders.")
+                
         # ----------------------------------------------------------------------
         # Load spectra
         # ----------------------------------------------------------------------
@@ -979,23 +987,34 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # ----------------------------------------------------------------------
         max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
         z_dic[folder_name_short].update({
-            "max_vals": max_vals, 
             "max_indexes": max_indexes,
+            "max_vals": max_vals, 
         })
 
+        if ref_sat_trans_hz == []:
+            ref_sat_trans_hz = [0.0] * len(sat_trans_hz)
+
         if idx < multiple_amount_ref:
-            for k, (idx, v) in enumerate(zip(max_indexes.values(), max_vals.values())):   # assumes same keys in val_dict
-                ref_max_indexes[k] += idx / multiple_amount_ref
-                ref_max_vals[k] += v / multiple_amount_ref
+            if len(sat_trans_hz) == len(max_vals):
+                for k, (i, v, st) in enumerate(zip(max_indexes.values(), max_vals.values(), sat_trans_hz)):   # assumes same keys in val_dict
+                    ref_max_indexes[k] += i / multiple_amount_ref
+                    ref_max_vals[k] += v / multiple_amount_ref
+                    ref_sat_trans_hz[k] += st / multiple_amount_ref
+            else:
+                print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
     
-    for k, idx in enumerate(ref_max_indexes.values()):
+    for k, _ in enumerate(ref_max_indexes.values()):
         ref_max_indexes[k] = round(ref_max_indexes[k])
 
     z_dic["reference"] = {
         "max_indexes": ref_max_indexes,
-        "max_vals": ref_max_vals, 
+        "max_vals": ref_max_vals,
     }
+    z_dic["reference"]["sat_trans_hz"] = ref_sat_trans_hz
+    z_dic["reference"]["work_offset_hz"] = ref_work_offset_hz
         
+    pass
+    
     # ----------------------------------------------------------------------
     # Fit z-spectra 
     # ----------------------------------------------------------------------
