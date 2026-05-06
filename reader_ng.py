@@ -473,12 +473,11 @@ def plot_integrals_regions(
         colors = colors[1:]
 
         integrals_referenced: List[Dict[str, float]] = []
-        if reference:
-            for index, integral in enumerate(integrals[1:]):
-                d: Dict[str, float] = {}
-                for key, integral in integral.items():
-                    d[key] = 100 * (integral / integrals[0][key] -1)
-                integrals_referenced.append(d)
+        for index, integral in enumerate(integrals[1:]):
+            d: Dict[str, float] = {}
+            for key, integral in integral.items():
+                d[key] = 100 * (integral / integrals[0][key] -1)
+            integrals_referenced.append(d)
         
         n_series -= 1
 
@@ -518,13 +517,12 @@ def plot_integrals_regions(
 
         # Disegna le barre
         bars_list: List = []
-        if reference:
-            for i in range(n_series):
-                offset: float = (i - n_series/2 + 0.5) * bar_width
-                bars: plt.BarContainer = ax_referenced.bar(x + offset, values_matrix[i], width=bar_width,
-                            label=labels[i] if n_series > 1 else None,
-                            color=colors[i], edgecolor='black', linewidth=0.5)
-                bars_list.append(bars)
+        for i in range(n_series):
+            offset: float = (i - n_series/2 + 0.5) * bar_width
+            bars: plt.BarContainer = ax_referenced.bar(x + offset, values_matrix[i], width=bar_width,
+                        label=labels[i] if n_series > 1 else None,
+                        color=colors[i], edgecolor='black', linewidth=0.5)
+            bars_list.append(bars)
 
 
         # Aggiungi valori sopra le barre se richiesto
@@ -560,13 +558,11 @@ def plot_integrals_regions(
         # Aggiungi legenda se più serie
         ax_referenced.legend()
         fig_referenced.tight_layout()
+        plt.show(block=True)
+        return fig_absolute, fig_referenced
     
     plt.show(block=True)
-    
-    if reference:
-        return fig_absolute, fig_referenced
-    else:
-        return fig_absolute
+    return fig_absolute
 
 def select_experiment_folder(title="Select a folder") -> Path:
     root = tk.Tk()
