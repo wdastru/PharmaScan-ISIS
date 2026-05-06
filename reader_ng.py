@@ -8,7 +8,6 @@ a saturation transfer curve.
 """
 
 from collections import defaultdict
-
 import nmrglue as ng
 from nmrglue.fileio.fileiobase import unit_conversion
 import numpy as np
@@ -25,6 +24,7 @@ from scipy.interpolate import UnivariateSpline
 from scipy.interpolate import make_smoothing_spline
 from scipy.interpolate import PchipInterpolator
 import json
+from termcolor import colored
 
 REGIONS: dict[str, List[float]] = {
     "SP": [5.6, 7.5],
@@ -937,11 +937,12 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             print(f"Errore in {folder}: {e}")
             return
         
-        if idx < multiple_amount_ref:
-            if ref_work_offset_hz == []:
-                ref_work_offset_hz = work_offset_hz
-            elif ref_work_offset_hz != work_offset_hz:
-                print(f"{colored('Error', 'red', attrs=['bold'])}: different work_offset_hz in reference folders.")
+        if with_ref:
+            if idx < multiple_amount_ref:
+                if ref_work_offset_hz == []:
+                    ref_work_offset_hz = work_offset_hz
+                elif ref_work_offset_hz != work_offset_hz:
+                    print(f"{colored('Error', 'red', attrs=['bold'])}: different work_offset_hz in reference folders.")
                 
         # ----------------------------------------------------------------------
         # Load spectra
@@ -991,27 +992,29 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             "max_vals": max_vals, 
         })
 
-        if ref_sat_trans_hz == []:
-            ref_sat_trans_hz = [0.0] * len(sat_trans_hz)
+        if with_ref:
+            if ref_sat_trans_hz == []:
+                ref_sat_trans_hz = [0.0] * len(sat_trans_hz)
 
-        if idx < multiple_amount_ref:
-            if len(sat_trans_hz) == len(max_vals):
-                for k, (i, v, st) in enumerate(zip(max_indexes.values(), max_vals.values(), sat_trans_hz)):   # assumes same keys in val_dict
-                    ref_max_indexes[k] += i / multiple_amount_ref
-                    ref_max_vals[k] += v / multiple_amount_ref
-                    ref_sat_trans_hz[k] += st / multiple_amount_ref
-            else:
-                print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
+            if idx < multiple_amount_ref:
+                if len(sat_trans_hz) == len(max_vals):
+                    for k, (i, v, st) in enumerate(zip(max_indexes.values(), max_vals.values(), sat_trans_hz)):   # assumes same keys in val_dict
+                        ref_max_indexes[k] += i / multiple_amount_ref
+                        ref_max_vals[k] += v / multiple_amount_ref
+                        ref_sat_trans_hz[k] += st / multiple_amount_ref
+                else:
+                    print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
     
-    for k, _ in enumerate(ref_max_indexes.values()):
-        ref_max_indexes[k] = round(ref_max_indexes[k])
+    if with_ref:
+        for k, _ in enumerate(ref_max_indexes.values()):
+            ref_max_indexes[k] = round(ref_max_indexes[k])
 
-    z_dic["reference"] = {
-        "max_indexes": ref_max_indexes,
-        "max_vals": ref_max_vals,
-    }
-    z_dic["reference"]["sat_trans_hz"] = ref_sat_trans_hz
-    z_dic["reference"]["work_offset_hz"] = ref_work_offset_hz
+        z_dic["reference"] = {
+            "max_indexes": ref_max_indexes,
+            "max_vals": ref_max_vals,
+        }
+        z_dic["reference"]["sat_trans_hz"] = ref_sat_trans_hz
+        z_dic["reference"]["work_offset_hz"] = ref_work_offset_hz
         
     pass
     
