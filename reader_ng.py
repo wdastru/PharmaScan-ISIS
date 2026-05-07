@@ -7,6 +7,7 @@ allows the user to select a ppm range, and calculates maxima to generate
 a saturation transfer curve.
 """
 
+from collections import defaultdict
 import nmrglue as ng
 from nmrglue.fileio.fileiobase import unit_conversion
 import numpy as np
@@ -23,6 +24,7 @@ from scipy.interpolate import UnivariateSpline
 from scipy.interpolate import make_smoothing_spline
 from scipy.interpolate import PchipInterpolator
 import json
+from termcolor import colored
 
 REGIONS: dict[str, List[float]] = {
     "SP": [5.6, 7.5],
@@ -36,7 +38,7 @@ REGIONS: dict[str, List[float]] = {
 }
 
 # ----------------------------------------------------------------------
-# Configuration handling (multiple named configs)
+# Configuration handling
 # ----------------------------------------------------------------------
 CONFIG_DIR = Path(__file__).parent / "configs"
 
@@ -273,6 +275,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
             return 0.0
         bottom_area = np.trapezoid(y_fit[mask], x_fit[mask])
         return bottom_area
+    
     return {region: _region_integral(bounds, x_fit, y_fit) for region, bounds in REGIONS.items()}
 
 def plot_data_with_spline(x, y, x_fit, y_fit, title="Max Values vs Saturation ppm",
@@ -367,42 +370,71 @@ def fit_curve(x, y, smoothing=0.0, n_points=200) -> Dict[str, Any]:
     }
 
 def plot_integrals_regions(
-    integrals: Union[Dict[str, float], List[Dict[str, float]]],
-    labels: Optional[List[str]] = None,
-    colors: Optional[List[str]] = None,
+    data: Dict[str, Any],
     title: str = 'Intensità per regione',
     xlabel: str = 'Regione',
     ylabel: str = 'Intensità',
     figsize: tuple = (12, 6),
     show_values: bool = True,
-    reference: Optional[bool] = False
+    reference: Optional[bool] = False,
+    multiple_amount_ref: Optional[int] = 0
 ) -> Figure:
     """
     Crea un grafico a barre (singolo o raggruppato) degli integrali di regione.
     """
-    # Determina se è una lista o un dizionario singolo
-    is_list: bool = isinstance(integrals, list)
     
-    if not is_list:
-        # Caso singolo dizionario (comportamento originale)
-        integrals = [integrals]  # Converti in lista per unificare la logica
+    def check_integrals_keys_consistency(data):
+        """
+        data: multilevel dict
+        returns: (is_consistent, integral, mismatches)
+            integral: {key: value['integrals'] for every top-level key that has an 'integrals' sub-dict}
+            mismatches: {key: {'missing': set, 'extra': set}} for keys whose integral keys differ from the first one
+        """
+        integral = {}
+        integral_sets = {}
 
-    # Verifica che tutti i dizionari abbiano le stesse chiavi
-    if len(integrals) > 1:
-        keys_set: List[set[str]] = [set(d.keys()) for d in integrals]
-        if not all(k == keys_set[0] for k in keys_set):
-            raise ValueError("Tutti i dizionari devono avere le stesse chiavi (regioni).")
+        for key, value in data.items():
+            if isinstance(value, dict) and 'integrals' in value:
+                integral[key] = value['integrals']          # store the whole inner dict
+                integral_sets[key] = set(value['integrals'].keys())
+
+        if not integral_sets:
+            print("No 'integrals' entries found.")
+            return True, integral, {}
+
+        # Use the first entry as reference
+        ref_key = next(iter(integral_sets))
+        ref_set = integral_sets[ref_key]
+
+        mismatches = {}
+        for key, ks in integral_sets.items():
+            if ks != ref_set:
+                missing = ref_set - ks
+                extra = ks - ref_set
+                mismatches[key] = {'missing': missing, 'extra': extra}
+
+        is_consistent = len(mismatches) == 0
+        return is_consistent, integral, mismatches
+    
+    # Verifica che tutti i integrali abbiano le stesse chiavi
+
+    is_consistent, integrals, mismatches = check_integrals_keys_consistency(data)
+    if not is_consistent:
+        print(f"Tutti i dizionari devono avere le stesse regioni.")
+        print(f"{mismatches}")
+        return None
+    
+    labels: List[str] = list(integrals.keys())
+    n_series: int = len(labels)
     
     # Estrai le etichette comuni (regioni) dal primo dizionario
-    region_labels: List[str] = list(integrals[0].keys())
+    region_labels: List[str] = list(integrals[labels[0]].keys())
     n_regions: int = len(region_labels)
     
-    n_series: int = len(integrals)
-
     # Prepara i valori: matrice (n_series x n_regions)
     values_matrix: List = []
-    for d in integrals:
-        values_matrix.append([d[reg] for reg in region_labels])
+    for k, v in integrals.items():
+        values_matrix.append([integrals[k][reg] for reg in region_labels])
     values_matrix = np.array(values_matrix)  # shape: (n_series, n_regions)
 
     # Crea il grafico
@@ -413,16 +445,10 @@ def plot_integrals_regions(
     # Larghezza di ogni barra e posizioni
     bar_width: float = 0.8 / n_series if n_series > 1 else 0.6
     x = np.arange(n_regions)  # posizioni delle regioni sull'asse x
-    
-    # Colori
-    if colors is None:
-        colors = plt.cm.tab10(np.linspace(0, 1, n_series))
-    else:
-        # Se i colori sono meno delle serie, ripeti
-        if len(colors) < n_series:
-            colors = colors * (n_series // len(colors) + 1)
-        colors = colors[:n_series]
 
+    # Colori
+    colors = plt.cm.tab10(np.linspace(0, 1, n_series))
+            
     # Etichette per la legenda (solo se più serie)
     if labels is None and n_series > 1:
         labels = [f'Gruppo {i+1}' for i in range(n_series)]
@@ -467,20 +493,17 @@ def plot_integrals_regions(
 
     if reference:
 
-        title = "Intensità relative alla prima serie (100% = riferimento)"
+        title = "Intensità relative al riferimento"
 
-        labels = labels[1:]
-        colors = colors[1:]
-
+        integral_list = list(integrals.values())
         integrals_referenced: List[Dict[str, float]] = []
-        if reference:
-            for index, integral in enumerate(integrals[1:]):
-                d: Dict[str, float] = {}
-                for key, integral in integral.items():
-                    d[key] = 100 * (integral / integrals[0][key] -1)
-                integrals_referenced.append(d)
+        for integral in integral_list[multiple_amount_ref:-1]:
+            d: Dict[str, float] = {}
+            for key, integral in integral.items():
+                d[key] = 100 * (integral / integrals['reference'][key] - 1)
+            integrals_referenced.append(d)
         
-        n_series -= 1
+        n_series -= (multiple_amount_ref + 1)
 
         # Prepara i valori: matrice (n_series x n_regions)
         values_matrix: List = []
@@ -501,15 +524,7 @@ def plot_integrals_regions(
         bar_width: float = 0.8 / n_series if n_series > 1 else 0.6
         x = np.arange(n_regions)  # posizioni delle regioni sull'asse x
         
-        # Colori
-        if colors is None:
-            colors = plt.cm.tab10(np.linspace(0, 1, n_series))
-        else:
-            # Se i colori sono meno delle serie, ripeti
-            if len(colors) < n_series:
-                colors = colors * (n_series // len(colors) + 1)
-            colors = colors[:n_series]
-
+        labels = labels[multiple_amount_ref:-1]
         # Etichette per la legenda (solo se più serie)
         if labels is None and n_series > 1:
             labels = [f'Gruppo {i+1}' for i in range(n_series)]
@@ -517,14 +532,14 @@ def plot_integrals_regions(
             labels = ['']  # non serve legenda
 
         # Disegna le barre
+        colors = colors[multiple_amount_ref:-1]
         bars_list: List = []
-        if reference:
-            for i in range(n_series):
-                offset: float = (i - n_series/2 + 0.5) * bar_width
-                bars: plt.BarContainer = ax_referenced.bar(x + offset, values_matrix[i], width=bar_width,
-                            label=labels[i] if n_series > 1 else None,
-                            color=colors[i], edgecolor='black', linewidth=0.5)
-                bars_list.append(bars)
+        for i in range(n_series):
+            offset: float = (i - n_series/2 + 0.5) * bar_width
+            bars: plt.BarContainer = ax_referenced.bar(x + offset, values_matrix[i], width=bar_width,
+                        label=labels[i] if n_series > 1 else None,
+                        color=colors[i], edgecolor='black', linewidth=0.5)
+            bars_list.append(bars)
 
 
         # Aggiungi valori sopra le barre se richiesto
@@ -560,13 +575,11 @@ def plot_integrals_regions(
         # Aggiungi legenda se più serie
         ax_referenced.legend()
         fig_referenced.tight_layout()
+        plt.show(block=True)
+        return fig_absolute, fig_referenced
     
     plt.show(block=True)
-    
-    if reference:
-        return fig_absolute, fig_referenced
-    else:
-        return fig_absolute
+    return fig_absolute
 
 def select_experiment_folder(title="Select a folder") -> Path:
     root = tk.Tk()
@@ -765,6 +778,7 @@ def find_max_vals(spectra, start_idx, end_idx):
     for exp_idx in max_vals:
         max_vals[exp_idx] /= global_max
     return max_vals, max_indexes
+
 def ask_user_for_ppm_range(uc, default_start=None, default_end=None) -> Tuple[float, float]:
     """
     Richiede all'utente di inserire l'intervallo in ppm (min e max).
@@ -876,16 +890,19 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         if config_name:
             print(f"Configurazione '{config_name}' senza cartelle definite. Procedura interattiva.")
         with_ref = ask_yes_no("Reference folder?", default=config_data.get("with_ref", False))
+        multiple_amount_ref = ask_int("How many?", min_val=1, default=config_data.get("multiple_amount_ref", 1)) if with_ref else 1
         with_multiple = ask_yes_no("Multiple folders?", default=config_data.get("with_multiple", False))
         multiple_amount = ask_int("How many?", min_val=1, default=config_data.get("multiple_amount", 1)) if with_multiple else 1
         
         folders = []
         if with_ref:
-            folders.append(select_experiment_folder(title="Select reference folder"))
+            for _ in range(multiple_amount_ref):
+                folders.append(select_experiment_folder(title="Select reference folder(s)"))
         for _ in range(multiple_amount):
-            folders.append(select_experiment_folder(title="Select a folder"))
+            folders.append(select_experiment_folder(title="Select folder(s)"))
         
         config_data["with_ref"] = with_ref
+        config_data["multiple_amount_ref"] = multiple_amount_ref
         config_data["with_multiple"] = with_multiple
         config_data["multiple_amount"] = multiple_amount
         config_data["folders"] = folders
@@ -908,31 +925,58 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     plt.ion()   # <-- interactive mode ON
     folders: List[Path] = config["folders"]
     with_ref: bool = config.get("with_ref", False)
+    multiple_amount_ref: int = config.get("multiple_amount_ref", 1)
     start_ppm: float = config.get("start_ppm")
     end_ppm: float = config.get("end_ppm")
     ppm_missing: bool = config.get("ppm_missing", False)
-    
+    z_dic: dict = {}
     region_integrals_dict = {}
-    
     spectrum_figures = []   # <-- store figure objects
+    ref_max_vals: defaultdict[float] = defaultdict(float)
+    ref_max_indexes: defaultdict[int] = defaultdict(int)
+    ref_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies
+    ref_work_offset_hz: List[float] = [] # reference work offset frequency
+    
     for idx, folder in enumerate(folders):
         folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
+        z_dic[folder_name_short] = {}
+
+        # ----------------------------------------------------------------------
+        # Extract sat_trans_hz and work_offset_hz parameters from folder files
+        # ----------------------------------------------------------------------
         try:
             sat_trans_hz, work_offset_hz = extract_parameters(folder)
+            z_dic[folder_name_short]["sat_trans_hz"] = sat_trans_hz
+            z_dic[folder_name_short]["work_offset_hz"] = work_offset_hz
         except (FileNotFoundError, ValueError) as e:
             print(f"Errore in {folder}: {e}")
             return
         
+        if with_ref:
+            if idx < multiple_amount_ref:
+                if ref_work_offset_hz == []:
+                    ref_work_offset_hz = work_offset_hz
+                elif ref_work_offset_hz != work_offset_hz:
+                    print(f"{colored('Error', 'red', attrs=['bold'])}: different work_offset_hz in reference folders.")
+                
+        # ----------------------------------------------------------------------
+        # Load spectra
+        # ----------------------------------------------------------------------
         dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
         if n_exp <= 0:
             print(f"Nessun esperimento in {folder}")
             return
         
+        # ----------------------------------------------------------------------
+        # Process and plot spectra
+        # ----------------------------------------------------------------------
         spectra = process_spectra(data, dic, n_exp)
         fig: Figure = plot_spectra(title=f"Spectra - {folder_name_short}", spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
         spectrum_figures.append(fig)   # <-- keep reference to the figure
         
+        # ----------------------------------------------------------------------
         # Se i ppm non sono ancora noti, chiediamo usando la prima cartella
+        # ----------------------------------------------------------------------
         if ppm_missing and idx == 0:
             plt.pause(0.05) # <-- keep figures alive
             start_ppm, end_ppm = ask_user_for_ppm_range(uc)
@@ -954,29 +998,88 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             print("Indici ppm non validi.")
             return
         
+        # ----------------------------------------------------------------------
+        # Find max values and indexes in the ppm range (the z-spectra)
+        # ----------------------------------------------------------------------
         max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
-        
-        if len(sat_trans_hz) == len(max_vals):
-            fit_result = correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf1)
-            if fit_result["fit_successful"]:
-                plot_data_with_spline(
-                    fit_result["x_sorted"], fit_result["y_sorted"],
-                    fit_result["x_fit"], fit_result["y_fit"],
-                    title=folder_name_short, invert_x=True
-                )
-                region_integrals = compute_regions_integrals(fit_result["x_fit"], fit_result["y_fit"])
-                region_integrals_dict[folder_name_short] = region_integrals
-        else:
-            print(f"Numero di frequenze di saturazione non corrispondente per {folder}")
+        z_dic[folder_name_short].update({
+            "max_indexes": max_indexes,
+            "max_vals": max_vals, 
+        })
 
-        pass
+        if with_ref:
+            if ref_sat_trans_hz == []:
+                ref_sat_trans_hz = [0.0] * len(sat_trans_hz)
+
+            if idx < multiple_amount_ref:
+                if len(sat_trans_hz) == len(max_vals):
+                    for k, (i, v, st) in enumerate(zip(max_indexes.values(), max_vals.values(), sat_trans_hz)):   # assumes same keys in val_dict
+                        ref_max_indexes[k] += i / multiple_amount_ref
+                        ref_max_vals[k] += v / multiple_amount_ref
+                        ref_sat_trans_hz[k] += st / multiple_amount_ref
+                else:
+                    print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
+    
+    if with_ref:
+        for k, _ in enumerate(ref_max_indexes.values()):
+            ref_max_indexes[k] = round(ref_max_indexes[k])
+
+        z_dic["reference"] = {
+            "max_indexes": ref_max_indexes,
+            "max_vals": ref_max_vals,
+        }
+        z_dic["reference"]["sat_trans_hz"] = ref_sat_trans_hz
+        z_dic["reference"]["work_offset_hz"] = ref_work_offset_hz
         
     pass
     
+    # ----------------------------------------------------------------------
+    # Fit z-spectra 
+    # ----------------------------------------------------------------------
+    for name, z in z_dic.items():
+        if len(z["sat_trans_hz"]) == len(z["max_vals"]):
+            fit_result = correct_sat_freq(
+                z["sat_trans_hz"], 
+                z["max_vals"], 
+                z["max_indexes"], 
+                z["work_offset_hz"], 
+                uc, 
+                bf1
+            )
+            if fit_result["fit_successful"]:
+                z_dic[name]["fit_result"] = fit_result
+                plot_data_with_spline(
+                    z_dic[name]["fit_result"]["x_sorted"],  
+                    z_dic[name]["fit_result"]["y_sorted"],
+                    z_dic[name]["fit_result"]["x_fit"], 
+                    z_dic[name]["fit_result"]["y_fit"],
+                    title=name, invert_x=True
+                )
+            else:
+                print(f"Fit fallito per {name}")    
+        else:
+            print(f"Numero di frequenze di saturazione non corrispondente per {name}")
+    
+        # ----------------------------------------------------------------------
+        # Calculate integrals
+        # ----------------------------------------------------------------------
+        region_integrals = compute_regions_integrals(
+            z["fit_result"]["x_fit"], 
+            z["fit_result"]["y_fit"]
+        )
+        region_integrals_dict[name] = region_integrals
+        z_dic[name]["integrals"] = {}
+        z_dic[name]["integrals"].update(region_integrals)
+    
+        pass
+
+    # ----------------------------------------------------------------------
+    # Plot integrals
+    # ----------------------------------------------------------------------
     plot_integrals_regions(
-        integrals=list(region_integrals_dict.values()),
-        labels=list(region_integrals_dict.keys()),
-        reference=with_ref
+        data=z_dic,
+        reference=with_ref,
+        multiple_amount_ref=multiple_amount_ref if with_ref else 0
     )
 
 def main() -> None:
