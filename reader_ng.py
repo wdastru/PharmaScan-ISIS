@@ -370,9 +370,7 @@ def fit_curve(x, y, smoothing=0.0, n_points=200) -> Dict[str, Any]:
     }
 
 def plot_integrals_regions(
-    integrals: Union[Dict[str, float], List[Dict[str, float]]],
-    labels: Optional[List[str]] = None,
-    colors: Optional[List[str]] = None,
+    data: Dict[str, Any],
     title: str = 'Intensità per regione',
     xlabel: str = 'Regione',
     ylabel: str = 'Intensità',
@@ -384,29 +382,59 @@ def plot_integrals_regions(
     """
     Crea un grafico a barre (singolo o raggruppato) degli integrali di regione.
     """
-    # Determina se è una lista o un dizionario singolo
-    is_list: bool = isinstance(integrals, list)
     
-    if not is_list:
-        # Caso singolo dizionario (comportamento originale)
-        integrals = [integrals]  # Converti in lista per unificare la logica
+    def check_integrals_keys_consistency(data):
+        """
+        data: multilevel dict
+        returns: (is_consistent, integral, mismatches)
+            integral: {key: value['integrals'] for every top-level key that has an 'integrals' sub-dict}
+            mismatches: {key: {'missing': set, 'extra': set}} for keys whose integral keys differ from the first one
+        """
+        integral = {}
+        integral_sets = {}
 
-    # Verifica che tutti i dizionari abbiano le stesse chiavi
-    if len(integrals) > 1:
-        keys_set: List[set[str]] = [set(d.keys()) for d in integrals]
-        if not all(k == keys_set[0] for k in keys_set):
-            raise ValueError("Tutti i dizionari devono avere le stesse chiavi (regioni).")
+        for key, value in data.items():
+            if isinstance(value, dict) and 'integrals' in value:
+                integral[key] = value['integrals']          # store the whole inner dict
+                integral_sets[key] = set(value['integrals'].keys())
+
+        if not integral_sets:
+            print("No 'integrals' entries found.")
+            return True, integral, {}
+
+        # Use the first entry as reference
+        ref_key = next(iter(integral_sets))
+        ref_set = integral_sets[ref_key]
+
+        mismatches = {}
+        for key, ks in integral_sets.items():
+            if ks != ref_set:
+                missing = ref_set - ks
+                extra = ks - ref_set
+                mismatches[key] = {'missing': missing, 'extra': extra}
+
+        is_consistent = len(mismatches) == 0
+        return is_consistent, integral, mismatches
+    
+    # Verifica che tutti i integrali abbiano le stesse chiavi
+
+    is_consistent, integrals, mismatches = check_integrals_keys_consistency(data)
+    if not is_consistent:
+        print(f"Tutti i dizionari devono avere le stesse regioni.")
+        print(f"{mismatches}")
+        return None
+    
+    labels: List[str] = list(integrals.keys())
+    n_series: int = len(labels)
     
     # Estrai le etichette comuni (regioni) dal primo dizionario
-    region_labels: List[str] = list(integrals[0].keys())
+    region_labels: List[str] = list(integrals[labels[0]].keys())
     n_regions: int = len(region_labels)
     
-    n_series: int = len(integrals)
-
     # Prepara i valori: matrice (n_series x n_regions)
     values_matrix: List = []
-    for d in integrals:
-        values_matrix.append([d[reg] for reg in region_labels])
+    for k, v in integrals.items():
+        values_matrix.append([integrals[k][reg] for reg in region_labels])
     values_matrix = np.array(values_matrix)  # shape: (n_series, n_regions)
 
     # Crea il grafico
@@ -417,16 +445,10 @@ def plot_integrals_regions(
     # Larghezza di ogni barra e posizioni
     bar_width: float = 0.8 / n_series if n_series > 1 else 0.6
     x = np.arange(n_regions)  # posizioni delle regioni sull'asse x
-    
-    # Colori
-    if colors is None:
-        colors = plt.cm.tab10(np.linspace(0, 1, n_series))
-    else:
-        # Se i colori sono meno delle serie, ripeti
-        if len(colors) < n_series:
-            colors = colors * (n_series // len(colors) + 1)
-        colors = colors[:n_series]
 
+    # Colori
+    colors = plt.cm.tab10(np.linspace(0, 1, n_series))
+            
     # Etichette per la legenda (solo se più serie)
     if labels is None and n_series > 1:
         labels = [f'Gruppo {i+1}' for i in range(n_series)]
@@ -473,17 +495,15 @@ def plot_integrals_regions(
 
         title = "Intensità relative al riferimento"
 
-        labels = labels[1:]
-        colors = colors[1:]
-
+        integral_list = list(integrals.values())
         integrals_referenced: List[Dict[str, float]] = []
-        for index, integral in enumerate(integrals[1:]):
+        for integral in integral_list[multiple_amount_ref:-1]:
             d: Dict[str, float] = {}
             for key, integral in integral.items():
-                d[key] = 100 * (integral / integrals[0][key] -1)
+                d[key] = 100 * (integral / integrals['reference'][key] - 1)
             integrals_referenced.append(d)
         
-        n_series -= 1
+        n_series -= (multiple_amount_ref + 1)
 
         # Prepara i valori: matrice (n_series x n_regions)
         values_matrix: List = []
@@ -504,15 +524,7 @@ def plot_integrals_regions(
         bar_width: float = 0.8 / n_series if n_series > 1 else 0.6
         x = np.arange(n_regions)  # posizioni delle regioni sull'asse x
         
-        # Colori
-        if colors is None:
-            colors = plt.cm.tab10(np.linspace(0, 1, n_series))
-        else:
-            # Se i colori sono meno delle serie, ripeti
-            if len(colors) < n_series:
-                colors = colors * (n_series // len(colors) + 1)
-            colors = colors[:n_series]
-
+        labels = labels[multiple_amount_ref:-1]
         # Etichette per la legenda (solo se più serie)
         if labels is None and n_series > 1:
             labels = [f'Gruppo {i+1}' for i in range(n_series)]
@@ -520,6 +532,7 @@ def plot_integrals_regions(
             labels = ['']  # non serve legenda
 
         # Disegna le barre
+        colors = colors[multiple_amount_ref:-1]
         bars_list: List = []
         for i in range(n_series):
             offset: float = (i - n_series/2 + 0.5) * bar_width
@@ -1064,8 +1077,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # Plot integrals
     # ----------------------------------------------------------------------
     plot_integrals_regions(
-        integrals=list(region_integrals_dict.values()),
-        labels=list(region_integrals_dict.keys()),
+        data=z_dic,
         reference=with_ref,
         multiple_amount_ref=multiple_amount_ref if with_ref else 0
     )
