@@ -935,6 +935,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     ref_max_vals: defaultdict[float] = defaultdict(float)
     ref_max_indexes: defaultdict[int] = defaultdict(int)
     ref_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies
+    ref_sd_max_vals: defaultdict[float] = defaultdict(float)
+    ref_sd_max_indexes: defaultdict[int] = defaultdict(int)
+    ref_sd_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies std deviation
     ref_work_offset_hz: List[float] = [] # reference work offset frequency
     
     for idx, folder in enumerate(folders):
@@ -1010,6 +1013,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         if with_ref:
             if ref_sat_trans_hz == []:
                 ref_sat_trans_hz = [0.0] * len(sat_trans_hz)
+            if ref_sd_sat_trans_hz == []:
+                ref_sd_sat_trans_hz = [0.0] * len(sat_trans_hz)
 
             if idx < multiple_amount_ref:
                 if len(sat_trans_hz) == len(max_vals):
@@ -1019,7 +1024,20 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         ref_sat_trans_hz[k] += st / multiple_amount_ref
                 else:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
-    
+
+            if idx < multiple_amount_ref:
+                if len(sat_trans_hz) == len(max_vals):
+                    for k, (i, v, st) in enumerate(zip(max_indexes.values(), max_vals.values(), sat_trans_hz)):   # assumes same keys in val_dict
+                        ref_sd_max_indexes[k] += (i - ref_max_indexes[k]) ** 2
+                        ref_sd_max_vals[k] += (v - ref_max_vals[k]) ** 2
+                        ref_sd_sat_trans_hz[k] += (st - ref_sat_trans_hz[k]) ** 2
+                else:
+                    print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
+
+            ref_sd_max_indexes[k] =  np.sqrt(ref_sd_max_indexes[k] / (multiple_amount_ref - 1))
+            ref_sd_max_vals[k] = np.sqrt(ref_sd_max_vals[k] / (multiple_amount_ref - 1))
+            ref_sd_sat_trans_hz[k] = np.sqrt(ref_sd_sat_trans_hz[k] / (multiple_amount_ref - 1))
+
     if with_ref:
         for k, _ in enumerate(ref_max_indexes.values()):
             ref_max_indexes[k] = round(ref_max_indexes[k])
