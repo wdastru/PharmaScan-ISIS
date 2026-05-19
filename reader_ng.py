@@ -308,10 +308,7 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
     # Create the plot
     fig = plt.figure(figsize=(8, 5))
 
-    if title == "reference":
-    
-        pass
-        
+    if title in ("reference", "avg"):
         plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color='b', label='Data')
     else:
         plt.plot(x, y, 'o', color='b', label='Data')
@@ -932,7 +929,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     plt.ion()   # <-- interactive mode ON
     folders: List[Path] = config["folders"]
     with_ref: bool = config.get("with_ref", False)
+    with_multiple: bool = config.get("with_multiple", False)
     multiple_amount_ref: int = config.get("multiple_amount_ref", 1)
+    multiple_amount: int = config.get("multiple_amount", 1)
     start_ppm: float = config.get("start_ppm")
     end_ppm: float = config.get("end_ppm")
     ppm_missing: bool = config.get("ppm_missing", False)
@@ -946,6 +945,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     ref_sd_max_indexes: List[int] = []
     ref_sd_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies std deviation
     ref_work_offset_hz: List[float] = [] # reference work offset frequency
+    avg_max_vals: List[float] = []
+    avg_max_indexes: List[int] = []
+    avg_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies
+    avg_sd_max_vals: List[float] = []
+    avg_sd_max_indexes: List[int] = []
+    avg_sd_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies std deviation
+    avg_work_offset_hz: List[float] = [] # reference work offset frequency
     
     for idx, folder in enumerate(folders):
         folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
@@ -962,6 +968,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             print(f"Errore in {folder}: {e}")
             return
         
+        if with_multiple:
+            if idx < multiple_amount:
+                if avg_work_offset_hz == []:
+                    avg_work_offset_hz = work_offset_hz
+                elif avg_work_offset_hz != work_offset_hz:
+                    print(f"{colored('Error', 'red', attrs=['bold'])}: different work_offset_hz in sample folders.")
+
         if with_ref:
             if idx < multiple_amount_ref:
                 if ref_work_offset_hz == []:
@@ -1017,6 +1030,31 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             "max_vals": max_vals, 
         })
 
+        if with_multiple:
+            if avg_max_indexes == []:
+                avg_max_indexes = [0] * len(sat_trans_hz)
+            if avg_max_vals == []:
+                avg_max_vals = [0.0] * len(sat_trans_hz)
+            if avg_sat_trans_hz == []:
+                avg_sat_trans_hz = [0.0] * len(sat_trans_hz)
+            if avg_sd_max_indexes == []:
+                avg_sd_max_indexes = [0] * len(sat_trans_hz)
+            if avg_sd_max_vals == []:
+                avg_sd_max_vals = [0.0] * len(sat_trans_hz)
+            if avg_sd_sat_trans_hz == []:
+                avg_sd_sat_trans_hz = [0.0] * len(sat_trans_hz)
+
+            # calcola la media dei valori di max_vals, max_indexes e sat_trans per gli esperimenti di riferimento
+            if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
+                if len(sat_trans_hz) == len(max_vals):
+                    for k, (i, v, st) in enumerate(zip(max_indexes, max_vals, sat_trans_hz)):   # assumes same keys in val_dict
+                        avg_max_indexes[k] += i / multiple_amount
+                        avg_max_vals[k] += v / multiple_amount
+                        avg_sat_trans_hz[k] += st / multiple_amount
+                else:
+                    print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
+            pass
+
         if with_ref:
             if ref_max_indexes == []:
                 ref_max_indexes = [0] * len(sat_trans_hz)
@@ -1041,6 +1079,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 else:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
 
+    if with_multiple:
+        for k, _ in enumerate(avg_max_indexes):
+            avg_max_indexes[k] = round(avg_max_indexes[k])
+
+        z_dic["avg"] = {
+            "max_indexes": avg_max_indexes,
+            "max_vals": avg_max_vals,
+        }
+        z_dic["avg"]["sat_trans_hz"] = avg_sat_trans_hz
+        z_dic["avg"]["work_offset_hz"] = avg_work_offset_hz
+
     if with_ref:
         for k, _ in enumerate(ref_max_indexes):
             ref_max_indexes[k] = round(ref_max_indexes[k])
@@ -1053,18 +1102,30 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         z_dic["reference"]["work_offset_hz"] = ref_work_offset_hz
 
     for idx, (k, v) in enumerate(z_dic.items()):
-        if idx < multiple_amount_ref:
+        if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
+            for j, (index, val, freq) in enumerate(zip(v["max_indexes"], v["max_vals"], v["sat_trans_hz"])):
+                avg_sd_max_indexes[j] += (index - avg_max_indexes[j]) ** 2
+                avg_sd_max_vals[j] += (val - avg_max_vals[j]) ** 2
+                avg_sd_sat_trans_hz[j] += (freq - avg_sat_trans_hz[j]) ** 2
+        elif idx < multiple_amount_ref:
             for j, (index, val, freq) in enumerate(zip(v["max_indexes"], v["max_vals"], v["sat_trans_hz"])):
                 ref_sd_max_indexes[j] += (index - ref_max_indexes[j]) ** 2
                 ref_sd_max_vals[j] += (val - ref_max_vals[j]) ** 2
                 ref_sd_sat_trans_hz[j] += (freq - ref_sat_trans_hz[j]) ** 2
-        else:
+        else:   # finished multiple_amount_ref AND multiple_amount, stop accumulating, calculate std dev and break loop
+            for j in range(len(avg_sd_max_indexes)):
+                avg_sd_max_indexes[j] = np.sqrt(avg_sd_max_indexes[j] / (multiple_amount - 1))
+                avg_sd_max_vals[j] = np.sqrt(avg_sd_max_vals[j] / (multiple_amount - 1))
+                avg_sd_sat_trans_hz[j] = np.sqrt(avg_sd_sat_trans_hz[j] / (multiple_amount - 1))
             for j in range(len(ref_sd_max_indexes)):
                 ref_sd_max_indexes[j] = np.sqrt(ref_sd_max_indexes[j] / (multiple_amount_ref - 1))
                 ref_sd_max_vals[j] = np.sqrt(ref_sd_max_vals[j] / (multiple_amount_ref - 1))
                 ref_sd_sat_trans_hz[j] = np.sqrt(ref_sd_sat_trans_hz[j] / (multiple_amount_ref - 1))
             break
     
+    z_dic["avg"]["sd_max_indexes"] = avg_sd_max_indexes
+    z_dic["avg"]["sd_max_vals"] = avg_sd_max_vals
+    z_dic["avg"]["sd_sat_trans_hz"] = avg_sd_sat_trans_hz
     z_dic["reference"]["sd_max_indexes"] = ref_sd_max_indexes
     z_dic["reference"]["sd_max_vals"] = ref_sd_max_vals
     z_dic["reference"]["sd_sat_trans_hz"] = ref_sd_sat_trans_hz
@@ -1089,7 +1150,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     z_dic[name]["fit_result"]["y_sorted"],
                     z_dic[name]["fit_result"]["x_fit"], 
                     z_dic[name]["fit_result"]["y_fit"],
-                    y_std_data=z_dic[name]["sd_max_vals"] if name == "reference" else None,
+                    y_std_data=z_dic[name]["sd_max_vals"] if name in ("reference", "avg") else None,
                     title=name, invert_x=True
                 )
             else:
@@ -1107,7 +1168,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         region_integrals_dict[name] = region_integrals
         z_dic[name]["integrals"] = {}
         z_dic[name]["integrals"].update(region_integrals)
-    
+
     # ----------------------------------------------------------------------
     # Plot integrals
     # ----------------------------------------------------------------------
