@@ -481,7 +481,7 @@ def plot_integrals_regions(
                 ax_absolute.text(
                     bar.get_x() + bar.get_width()/2, 
                     y_text,
-                    f'{val:.2e}', 
+                    f'{val:.5e}', 
                     ha='center', 
                     va='bottom', 
                     fontsize=8,
