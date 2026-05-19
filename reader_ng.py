@@ -278,7 +278,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
     
     return {region: _region_integral(bounds, x_fit, y_fit) for region, bounds in REGIONS.items()}
 
-def plot_data_with_spline(x, y, x_fit, y_fit, title="Max Values vs Saturation ppm",
+def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Values vs Saturation ppm",
                           xlabel="Saturation ppm", ylabel="Max Value",
                           fit_label="", invert_x=True) -> Figure:
     """
@@ -307,7 +307,14 @@ def plot_data_with_spline(x, y, x_fit, y_fit, title="Max Values vs Saturation pp
     """
     # Create the plot
     fig = plt.figure(figsize=(8, 5))
-    plt.plot(x, y, 'o', color='b', label='Data')
+
+    if title == "reference":
+    
+        pass
+        
+        plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color='b', label='Data')
+    else:
+        plt.plot(x, y, 'o', color='b', label='Data')
     plt.plot(x_fit, y_fit, 'r-', label=fit_label)
     if invert_x:
         plt.gca().invert_xaxis()
@@ -759,24 +766,24 @@ def find_max_vals(spectra, start_idx, end_idx):
 
     Returns
     -------
-    max_vals : Dict[int, float]
-        Dizionario con chiave indice esperimento e valore massimo normalizzato.
-    max_indexes : Dict[int, int]
-        Dizionario con chiave indice esperimento e indice del massimo (originale).
+    max_vals : List[float]
+        Lista con i valore massimo normalizzato.
+    max_indexes : List[int]
+        Lista con indice del massimo (originale).
     """
     # ---- Find maxima in the selected range ----
-    max_vals = {}
-    max_indexes = {}
+    max_vals: List[float] = []
+    max_indexes: List[int] = []
     global_max = 0.0
     for exp_idx, spec in spectra.items():
         val, idx = find_maxima(spec, start=start_idx, end=end_idx)
         if val > global_max:
             global_max = val
-        max_vals[exp_idx] = val
-        max_indexes[exp_idx] = idx
+        max_vals.append(val)
+        max_indexes.append(idx)
     # ---- Normalize max_vals ----
-    for exp_idx in max_vals:
-        max_vals[exp_idx] /= global_max
+    for i in range(len(max_vals)):
+        max_vals[i] /= global_max
     return max_vals, max_indexes
 
 def ask_user_for_ppm_range(uc, default_start=None, default_end=None) -> Tuple[float, float]:
@@ -814,13 +821,13 @@ def correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf
     NOTA: la lista sat_trans_hz viene modificata in-place con le frequenze corrette in Hz.
     """    
     sat_trans_f1_ppm = [0.0] * len(sat_trans_hz)
-    for exp_idx in max_vals:
+    for i, val in enumerate(max_vals):
         # Calculate the offset from the reference  
-        delta = work_offset_hz[0] - uc.hz(max_indexes[exp_idx])
-        if not sat_trans_hz[exp_idx] == 0.0:
-            sat_trans_hz[exp_idx] += delta
-        sat_trans_f1_ppm[exp_idx] = sat_trans_hz[exp_idx] / bf1
-    return fit_curve(x=sat_trans_f1_ppm, y=list(max_vals.values()), smoothing=0.02, n_points=200)
+        delta = work_offset_hz[0] - uc.hz(max_indexes[i])
+        if not sat_trans_hz[i] == 0.0:
+            sat_trans_hz[i] += delta
+        sat_trans_f1_ppm[i] = sat_trans_hz[i] / bf1
+    return fit_curve(x=sat_trans_f1_ppm, y=max_vals, smoothing=0.02, n_points=200)
 
 def ask_yes_no(prompt: str, default: Optional[bool] = None) -> bool:
     """
@@ -932,11 +939,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     z_dic: dict = {}
     region_integrals_dict = {}
     spectrum_figures = []   # <-- store figure objects
-    ref_max_vals: defaultdict[float] = defaultdict(float)
-    ref_max_indexes: defaultdict[int] = defaultdict(int)
+    ref_max_vals: List[float] = []
+    ref_max_indexes: List[int] = []
     ref_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies
-    ref_sd_max_vals: defaultdict[float] = defaultdict(float)
-    ref_sd_max_indexes: defaultdict[int] = defaultdict(int)
+    ref_sd_max_vals: List[float] = []
+    ref_sd_max_indexes: List[int] = []
     ref_sd_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies std deviation
     ref_work_offset_hz: List[float] = [] # reference work offset frequency
     
@@ -1011,35 +1018,31 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         })
 
         if with_ref:
+            if ref_max_indexes == []:
+                ref_max_indexes = [0] * len(sat_trans_hz)
+            if ref_max_vals == []:
+                ref_max_vals = [0.0] * len(sat_trans_hz)
             if ref_sat_trans_hz == []:
                 ref_sat_trans_hz = [0.0] * len(sat_trans_hz)
+            if ref_sd_max_indexes == []:
+                ref_sd_max_indexes = [0] * len(sat_trans_hz)
+            if ref_sd_max_vals == []:
+                ref_sd_max_vals = [0.0] * len(sat_trans_hz)
             if ref_sd_sat_trans_hz == []:
                 ref_sd_sat_trans_hz = [0.0] * len(sat_trans_hz)
 
+            # calcola la media dei valori di max_vals, max_indexes e sat_trans per gli esperimenti di riferimento
             if idx < multiple_amount_ref:
                 if len(sat_trans_hz) == len(max_vals):
-                    for k, (i, v, st) in enumerate(zip(max_indexes.values(), max_vals.values(), sat_trans_hz)):   # assumes same keys in val_dict
+                    for k, (i, v, st) in enumerate(zip(max_indexes, max_vals, sat_trans_hz)):   # assumes same keys in val_dict
                         ref_max_indexes[k] += i / multiple_amount_ref
                         ref_max_vals[k] += v / multiple_amount_ref
                         ref_sat_trans_hz[k] += st / multiple_amount_ref
                 else:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
 
-            if idx < multiple_amount_ref:
-                if len(sat_trans_hz) == len(max_vals):
-                    for k, (i, v, st) in enumerate(zip(max_indexes.values(), max_vals.values(), sat_trans_hz)):   # assumes same keys in val_dict
-                        ref_sd_max_indexes[k] += (i - ref_max_indexes[k]) ** 2
-                        ref_sd_max_vals[k] += (v - ref_max_vals[k]) ** 2
-                        ref_sd_sat_trans_hz[k] += (st - ref_sat_trans_hz[k]) ** 2
-                else:
-                    print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
-
-            ref_sd_max_indexes[k] =  np.sqrt(ref_sd_max_indexes[k] / (multiple_amount_ref - 1))
-            ref_sd_max_vals[k] = np.sqrt(ref_sd_max_vals[k] / (multiple_amount_ref - 1))
-            ref_sd_sat_trans_hz[k] = np.sqrt(ref_sd_sat_trans_hz[k] / (multiple_amount_ref - 1))
-
     if with_ref:
-        for k, _ in enumerate(ref_max_indexes.values()):
+        for k, _ in enumerate(ref_max_indexes):
             ref_max_indexes[k] = round(ref_max_indexes[k])
 
         z_dic["reference"] = {
@@ -1048,8 +1051,23 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         }
         z_dic["reference"]["sat_trans_hz"] = ref_sat_trans_hz
         z_dic["reference"]["work_offset_hz"] = ref_work_offset_hz
-        
-    pass
+
+    for idx, (k, v) in enumerate(z_dic.items()):
+        if idx < multiple_amount_ref:
+            for j, (index, val, freq) in enumerate(zip(v["max_indexes"], v["max_vals"], v["sat_trans_hz"])):
+                ref_sd_max_indexes[j] += (index - ref_max_indexes[j]) ** 2
+                ref_sd_max_vals[j] += (val - ref_max_vals[j]) ** 2
+                ref_sd_sat_trans_hz[j] += (freq - ref_sat_trans_hz[j]) ** 2
+        else:
+            for j in range(len(ref_sd_max_indexes)):
+                ref_sd_max_indexes[j] = np.sqrt(ref_sd_max_indexes[j] / (multiple_amount_ref - 1))
+                ref_sd_max_vals[j] = np.sqrt(ref_sd_max_vals[j] / (multiple_amount_ref - 1))
+                ref_sd_sat_trans_hz[j] = np.sqrt(ref_sd_sat_trans_hz[j] / (multiple_amount_ref - 1))
+            break
+    
+    z_dic["reference"]["sd_max_indexes"] = ref_sd_max_indexes
+    z_dic["reference"]["sd_max_vals"] = ref_sd_max_vals
+    z_dic["reference"]["sd_sat_trans_hz"] = ref_sd_sat_trans_hz
     
     # ----------------------------------------------------------------------
     # Fit z-spectra 
@@ -1071,6 +1089,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     z_dic[name]["fit_result"]["y_sorted"],
                     z_dic[name]["fit_result"]["x_fit"], 
                     z_dic[name]["fit_result"]["y_fit"],
+                    y_std_data=z_dic[name]["sd_max_vals"] if name == "reference" else None,
                     title=name, invert_x=True
                 )
             else:
@@ -1089,8 +1108,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         z_dic[name]["integrals"] = {}
         z_dic[name]["integrals"].update(region_integrals)
     
-        pass
-
     # ----------------------------------------------------------------------
     # Plot integrals
     # ----------------------------------------------------------------------
