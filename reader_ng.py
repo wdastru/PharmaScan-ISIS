@@ -26,7 +26,7 @@ from scipy.interpolate import PchipInterpolator
 import json
 from termcolor import colored
 
-REGIONS: dict[str, List[float]] = {
+METABOLITE_REGIONS: dict[str, List[float]] = {
     "SP": [5.6, 7.5],
     #"G6P/G3P": [6.7, 7.0],
     #"3PG/F6P": [5.8, 6.7],
@@ -276,7 +276,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
         bottom_area = np.trapezoid(y_fit[mask], x_fit[mask])
         return bottom_area
     
-    return {region: _region_integral(bounds, x_fit, y_fit) for region, bounds in REGIONS.items()}
+    return {region: _region_integral(bounds, x_fit, y_fit) for region, bounds in METABOLITE_REGIONS.items()}
 
 def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Values vs Saturation ppm",
                           xlabel="Saturation ppm", ylabel="Max Value",
@@ -812,19 +812,38 @@ def ask_user_for_ppm_range(uc, default_start=None, default_end=None) -> Tuple[fl
         except ValueError:
             print("Inserire numeri validi.")
 
-def correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf1):
+def correct_sat_frequencies(
+    sat_trans_hz: List[float],
+    max_indexes: List[int],
+    work_offset_hz: List[float],
+    uc: Any,
+    bf1: float
+) -> List[float]:
     """
-    Calcola le frequenze di saturazione corrette (in ppm) e restituisce il fit.
-    NOTA: la lista sat_trans_hz viene modificata in-place con le frequenze corrette in Hz.
-    """    
+    Corregge le frequenze di saturazione e le converte in ppm.
+
+    Modifica *in‑place* la lista sat_trans_hz:
+    per ogni frequenza non nulla aggiunge il delta calcolato
+    dallo scostamento del picco rispetto al work offset.
+
+    Restituisce la lista delle frequenze corrette in ppm.
+    """
     sat_trans_f1_ppm = [0.0] * len(sat_trans_hz)
-    for i, val in enumerate(max_vals):
-        # Calculate the offset from the reference  
-        delta = work_offset_hz[0] - uc.hz(max_indexes[i])
-        if not sat_trans_hz[i] == 0.0:
+    for i, (st_hz, idx) in enumerate(zip(sat_trans_hz, max_indexes)):
+        delta = work_offset_hz[0] - uc.hz(idx)
+        if st_hz != 0.0:
             sat_trans_hz[i] += delta
         sat_trans_f1_ppm[i] = sat_trans_hz[i] / bf1
-    return fit_curve(x=sat_trans_f1_ppm, y=max_vals, smoothing=0.02, n_points=200)
+    return sat_trans_f1_ppm
+
+
+def fit_saturation_curve(x_ppm: List[float], y_vals: List[float]) -> Dict[str, Any]:
+    """
+    Esegue il fit della curva di saturazione usando i parametri standard.
+
+    Utilizza fit_curve con smoothing=0.02 e 200 punti di campionamento.
+    """
+    return fit_curve(x=x_ppm, y=y_vals, smoothing=0.02, n_points=200)
 
 def ask_yes_no(prompt: str, default: Optional[bool] = None) -> bool:
     """
@@ -887,7 +906,7 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
 # Helper functions for statistics accumulation (refactored)
 # ----------------------------------------------------------------------
 
-def _init_stats_lists(length: int, count: int = 3) -> Dict[str, List[float]]:
+def _init_stats_lists(length: int) -> Dict[str, List[float]]:
     """Create a dictionary of zero‑filled lists for statistical accumulation.
     
     Returns lists for:
@@ -983,8 +1002,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     start_ppm: float = config.get("start_ppm")
     end_ppm: float = config.get("end_ppm")
     ppm_missing: bool = config.get("ppm_missing", False)
-    z_dic: dict = {}
-    region_integrals_dict = {}
+    analysis_results: dict = {}
+    region_integrals = {}
     spectrum_figures = []   # <-- store figure objects
 
     # Initialize accumulators using helper
@@ -992,20 +1011,18 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     avg_stats = None
     ref_work_offset_hz = []
     avg_work_offset_hz = []
-    n_processed_ref = 0
-    n_processed_multiple = 0
     
     for idx, folder in enumerate(folders):
         folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
-        z_dic[folder_name_short] = {}
+        analysis_results[folder_name_short] = {}
 
         # ----------------------------------------------------------------------
         # Extract sat_trans_hz and work_offset_hz parameters from folder files
         # ----------------------------------------------------------------------
         try:
             sat_trans_hz, work_offset_hz = extract_parameters(folder)
-            z_dic[folder_name_short]["sat_trans_hz"] = sat_trans_hz
-            z_dic[folder_name_short]["work_offset_hz"] = work_offset_hz
+            analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
+            analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
         except (FileNotFoundError, ValueError) as e:
             print(f"Errore in {folder}: {e}")
             return
@@ -1066,7 +1083,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # Find max values and indexes in the ppm range (the z-spectra)
         # ----------------------------------------------------------------------
         max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
-        z_dic[folder_name_short].update({
+        analysis_results[folder_name_short].update({
             "max_indexes": max_indexes,
             "max_vals": max_vals, 
         })
@@ -1082,7 +1099,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
                 if len(max_vals) == num_sat:
                     _accumulate_averages(avg_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount)
-                    n_processed_multiple += 1
                 else:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
 
@@ -1094,7 +1110,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             if idx < multiple_amount_ref:
                 if len(max_vals) == num_sat:
                     _accumulate_averages(ref_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount_ref)
-                    n_processed_ref += 1
                 else:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
 
@@ -1102,7 +1117,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # After processing all folders, finalize averages and compute std dev
     # ----------------------------------------------------------------------
     if with_multiple and avg_stats is not None:
-        z_dic["avg"] = {
+        analysis_results["avg"] = {
             "max_indexes": [round(v) for v in avg_stats["max_indexes"]],
             "max_vals": avg_stats["max_vals"],
             "sat_trans_hz": avg_stats["sat_trans_hz"],
@@ -1112,47 +1127,47 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # We need the original data again – we stored them in z_dic for each folder.
         # Instead of re-looping, we can loop over z_dic items as before but now using helpers.
         # We'll do the squared differences accumulation in a second pass over the folder data.
-        for idx, (k, v) in enumerate(z_dic.items()):
+        for idx, (k, v) in enumerate(analysis_results.items()):
             if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
                 _accumulate_squared_diffs(
                     avg_stats,
                     (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
-                    {"max_indexes": z_dic["avg"]["max_indexes"],
-                     "max_vals": z_dic["avg"]["max_vals"],
-                     "sat_trans_hz": z_dic["avg"]["sat_trans_hz"]}
+                    {"max_indexes": analysis_results["avg"]["max_indexes"],
+                     "max_vals": analysis_results["avg"]["max_vals"],
+                     "sat_trans_hz": analysis_results["avg"]["sat_trans_hz"]}
                 )
         _finalize_std_dev(avg_stats, multiple_amount)
-        z_dic["avg"]["sd_max_indexes"] = avg_stats["sd_max_indexes"]
-        z_dic["avg"]["sd_max_vals"] = avg_stats["sd_max_vals"]
-        z_dic["avg"]["sd_sat_trans_hz"] = avg_stats["sd_sat_trans_hz"]
+        analysis_results["avg"]["sd_max_indexes"] = avg_stats["sd_max_indexes"]
+        analysis_results["avg"]["sd_max_vals"] = avg_stats["sd_max_vals"]
+        analysis_results["avg"]["sd_sat_trans_hz"] = avg_stats["sd_sat_trans_hz"]
 
     if with_ref and ref_stats is not None:
-        z_dic["reference"] = {
+        analysis_results["reference"] = {
             "max_indexes": [round(v) for v in ref_stats["max_indexes"]],
             "max_vals": ref_stats["max_vals"],
             "sat_trans_hz": ref_stats["sat_trans_hz"],
             "work_offset_hz": ref_work_offset_hz,
         }
-        for idx, (k, v) in enumerate(z_dic.items()):
+        for idx, (k, v) in enumerate(analysis_results.items()):
             if idx < multiple_amount_ref:
                 _accumulate_squared_diffs(
                     ref_stats,
                     (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
-                    {"max_indexes": z_dic["reference"]["max_indexes"],
-                     "max_vals": z_dic["reference"]["max_vals"],
-                     "sat_trans_hz": z_dic["reference"]["sat_trans_hz"]}
+                    {"max_indexes": analysis_results["reference"]["max_indexes"],
+                     "max_vals": analysis_results["reference"]["max_vals"],
+                     "sat_trans_hz": analysis_results["reference"]["sat_trans_hz"]}
                 )
         _finalize_std_dev(ref_stats, multiple_amount_ref)
-        z_dic["reference"]["sd_max_indexes"] = ref_stats["sd_max_indexes"]
-        z_dic["reference"]["sd_max_vals"] = ref_stats["sd_max_vals"]
-        z_dic["reference"]["sd_sat_trans_hz"] = ref_stats["sd_sat_trans_hz"]
+        analysis_results["reference"]["sd_max_indexes"] = ref_stats["sd_max_indexes"]
+        analysis_results["reference"]["sd_max_vals"] = ref_stats["sd_max_vals"]
+        analysis_results["reference"]["sd_sat_trans_hz"] = ref_stats["sd_sat_trans_hz"]
     
     # ----------------------------------------------------------------------
-    # Fit z-spectra 
+    # Correct saturation frequencies and fit z-spectra 
     # ----------------------------------------------------------------------
-    for name, z in z_dic.items():
+    for name, z in analysis_results.items():
         if len(z["sat_trans_hz"]) == len(z["max_vals"]):
-            fit_result = correct_sat_freq(
+            corrected_ppm  = correct_sat_frequencies(
                 z["sat_trans_hz"], 
                 z["max_vals"], 
                 z["max_indexes"], 
@@ -1160,14 +1175,15 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 uc, 
                 bf1
             )
+            fit_result = fit_saturation_curve(corrected_ppm, z["max_vals"])
             if fit_result["fit_successful"]:
-                z_dic[name]["fit_result"] = fit_result
+                analysis_results[name]["fit_result"] = fit_result
                 plot_data_with_spline(
-                    z_dic[name]["fit_result"]["x_sorted"],  
-                    z_dic[name]["fit_result"]["y_sorted"],
-                    z_dic[name]["fit_result"]["x_fit"], 
-                    z_dic[name]["fit_result"]["y_fit"],
-                    y_std_data=z_dic[name].get("sd_max_vals") if name in ("reference", "avg") else None,
+                    analysis_results[name]["fit_result"]["x_sorted"],  
+                    analysis_results[name]["fit_result"]["y_sorted"],
+                    analysis_results[name]["fit_result"]["x_fit"], 
+                    analysis_results[name]["fit_result"]["y_fit"],
+                    y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
                     title=name, invert_x=True
                 )
             else:
@@ -1182,15 +1198,15 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             z["fit_result"]["x_fit"], 
             z["fit_result"]["y_fit"]
         )
-        region_integrals_dict[name] = region_integrals
-        z_dic[name]["integrals"] = {}
-        z_dic[name]["integrals"].update(region_integrals)
+        region_integrals[name] = region_integrals
+        analysis_results[name]["integrals"] = {}
+        analysis_results[name]["integrals"].update(region_integrals)
 
     # ----------------------------------------------------------------------
     # Plot integrals
     # ----------------------------------------------------------------------
     plot_integrals_regions(
-        data=z_dic,
+        data=analysis_results,
         reference=with_ref,
         multiple_amount_ref=multiple_amount_ref if with_ref else 0
     )
