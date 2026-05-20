@@ -961,7 +961,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         if config_name:
             print(f"Configurazione '{config_name}' senza cartelle definite. Procedura interattiva.")
         with_ref = ask_yes_no("Reference folder?", default=config_data.get("with_ref", False))
-        multiple_amount_ref = ask_int("How many?", min_val=1, default=config_data.get("multiple_amount_ref", 1)) if with_ref else 1
+        multiple_amount_ref = ask_int("How many?", min_val=1, default=config_data.get("multiple_amount_ref", 1)) if with_ref else 0
         with_multiple = ask_yes_no("Multiple folders?", default=config_data.get("with_multiple", False))
         multiple_amount = ask_int("How many?", min_val=1, default=config_data.get("multiple_amount", 1)) if with_multiple else 1
         
@@ -997,7 +997,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     folders: List[Path] = config["folders"]
     with_ref: bool = config.get("with_ref", False)
     with_multiple: bool = config.get("with_multiple", False)
-    multiple_amount_ref: int = config.get("multiple_amount_ref", 1)
+    multiple_amount_ref: int = config.get("multiple_amount_ref", 0)
     multiple_amount: int = config.get("multiple_amount", 1)
     start_ppm: float = config.get("start_ppm")
     end_ppm: float = config.get("end_ppm")
@@ -1116,7 +1116,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # ----------------------------------------------------------------------
     # After processing all folders, finalize averages and compute std dev
     # ----------------------------------------------------------------------
-    if with_multiple and avg_stats is not None:
+    if with_multiple and multiple_amount > 1 and avg_stats is not None:
         analysis_results["avg"] = {
             "max_indexes": [round(v) for v in avg_stats["max_indexes"]],
             "max_vals": avg_stats["max_vals"],
@@ -1124,8 +1124,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             "work_offset_hz": avg_work_offset_hz,
         }
         # Calculate standard deviations
-        # We need the original data again – we stored them in z_dic for each folder.
-        # Instead of re-looping, we can loop over z_dic items as before but now using helpers.
+        # We need the original data again – we stored them in analysis_results for each folder.
+        # Instead of re-looping, we can loop over analysis_results items as before but now using helpers.
         # We'll do the squared differences accumulation in a second pass over the folder data.
         for idx, (k, v) in enumerate(analysis_results.items()):
             if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
