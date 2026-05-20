@@ -1169,7 +1169,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         if len(z["sat_trans_hz"]) == len(z["max_vals"]):
             corrected_ppm  = correct_sat_frequencies(
                 z["sat_trans_hz"], 
-                z["max_vals"], 
                 z["max_indexes"], 
                 z["work_offset_hz"], 
                 uc, 
