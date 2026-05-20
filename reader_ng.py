@@ -884,6 +884,54 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
             print("Inserire un numero intero.")
 
 # ----------------------------------------------------------------------
+# Helper functions for statistics accumulation (refactored)
+# ----------------------------------------------------------------------
+
+def _init_stats_lists(length: int, count: int = 3) -> Dict[str, List[float]]:
+    """Create a dictionary of zero‑filled lists for statistical accumulation.
+    
+    Returns lists for:
+        - max_indexes, max_vals, sat_trans_hz (averages)
+        - sd_max_indexes, sd_max_vals, sd_sat_trans_hz (for standard deviations)
+    """
+    return {
+        "max_indexes": [0.0] * length,
+        "max_vals": [0.0] * length,
+        "sat_trans_hz": [0.0] * length,
+        "sd_max_indexes": [0.0] * length,
+        "sd_max_vals": [0.0] * length,
+        "sd_sat_trans_hz": [0.0] * length,
+    }
+
+def _accumulate_averages(acc: Dict[str, List[float]], 
+                         values: Tuple[List[int], List[float], List[float]], 
+                         divisor: int) -> None:
+    """Add weighted contributions to the average accumulators."""
+    max_indexes, max_vals, sat_trans_hz = values
+    for k, (i, v, st) in enumerate(zip(max_indexes, max_vals, sat_trans_hz)):
+        acc["max_indexes"][k] += i / divisor
+        acc["max_vals"][k] += v / divisor
+        acc["sat_trans_hz"][k] += st / divisor
+
+def _accumulate_squared_diffs(
+    sd_acc: Dict[str, List[float]],
+    values: Tuple[List[int], List[float], List[float]],
+    avg: Dict[str, List[float]]
+) -> None:
+    """Sum squared differences from the mean for standard deviation."""
+    max_indexes, max_vals, sat_trans_hz = values
+    for j, (index, val, freq) in enumerate(zip(max_indexes, max_vals, sat_trans_hz)):
+        sd_acc["sd_max_indexes"][j] += (index - avg["max_indexes"][j]) ** 2
+        sd_acc["sd_max_vals"][j] += (val - avg["max_vals"][j]) ** 2
+        sd_acc["sd_sat_trans_hz"][j] += (freq - avg["sat_trans_hz"][j]) ** 2
+
+def _finalize_std_dev(sd_acc: Dict[str, List[float]], count: int) -> None:
+    """Compute square root of variance (sample std. dev.)."""
+    for key in ("sd_max_indexes", "sd_max_vals", "sd_sat_trans_hz"):
+        for j in range(len(sd_acc[key])):
+            sd_acc[key][j] = np.sqrt(sd_acc[key][j] / (count - 1)) if count > 1 else 0.0
+
+# ----------------------------------------------------------------------
 # Core logic: ensure complete config and run analysis
 # ----------------------------------------------------------------------
 
@@ -938,20 +986,14 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     z_dic: dict = {}
     region_integrals_dict = {}
     spectrum_figures = []   # <-- store figure objects
-    ref_max_vals: List[float] = []
-    ref_max_indexes: List[int] = []
-    ref_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies
-    ref_sd_max_vals: List[float] = []
-    ref_sd_max_indexes: List[int] = []
-    ref_sd_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies std deviation
-    ref_work_offset_hz: List[float] = [] # reference work offset frequency
-    avg_max_vals: List[float] = []
-    avg_max_indexes: List[int] = []
-    avg_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies
-    avg_sd_max_vals: List[float] = []
-    avg_sd_max_indexes: List[int] = []
-    avg_sd_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies std deviation
-    avg_work_offset_hz: List[float] = [] # reference work offset frequency
+
+    # Initialize accumulators using helper
+    ref_stats = None
+    avg_stats = None
+    ref_work_offset_hz = []
+    avg_work_offset_hz = []
+    n_processed_ref = 0
+    n_processed_multiple = 0
     
     for idx, folder in enumerate(folders):
         folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
@@ -970,14 +1012,14 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         
         if with_multiple:
             if idx < multiple_amount:
-                if avg_work_offset_hz == []:
+                if not avg_work_offset_hz:
                     avg_work_offset_hz = work_offset_hz
                 elif avg_work_offset_hz != work_offset_hz:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: different work_offset_hz in sample folders.")
 
         if with_ref:
             if idx < multiple_amount_ref:
-                if ref_work_offset_hz == []:
+                if not ref_work_offset_hz:
                     ref_work_offset_hz = work_offset_hz
                 elif ref_work_offset_hz != work_offset_hz:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: different work_offset_hz in reference folders.")
@@ -1006,7 +1048,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # Aggiorna la configurazione
             config["start_ppm"] = start_ppm
             config["end_ppm"] = end_ppm
-
             config["ppm_missing"] = False
             ppm_missing = False
             if config_name:
@@ -1030,111 +1071,81 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             "max_vals": max_vals, 
         })
 
+        # ------------------------------------------------------------------
+        # Accumulate averages for reference and multiple (sample) groups
+        # ------------------------------------------------------------------
+        num_sat = len(sat_trans_hz)
         if with_multiple:
-            if avg_max_indexes == []:
-                avg_max_indexes = [0] * len(sat_trans_hz)
-            if avg_max_vals == []:
-                avg_max_vals = [0.0] * len(sat_trans_hz)
-            if avg_sat_trans_hz == []:
-                avg_sat_trans_hz = [0.0] * len(sat_trans_hz)
-            if avg_sd_max_indexes == []:
-                avg_sd_max_indexes = [0] * len(sat_trans_hz)
-            if avg_sd_max_vals == []:
-                avg_sd_max_vals = [0.0] * len(sat_trans_hz)
-            if avg_sd_sat_trans_hz == []:
-                avg_sd_sat_trans_hz = [0.0] * len(sat_trans_hz)
-
-            # calcola la media dei valori di max_vals, max_indexes e sat_trans per gli esperimenti di riferimento
+            if avg_stats is None:
+                avg_stats = _init_stats_lists(num_sat)
+            # belong to multiple group?
             if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
-                if len(sat_trans_hz) == len(max_vals):
-                    for k, (i, v, st) in enumerate(zip(max_indexes, max_vals, sat_trans_hz)):   # assumes same keys in val_dict
-                        avg_max_indexes[k] += i / multiple_amount
-                        avg_max_vals[k] += v / multiple_amount
-                        avg_sat_trans_hz[k] += st / multiple_amount
+                if len(max_vals) == num_sat:
+                    _accumulate_averages(avg_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount)
+                    n_processed_multiple += 1
                 else:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
-            pass
 
         if with_ref:
-            if ref_max_indexes == []:
-                ref_max_indexes = [0] * len(sat_trans_hz)
-            if ref_max_vals == []:
-                ref_max_vals = [0.0] * len(sat_trans_hz)
-            if ref_sat_trans_hz == []:
-                ref_sat_trans_hz = [0.0] * len(sat_trans_hz)
-            if ref_sd_max_indexes == []:
-                ref_sd_max_indexes = [0] * len(sat_trans_hz)
-            if ref_sd_max_vals == []:
-                ref_sd_max_vals = [0.0] * len(sat_trans_hz)
-            if ref_sd_sat_trans_hz == []:
-                ref_sd_sat_trans_hz = [0.0] * len(sat_trans_hz)
-
-            # calcola la media dei valori di max_vals, max_indexes e sat_trans per gli esperimenti di riferimento
+            if ref_stats is None:
+                ref_stats = _init_stats_lists(num_sat)
+            
+            # belong to reference group?
             if idx < multiple_amount_ref:
-                if len(sat_trans_hz) == len(max_vals):
-                    for k, (i, v, st) in enumerate(zip(max_indexes, max_vals, sat_trans_hz)):   # assumes same keys in val_dict
-                        ref_max_indexes[k] += i / multiple_amount_ref
-                        ref_max_vals[k] += v / multiple_amount_ref
-                        ref_sat_trans_hz[k] += st / multiple_amount_ref
+                if len(max_vals) == num_sat:
+                    _accumulate_averages(ref_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount_ref)
+                    n_processed_ref += 1
                 else:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
 
-    if with_multiple:
-        for k, _ in enumerate(avg_max_indexes):
-            avg_max_indexes[k] = round(avg_max_indexes[k])
-
+    # ----------------------------------------------------------------------
+    # After processing all folders, finalize averages and compute std dev
+    # ----------------------------------------------------------------------
+    if with_multiple and avg_stats is not None:
         z_dic["avg"] = {
-            "max_indexes": avg_max_indexes,
-            "max_vals": avg_max_vals,
+            "max_indexes": [round(v) for v in avg_stats["max_indexes"]],
+            "max_vals": avg_stats["max_vals"],
+            "sat_trans_hz": avg_stats["sat_trans_hz"],
+            "work_offset_hz": avg_work_offset_hz,
         }
-        z_dic["avg"]["sat_trans_hz"] = avg_sat_trans_hz
-        z_dic["avg"]["work_offset_hz"] = avg_work_offset_hz
+        # Calculate standard deviations
+        # We need the original data again – we stored them in z_dic for each folder.
+        # Instead of re-looping, we can loop over z_dic items as before but now using helpers.
+        # We'll do the squared differences accumulation in a second pass over the folder data.
+        for idx, (k, v) in enumerate(z_dic.items()):
+            if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
+                _accumulate_squared_diffs(
+                    avg_stats,
+                    (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
+                    {"max_indexes": z_dic["avg"]["max_indexes"],
+                     "max_vals": z_dic["avg"]["max_vals"],
+                     "sat_trans_hz": z_dic["avg"]["sat_trans_hz"]}
+                )
+        _finalize_std_dev(avg_stats, multiple_amount)
+        z_dic["avg"]["sd_max_indexes"] = avg_stats["sd_max_indexes"]
+        z_dic["avg"]["sd_max_vals"] = avg_stats["sd_max_vals"]
+        z_dic["avg"]["sd_sat_trans_hz"] = avg_stats["sd_sat_trans_hz"]
 
-    if with_ref:
-        for k, _ in enumerate(ref_max_indexes):
-            ref_max_indexes[k] = round(ref_max_indexes[k])
-
+    if with_ref and ref_stats is not None:
         z_dic["reference"] = {
-            "max_indexes": ref_max_indexes,
-            "max_vals": ref_max_vals,
+            "max_indexes": [round(v) for v in ref_stats["max_indexes"]],
+            "max_vals": ref_stats["max_vals"],
+            "sat_trans_hz": ref_stats["sat_trans_hz"],
+            "work_offset_hz": ref_work_offset_hz,
         }
-        z_dic["reference"]["sat_trans_hz"] = ref_sat_trans_hz
-        z_dic["reference"]["work_offset_hz"] = ref_work_offset_hz
-
-    for idx, (k, v) in enumerate(z_dic.items()):
-        if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
-            if with_multiple:
-                for j, (index, val, freq) in enumerate(zip(v["max_indexes"], v["max_vals"], v["sat_trans_hz"])):
-                    avg_sd_max_indexes[j] += (index - avg_max_indexes[j]) ** 2
-                    avg_sd_max_vals[j] += (val - avg_max_vals[j]) ** 2
-                    avg_sd_sat_trans_hz[j] += (freq - avg_sat_trans_hz[j]) ** 2
-        elif idx < multiple_amount_ref:
-            if with_ref:
-                for j, (index, val, freq) in enumerate(zip(v["max_indexes"], v["max_vals"], v["sat_trans_hz"])):
-                    ref_sd_max_indexes[j] += (index - ref_max_indexes[j]) ** 2
-                    ref_sd_max_vals[j] += (val - ref_max_vals[j]) ** 2
-                    ref_sd_sat_trans_hz[j] += (freq - ref_sat_trans_hz[j]) ** 2
-        else:   # finished multiple_amount_ref AND multiple_amount, stop accumulating, calculate std dev and break loop
-            if with_multiple:
-                for j in range(len(avg_sd_max_indexes)):
-                    avg_sd_max_indexes[j] = np.sqrt(avg_sd_max_indexes[j] / (multiple_amount - 1))
-                    avg_sd_max_vals[j] = np.sqrt(avg_sd_max_vals[j] / (multiple_amount - 1))
-                    avg_sd_sat_trans_hz[j] = np.sqrt(avg_sd_sat_trans_hz[j] / (multiple_amount - 1))
-            if with_ref and multiple_amount_ref > 1:
-                for j in range(len(ref_sd_max_indexes)):
-                    ref_sd_max_indexes[j] = np.sqrt(ref_sd_max_indexes[j] / (multiple_amount_ref - 1))
-                    ref_sd_max_vals[j] = np.sqrt(ref_sd_max_vals[j] / (multiple_amount_ref - 1))
-                    ref_sd_sat_trans_hz[j] = np.sqrt(ref_sd_sat_trans_hz[j] / (multiple_amount_ref - 1))
-            break
-    
-    if with_multiple:
-        z_dic["avg"]["sd_max_indexes"] = avg_sd_max_indexes
-        z_dic["avg"]["sd_max_vals"] = avg_sd_max_vals
-        z_dic["avg"]["sd_sat_trans_hz"] = avg_sd_sat_trans_hz
-    if with_ref and multiple_amount_ref > 1:
-        z_dic["reference"]["sd_max_indexes"] = ref_sd_max_indexes
-        z_dic["reference"]["sd_max_vals"] = ref_sd_max_vals
-        z_dic["reference"]["sd_sat_trans_hz"] = ref_sd_sat_trans_hz
+        for idx, (k, v) in enumerate(z_dic.items()):
+            if idx < multiple_amount_ref:
+                _accumulate_squared_diffs(
+                    ref_stats,
+                    (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
+                    {"max_indexes": z_dic["reference"]["max_indexes"],
+                     "max_vals": z_dic["reference"]["max_vals"],
+                     "sat_trans_hz": z_dic["reference"]["sat_trans_hz"]}
+                )
+        _finalize_std_dev(ref_stats, multiple_amount_ref)
+        z_dic["reference"]["sd_max_indexes"] = ref_stats["sd_max_indexes"]
+        z_dic["reference"]["sd_max_vals"] = ref_stats["sd_max_vals"]
+        z_dic["reference"]["sd_sat_trans_hz"] = ref_stats["sd_sat_trans_hz"]
     
     # ----------------------------------------------------------------------
     # Fit z-spectra 
