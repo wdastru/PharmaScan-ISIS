@@ -1163,7 +1163,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         analysis_results["reference"]["sd_sat_trans_hz"] = ref_stats["sd_sat_trans_hz"]
     
     # ----------------------------------------------------------------------
-    # Correct saturation frequencies and fit z-spectra 
+    # Correct saturation frequencies, fit z-spectra and calculate integrals
     # ----------------------------------------------------------------------
     for name, z in analysis_results.items():
         if len(z["sat_trans_hz"]) == len(z["max_vals"]):
@@ -1185,20 +1185,22 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
                     title=name, invert_x=True
                 )
+
+                # ----------------------------------------------------------
+                # Calculate integrals
+                # ----------------------------------------------------------
+                integrals = compute_regions_integrals(
+                    z["fit_result"]["x_fit"], 
+                    z["fit_result"]["y_fit"]
+                )
+                analysis_results[name]["integrals"] = integrals
+                
             else:
-                print(f"Fit fallito per {name}")    
+                print(f"Fit fallito per {name}")
+                analysis_results[name]["integrals"] = {}
         else:
             print(f"Numero di frequenze di saturazione non corrispondente per {name}")
     
-        # ----------------------------------------------------------------------
-        # Calculate integrals
-        # ----------------------------------------------------------------------
-        integrals = compute_regions_integrals(
-            z["fit_result"]["x_fit"], 
-            z["fit_result"]["y_fit"]
-        )
-        analysis_results[name]["integrals"] = integrals
-        
     # ----------------------------------------------------------------------
     # Plot integrals
     # ----------------------------------------------------------------------
