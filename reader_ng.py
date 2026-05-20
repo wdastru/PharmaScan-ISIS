@@ -308,7 +308,7 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
     # Create the plot
     fig = plt.figure(figsize=(8, 5))
 
-    if title in ("reference", "avg"):
+    if title in ("reference", "avg") and y_std_data is not None:
         plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color='b', label='Data')
     else:
         plt.plot(x, y, 'o', color='b', label='Data')
@@ -1103,32 +1103,38 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
     for idx, (k, v) in enumerate(z_dic.items()):
         if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
-            for j, (index, val, freq) in enumerate(zip(v["max_indexes"], v["max_vals"], v["sat_trans_hz"])):
-                avg_sd_max_indexes[j] += (index - avg_max_indexes[j]) ** 2
-                avg_sd_max_vals[j] += (val - avg_max_vals[j]) ** 2
-                avg_sd_sat_trans_hz[j] += (freq - avg_sat_trans_hz[j]) ** 2
+            if with_multiple:
+                for j, (index, val, freq) in enumerate(zip(v["max_indexes"], v["max_vals"], v["sat_trans_hz"])):
+                    avg_sd_max_indexes[j] += (index - avg_max_indexes[j]) ** 2
+                    avg_sd_max_vals[j] += (val - avg_max_vals[j]) ** 2
+                    avg_sd_sat_trans_hz[j] += (freq - avg_sat_trans_hz[j]) ** 2
         elif idx < multiple_amount_ref:
-            for j, (index, val, freq) in enumerate(zip(v["max_indexes"], v["max_vals"], v["sat_trans_hz"])):
-                ref_sd_max_indexes[j] += (index - ref_max_indexes[j]) ** 2
-                ref_sd_max_vals[j] += (val - ref_max_vals[j]) ** 2
-                ref_sd_sat_trans_hz[j] += (freq - ref_sat_trans_hz[j]) ** 2
+            if with_ref:
+                for j, (index, val, freq) in enumerate(zip(v["max_indexes"], v["max_vals"], v["sat_trans_hz"])):
+                    ref_sd_max_indexes[j] += (index - ref_max_indexes[j]) ** 2
+                    ref_sd_max_vals[j] += (val - ref_max_vals[j]) ** 2
+                    ref_sd_sat_trans_hz[j] += (freq - ref_sat_trans_hz[j]) ** 2
         else:   # finished multiple_amount_ref AND multiple_amount, stop accumulating, calculate std dev and break loop
-            for j in range(len(avg_sd_max_indexes)):
-                avg_sd_max_indexes[j] = np.sqrt(avg_sd_max_indexes[j] / (multiple_amount - 1))
-                avg_sd_max_vals[j] = np.sqrt(avg_sd_max_vals[j] / (multiple_amount - 1))
-                avg_sd_sat_trans_hz[j] = np.sqrt(avg_sd_sat_trans_hz[j] / (multiple_amount - 1))
-            for j in range(len(ref_sd_max_indexes)):
-                ref_sd_max_indexes[j] = np.sqrt(ref_sd_max_indexes[j] / (multiple_amount_ref - 1))
-                ref_sd_max_vals[j] = np.sqrt(ref_sd_max_vals[j] / (multiple_amount_ref - 1))
-                ref_sd_sat_trans_hz[j] = np.sqrt(ref_sd_sat_trans_hz[j] / (multiple_amount_ref - 1))
+            if with_multiple:
+                for j in range(len(avg_sd_max_indexes)):
+                    avg_sd_max_indexes[j] = np.sqrt(avg_sd_max_indexes[j] / (multiple_amount - 1))
+                    avg_sd_max_vals[j] = np.sqrt(avg_sd_max_vals[j] / (multiple_amount - 1))
+                    avg_sd_sat_trans_hz[j] = np.sqrt(avg_sd_sat_trans_hz[j] / (multiple_amount - 1))
+            if with_ref and multiple_amount_ref > 1:
+                for j in range(len(ref_sd_max_indexes)):
+                    ref_sd_max_indexes[j] = np.sqrt(ref_sd_max_indexes[j] / (multiple_amount_ref - 1))
+                    ref_sd_max_vals[j] = np.sqrt(ref_sd_max_vals[j] / (multiple_amount_ref - 1))
+                    ref_sd_sat_trans_hz[j] = np.sqrt(ref_sd_sat_trans_hz[j] / (multiple_amount_ref - 1))
             break
     
-    z_dic["avg"]["sd_max_indexes"] = avg_sd_max_indexes
-    z_dic["avg"]["sd_max_vals"] = avg_sd_max_vals
-    z_dic["avg"]["sd_sat_trans_hz"] = avg_sd_sat_trans_hz
-    z_dic["reference"]["sd_max_indexes"] = ref_sd_max_indexes
-    z_dic["reference"]["sd_max_vals"] = ref_sd_max_vals
-    z_dic["reference"]["sd_sat_trans_hz"] = ref_sd_sat_trans_hz
+    if with_multiple:
+        z_dic["avg"]["sd_max_indexes"] = avg_sd_max_indexes
+        z_dic["avg"]["sd_max_vals"] = avg_sd_max_vals
+        z_dic["avg"]["sd_sat_trans_hz"] = avg_sd_sat_trans_hz
+    if with_ref and multiple_amount_ref > 1:
+        z_dic["reference"]["sd_max_indexes"] = ref_sd_max_indexes
+        z_dic["reference"]["sd_max_vals"] = ref_sd_max_vals
+        z_dic["reference"]["sd_sat_trans_hz"] = ref_sd_sat_trans_hz
     
     # ----------------------------------------------------------------------
     # Fit z-spectra 
@@ -1150,7 +1156,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     z_dic[name]["fit_result"]["y_sorted"],
                     z_dic[name]["fit_result"]["x_fit"], 
                     z_dic[name]["fit_result"]["y_fit"],
-                    y_std_data=z_dic[name]["sd_max_vals"] if name in ("reference", "avg") else None,
+                    y_std_data=z_dic[name].get("sd_max_vals") if name in ("reference", "avg") else None,
                     title=name, invert_x=True
                 )
             else:
