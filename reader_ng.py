@@ -1193,14 +1193,12 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # ----------------------------------------------------------------------
         # Calculate integrals
         # ----------------------------------------------------------------------
-        region_integrals = compute_regions_integrals(
+        integrals = compute_regions_integrals(
             z["fit_result"]["x_fit"], 
             z["fit_result"]["y_fit"]
         )
-        region_integrals[name] = region_integrals
-        analysis_results[name]["integrals"] = {}
-        analysis_results[name]["integrals"].update(region_integrals)
-
+        analysis_results[name]["integrals"] = integrals
+        
     # ----------------------------------------------------------------------
     # Plot integrals
     # ----------------------------------------------------------------------
