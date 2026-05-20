@@ -21,6 +21,9 @@ from typing import List, Optional, Tuple, Dict, Any
 from scipy.interpolate import PchipInterpolator
 import json
 from termcolor import colored
+import os
+import hashlib
+from joblib import dump, load
 
 METABOLITE_REGIONS: dict[str, List[float]] = {
     "SP": [5.6, 7.5],
@@ -32,7 +35,60 @@ METABOLITE_REGIONS: dict[str, List[float]] = {
     "GAMMA-ATP": [-3.5, -1.5],
     "ALPHA-ATP": [-8.5, -7.5],
 }
+CACHE_FILE = Path(__file__).parent / "analysis_cache.joblib"
 
+def _build_cache_key(config: Dict[str, Any]) -> str:
+    """
+    Crea una chiave univoca basata sui parametri e sulle cartelle (compresa la data di modifica).
+    """
+    folders = config.get("folders", [])
+    # Dati delle cartelle: percorso e timestamp
+    folder_info = []
+    for f in folders:
+        try:
+            mtime = os.path.getmtime(f)
+        except OSError:
+            mtime = 0
+        folder_info.append((str(f), mtime))
+    # Parametri determinanti
+    key_data = {
+        "with_ref": config.get("with_ref"),
+        "multiple_amount_ref": config.get("multiple_amount_ref"),
+        "multiple_amount": config.get("multiple_amount"),
+        "start_ppm": config.get("start_ppm"),
+        "end_ppm": config.get("end_ppm"),
+        "folders": folder_info,
+    }
+    # Serializza in modo stabile (ordinato)
+    key_str = json.dumps(key_data, sort_keys=True, default=str)
+    return hashlib.sha256(key_str.encode()).hexdigest()
+
+def save_cache(config: Dict[str, Any], analysis_results: dict) -> None:
+    # Crea una copia pulita senza gli oggetti non serializzabili
+    clean_results = {}
+    for name, data in analysis_results.items():
+        clean_results[name] = {k: v for k, v in data.items() if k not in ("uc", "bf1")}
+    payload = {"key": _build_cache_key(config), "analysis_results": clean_results}
+    dump(payload, CACHE_FILE, compress=3)
+    print("Risultati salvati nella cache.")
+
+def load_cache(config: Dict[str, Any]) -> Optional[dict]:
+    """Carica i risultati se la cache è valida, altrimenti restituisce None."""
+    if not CACHE_FILE.exists():
+        return None
+    try:
+        payload = load(CACHE_FILE)
+        current_key = _build_cache_key(config)
+        if payload["key"] == current_key:
+            print("Cache valida, carico i risultati.")
+            return payload["analysis_results"]
+        else:
+            print("Cache non aggiornata, sarà ricalcolata.")
+            return None
+    except Exception as e:
+        print(f"Errore nel caricamento della cache: {e}")
+        return None
+    
 # ----------------------------------------------------------------------
 # Configuration handling
 # ----------------------------------------------------------------------
@@ -835,7 +891,7 @@ def fit_saturation_curve(x_ppm: List[float], y_vals: List[float]) -> Dict[str, A
 
     Utilizza fit_curve con smoothing=0.02 e 200 punti di campionamento.
     """
-    return fit_curve(x=x_ppm, y=y_vals, smoothing=0.02, n_points=200)
+    return fit_curve(x=x_ppm, y=y_vals, n_points=200)
 
 def ask_yes_no(prompt: str, default: Optional[bool] = None) -> bool:
     """
@@ -985,6 +1041,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
 
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
+
     plt.ion()   # <-- interactive mode ON
     folders: List[Path] = config["folders"]
     with_ref: bool = config.get("with_ref", False)
@@ -995,7 +1052,30 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     end_ppm: float = config.get("end_ppm")
     ppm_missing: bool = config.get("ppm_missing", False)
     analysis_results: dict = {}
-    
+
+    # ═══════════════════════════════════════════════════════════════
+    #  🚀 PROVA A CARICARE DALLA CACHE
+    # ═══════════════════════════════════════════════════════════════
+    cached = load_cache(config)
+    if cached is not None:
+        analysis_results = cached
+        for name, z in analysis_results.items():
+            if "fit_result" in z and z["fit_result"]["fit_successful"]:
+                fit = z["fit_result"]
+                plot_data_with_spline(
+                    fit["x_sorted"], fit["y_sorted"],
+                    fit["x_fit"], fit["y_fit"],
+                    y_std_data=z.get("sd_max_vals"),
+                    title=name, invert_x=True
+                )
+        plot_integrals_regions(
+            data=analysis_results,
+            reference=with_ref,
+            multiple_amount_ref=multiple_amount_ref if with_ref else 0
+        )
+        return   # <-- esce dopo che il grafico a barre è stato chiuso
+    # ═══════════════════════════════════════════════════════════════
+
     # Initialize accumulators using helper
     ref_stats = None
     avg_stats = None
@@ -1113,6 +1193,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             "max_vals": avg_stats["max_vals"],
             "sat_trans_hz": avg_stats["sat_trans_hz"],
             "work_offset_hz": avg_work_offset_hz,
+            # TODO: check if uc and bf1 are the same for the multiple expt 
+            "uc": uc,
+            "bf1": bf1
         }
         # Calculate standard deviations
         # We need the original data again – we stored them in analysis_results for each folder.
@@ -1138,6 +1221,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             "max_vals": ref_stats["max_vals"],
             "sat_trans_hz": ref_stats["sat_trans_hz"],
             "work_offset_hz": ref_work_offset_hz,
+            # TODO: check if uc and bf1 are the same for the reference expt 
+            "uc": uc,
+            "bf1": bf1
         }
         for idx, (k, v) in enumerate(analysis_results.items()):
             if idx < multiple_amount_ref:
@@ -1192,6 +1278,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         else:
             print(f"Numero di frequenze di saturazione non corrispondente per {name}")
     
+    # ═══════════════════════════════════════════════════════════════
+    #  💾 SALVA I RISULTATI NELLA CACHE
+    # ═══════════════════════════════════════════════════════════════
+    save_cache(config, analysis_results)    
+
     # ----------------------------------------------------------------------
     # Plot integrals
     # ----------------------------------------------------------------------
