@@ -7,9 +7,7 @@ allows the user to select a ppm range, and calculates maxima to generate
 a saturation transfer curve.
 """
 
-from collections import defaultdict
 import nmrglue as ng
-from nmrglue.fileio.fileiobase import unit_conversion
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -19,9 +17,7 @@ from matplotlib.axes import Axes
 import re
 import tkinter as tk
 from tkinter import filedialog
-from typing import List, Optional, Tuple, Dict, Any, Union
-from scipy.interpolate import UnivariateSpline
-from scipy.interpolate import make_smoothing_spline
+from typing import List, Optional, Tuple, Dict, Any
 from scipy.interpolate import PchipInterpolator
 import json
 from termcolor import colored
@@ -119,7 +115,7 @@ def select_or_create_config() -> Tuple[str, Dict[str, Any]]:
 # Utility functions
 # ----------------------------------------------------------------------
 
-def find_maxima(arr: np.ndarray,
+def find_maximum(arr: np.ndarray,
                start: Optional[int] = None,
                end: Optional[int] = None) -> Tuple[float, int]:
     """
@@ -255,7 +251,7 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
 
 def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str, float]:
     """
-    Calcola gli integrali di regione per tutte le regioni definite in REGIONS.
+    Calcola gli integrali di regione per tutte le regioni definite in METABOLITE_REGIONS.
 
     Parameters
     ----------
@@ -323,7 +319,7 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
     plt.show(block=False)
     return fig
 
-def fit_curve(x, y, smoothing=0.0, n_points=200) -> Dict[str, Any]:
+def fit_curve(x, y, n_points=200) -> Dict[str, Any]:
     """
     Esegue lo spline fit dei dati.
 
@@ -331,8 +327,6 @@ def fit_curve(x, y, smoothing=0.0, n_points=200) -> Dict[str, Any]:
     ----------
     x, y : array-like
         Dati originali.
-    smoothing : float
-        Fattore di smoothing per la spline (0 = interpolazione esatta).
     n_points : int
         Numero di punti per la curva fitted.
 
@@ -356,13 +350,11 @@ def fit_curve(x, y, smoothing=0.0, n_points=200) -> Dict[str, Any]:
     y_fit = None
     fit_label = ""
     try:
-        #spline = UnivariateSpline(x_sorted, y_sorted, s=smoothing)
-        #spline = make_smoothing_spline(x_sorted, y_sorted, lam=smoothing)
         spline = PchipInterpolator(x_sorted, y_sorted)
         fit_successful = True
         x_fit = np.linspace(x_sorted.min(), x_sorted.max(), n_points)
         y_fit = spline(x_fit)
-        fit_label = f"Spline (s={smoothing})"
+        fit_label = f"Spline Fit"
     except ImportError:
         print("scipy not available - cannot perform spline fit.")
     except Exception as e:
@@ -773,7 +765,7 @@ def find_max_vals(spectra, start_idx, end_idx):
     max_indexes: List[int] = []
     global_max = 0.0
     for exp_idx, spec in spectra.items():
-        val, idx = find_maxima(spec, start=start_idx, end=end_idx)
+        val, idx = find_maximum(spec, start=start_idx, end=end_idx)
         if val > global_max:
             global_max = val
         max_vals.append(val)
@@ -783,7 +775,7 @@ def find_max_vals(spectra, start_idx, end_idx):
         max_vals[i] /= global_max
     return max_vals, max_indexes
 
-def ask_user_for_ppm_range(uc, default_start=None, default_end=None) -> Tuple[float, float]:
+def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
     """
     Richiede all'utente di inserire l'intervallo in ppm (min e max).
     Se forniti default_start e default_end, li mostra come suggeriti.
@@ -1003,9 +995,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     end_ppm: float = config.get("end_ppm")
     ppm_missing: bool = config.get("ppm_missing", False)
     analysis_results: dict = {}
-    region_integrals = {}
-    spectrum_figures = []   # <-- store figure objects
-
+    
     # Initialize accumulators using helper
     ref_stats = None
     avg_stats = None
@@ -1045,6 +1035,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # Load spectra
         # ----------------------------------------------------------------------
         dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
+        analysis_results[folder_name_short]["uc"] = uc
+        analysis_results[folder_name_short]["bf1"] = bf1
         if n_exp <= 0:
             print(f"Nessun esperimento in {folder}")
             return
@@ -1054,14 +1046,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # ----------------------------------------------------------------------
         spectra = process_spectra(data, dic, n_exp)
         fig: Figure = plot_spectra(title=f"Spectra - {folder_name_short}", spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
-        spectrum_figures.append(fig)   # <-- keep reference to the figure
         
         # ----------------------------------------------------------------------
         # Se i ppm non sono ancora noti, chiediamo usando la prima cartella
         # ----------------------------------------------------------------------
         if ppm_missing and idx == 0:
             plt.pause(0.05) # <-- keep figures alive
-            start_ppm, end_ppm = ask_user_for_ppm_range(uc)
+            start_ppm, end_ppm = ask_user_for_ppm_range()
             # Aggiorna la configurazione
             config["start_ppm"] = start_ppm
             config["end_ppm"] = end_ppm
@@ -1171,8 +1162,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 z["sat_trans_hz"], 
                 z["max_indexes"], 
                 z["work_offset_hz"], 
-                uc, 
-                bf1
+                z["uc"], 
+                z["bf1"]
             )
             fit_result = fit_saturation_curve(corrected_ppm, z["max_vals"])
             if fit_result["fit_successful"]:
