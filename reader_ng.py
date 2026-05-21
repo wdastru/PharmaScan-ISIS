@@ -38,7 +38,7 @@ METABOLITE_REGIONS: dict[str, List[float]] = {
 CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
 CACHE_DIR.mkdir(exist_ok=True)
 
-def _cache_path(config_name: str) -> Path:
+def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
     if not config_name:
         import hashlib
@@ -77,7 +77,7 @@ def _build_cache_key(config: Dict[str, Any]) -> str:
     return hashlib.sha256(key_str.encode()).hexdigest()
 
 def load_cache(config_name: str, config: Dict[str, Any]) -> Optional[dict]:
-    cache_path = _cache_path(config_name)
+    cache_path = _cache_path(config_name, config)
     if not cache_path.exists():
         return None
     try:
@@ -94,7 +94,7 @@ def load_cache(config_name: str, config: Dict[str, Any]) -> Optional[dict]:
         return None
 
 def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict) -> None:
-    cache_path = _cache_path(config_name)
+    cache_path = _cache_path(config_name, config)
     payload = {"key": _build_cache_key(config), "analysis_results": analysis_results}
     dump(payload, cache_path, compress=3)
     print(f"Cache salvata per '{config_name}' in {cache_path.name}")
