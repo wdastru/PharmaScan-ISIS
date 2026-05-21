@@ -342,7 +342,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
 
 def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Values vs Saturation ppm",
                           xlabel="Saturation ppm", ylabel="Max Value",
-                          fit_label="", invert_x=True) -> Figure:
+                          fit_label="", invert_x=True, add_lorentz=True) -> Figure:
     """
     Plot data points and a spline fit through them.
 
@@ -378,6 +378,15 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
     
     # Spline fit
     plt.plot(x_fit, y_fit, 'r-', label=fit_label)
+
+    # ------------------- Lorentzian dip -------------------
+    if add_lorentz:
+        gamma = compute_optimal_gamma(x, y, center=0.0)
+        x_lor = np.linspace(np.min(x), np.max(x), 200)
+        y_lor = 1 - (gamma**2) / (gamma**2 + x_lor**2)   # centro zero
+        plt.plot(x_lor, y_lor, 'g--', linewidth=2,
+                 label=f'Lorentzian DS (γ={gamma:.4f})')
+        
     if invert_x:
         plt.gca().invert_xaxis()
     plt.title(title)
@@ -1052,6 +1061,123 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
     save_config(config_name, config_data)
     return config_data
 
+def estimate_lorentzian_params(x_sorted: np.ndarray, y_sorted: np.ndarray):
+    """
+    Estimate center (x0) and HWHM (gamma) for a 1‑Lorentzian dip
+    from sorted data.
+    """
+    y_min = np.min(y_sorted)
+    y_max = np.max(y_sorted)
+    # Center at the point with minimum y
+    idx_min = np.argmin(y_sorted)
+    x0 = x_sorted[idx_min]
+
+    # Half-depth level: y = y_min + (y_max - y_min)/2
+    half_level = y_min + (y_max - y_min) / 2.0
+
+    # Find left and right points where y ≈ half_level
+    # (simple linear interpolation)
+    def get_crossing(x, y, level):
+        """Find x where y crosses level using linear interpolation."""
+        idx = np.where(np.diff(np.sign(y - level)))[0]
+        if len(idx) == 0:
+            return None
+        i = idx[0]
+        x_cross = x[i] + (x[i+1] - x[i]) * (level - y[i]) / (y[i+1] - y[i])
+        return x_cross
+
+    x_left = get_crossing(x_sorted[:idx_min+1], y_sorted[:idx_min+1], half_level)
+    x_right = get_crossing(x_sorted[idx_min:], y_sorted[idx_min:], half_level)
+
+    if x_left is None or x_right is None:
+        # Fallback: gamma = 0.1 * (x_max - x_min)
+        gamma = 0.1 * (x_sorted[-1] - x_sorted[0])
+    else:
+        gamma = (x_right - x_left) / 2.0   # HWHM
+
+    return x0, gamma
+
+def lorentzian_dip(x: np.ndarray, center: float, gamma: float) -> np.ndarray:
+    """1‑Lorentzian curve normalised to [0,1]."""
+    return 1 - (gamma**2) / (gamma**2 + (x - center)**2)
+
+from scipy.optimize import minimize_scalar
+
+def estimate_lorentzian_upper_envelope(x_data, y_data):
+    """
+    Trova il centro e il gamma di una 1‑Lorentzian che:
+      - per ogni punto sperimentale, lorentzian(x) >= y_data(x)
+      - minimizza la somma dei quadrati delle differenze.
+
+    Ritorna (center, gamma).
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+
+    # Se tutti i punti sono <= 0 o >= 1, non c'è un vero dip, ritorna un fallback
+    if np.all(y >= 1.0):
+        return (x.mean(), 0.0)   # Lorentziana piatta a 1
+    if np.all(y <= 0.0):
+        return (x.mean(), 1e-6)  # Impossibile avere y <= 0 con una Lorentziana >= 0, mettiamo un gamma piccolo
+
+    # Funzione che calcola l'errore quadratico per un dato centro
+    def error_for_center(c):
+        # Calcola il massimo gamma che soddisfa i vincoli per questo centro
+        bounds = []
+        for xi, yi in zip(x, y):
+            if yi >= 1.0:         # deve valere lorentz(xi) >= 1  => gamma = 0
+                return np.inf      # errore infinito, centro non valido
+            if yi > 0.0:
+                d = abs(xi - c)
+                # vincolo: gamma^2 <= (1 - yi)/yi * d^2
+                bound = np.sqrt(max((1 - yi) / yi, 0.0)) * d
+                bounds.append(bound)
+        if bounds:
+            gamma = np.min(bounds)
+        else:
+            gamma = 0.1 * (x.max() - x.min())  # fallback, non dovrebbe capitare
+
+        # Calcola la curva lorentziana e l'errore
+        y_pred = 1 - (gamma**2) / (gamma**2 + (x - c)**2)
+        err = np.sum((y_pred - y)**2)
+        return err
+
+    # Ottimizza il centro nell'intervallo dei dati
+    res = minimize_scalar(error_for_center, bounds=(x.min(), x.max()), method='bounded')
+    x0 = res.x
+
+    # Ricalcola il gamma ottimale per il centro trovato
+    bounds = []
+    for xi, yi in zip(x, y):
+        if yi > 0.0:
+            d = abs(xi - x0)
+            bound = np.sqrt(max((1 - yi) / yi, 0.0)) * d
+            bounds.append(bound)
+    best_gamma = np.min(bounds) if bounds else 0.1 * (x.max() - x.min())
+
+    return x0, best_gamma
+
+def compute_optimal_gamma(x_data, y_data, center=0.0):
+    """
+    Calcola la semi‑larghezza gamma (HWHM) per una 1‑Lorentziana
+    centrata in `center` che soddisfi lorentzian(x) >= y_data(x) per ogni punto.
+    Restituisce il massimo gamma compatibile.
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+    bounds = []
+    for xi, yi in zip(x, y):
+        if yi >= 1.0:          # vincolo impossibile con gamma>0 → gamma=0
+            return 0.0
+        if yi > 0.0:
+            bound = np.sqrt((1.0 - yi) / yi) * abs(xi - center)
+            bounds.append(bound)
+    if bounds:
+        return min(bounds)
+    else:
+        # tutti yi <= 0 – impossibile per una Lorentziana >=0, ma mettiamo un valore piccolo
+        return 0.1 * (x.max() - x.min())
+    
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
 
