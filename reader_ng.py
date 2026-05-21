@@ -84,7 +84,6 @@ def load_cache(config_name: str, config: Dict[str, Any]) -> Optional[dict]:
         payload = load(cache_path)
         current_key = _build_cache_key(config)
         if payload["key"] == current_key:
-            print(f"Cache valida per '{config_name}', caricamento immediato.")
             return payload["analysis_results"]
         else:
             print(f"Cache obsoleta per '{config_name}'.")
@@ -1026,6 +1025,9 @@ def _finalize_std_dev(sd_acc: Dict[str, List[float]], count: int) -> None:
 
 def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
     """Rende completa la configurazione chiedendo i dati mancanti (cartelle, opzioni)."""
+
+    modified = False  # <-- flag per tracciare modifiche
+
     # Se mancano le cartelle, chiedi tutto
     if not config_data.get("folders") or config_name == "":
         if config_name:
@@ -1047,6 +1049,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         config_data["with_multiple"] = with_multiple
         config_data["multiple_amount"] = multiple_amount
         config_data["folders"] = folders
+        modified = True
     else:
         # Le cartelle ci sono già, usale così come sono
         pass
@@ -1057,8 +1060,10 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
     else:
         config_data["ppm_missing"] = False
     
-    # Salva subito le eventuali modifiche (cartelle, opzioni)
-    save_config(config_name, config_data)
+    # Salva solo se ci sono state modifiche
+    if modified:
+        save_config(config_name, config_data)
+        
     return config_data
 
 def estimate_lorentzian_params(x_sorted: np.ndarray, y_sorted: np.ndarray):
@@ -1197,7 +1202,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # ═══════════════════════════════════════════════════════════════
     cached = load_cache(config_name, config)
     if cached is not None:
-        use_cache = ask_yes_no("Cache valida trovata. Vuoi usarla?", default=True)
+        use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi usarla?", default=True)
         if use_cache:
             analysis_results = cached
             # Ricrea i grafici degli Z‑spettri
