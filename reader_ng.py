@@ -381,17 +381,13 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
 
     # ------------------- Lorentzian dip -------------------
     if add_lorentz:
-        A, B, gamma = fit_lorentzian_free(x, y)
+        A, gamma = estimate_constrained_lorentzian(x, y)
+        y_min = np.min(y)
         x_lor = np.linspace(np.min(x), np.max(x), 200)
-        y_lor = lorentzian_dip_free(x_lor, A, B, gamma)
-        plt.plot(
-            x_lor, 
-            y_lor, 
-            'g--', 
-            linewidth=2,
-            label=f'Lorentzian (A={A:.3f}, B={B:.3f}, gamma={gamma:.3f})'
-        )
-                        
+        y_lor = constrained_lorentzian(x_lor, A, gamma, y_min)
+        plt.plot(x_lor, y_lor, 'g--', linewidth=2,
+                label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
+                                
     if invert_x:
         plt.gca().invert_xaxis()
     plt.title(title)
@@ -1144,6 +1140,12 @@ def lorentzian_dip_free(x, A, B, gamma):
     """Modello libero: A - B * gamma^2/(gamma^2 + x^2)"""
     return A - B * (gamma**2) / (gamma**2 + x**2)
 
+def constrained_lorentzian(x, A, gamma, y_min):
+    """Funzione di comodo per tracciare la curva ottimale."""
+    if gamma == 0.0:
+        return np.full_like(x, A)
+    return A - (A - y_min) * gamma**2 / (gamma**2 + x**2)
+
 def estimate_lorentzian_upper_envelope(x_data, y_data):
     """
     Trova il centro e il gamma di una 1‑Lorentzian che:
@@ -1265,6 +1267,88 @@ def compute_optimal_gamma(x_data, y_data, center=0.0):
     else:
         # tutti yi <= 0 – impossibile per una Lorentziana >=0, ma mettiamo un valore piccolo
         return 0.1 * (x.max() - x.min())
+
+def estimate_constrained_lorentzian(x_data, y_data):
+    """
+    Stima i parametri (A, gamma) per la Lorentziana:
+        L(x) = A - (A - y_min) * gamma^2 / (gamma^2 + x^2)
+    con i vincoli:
+        - L(x_i) >= y_i  per ogni i
+        - A >= max(y)
+        - Il fondo del dip è fissato a y_min = min(y)
+    e sceglie A e gamma che minimizzano la somma dei quadrati degli scarti.
+
+    Restituisce (A, gamma).
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+
+    y_min = np.min(y)
+    y_max = np.max(y)
+
+    # Se tutti i punti sono uguali, restituisci una curva piatta
+    if y_max == y_min:
+        return y_max, 0.0
+
+    # Funzione errore per un dato A (gamma viene ottimizzato internamente)
+    def error_for_A(A):
+        if A < y_max:          # vincolo violato
+            return np.inf
+
+        # Calcola gamma_max(A) dai vincoli per ogni punto
+        gamma_max = np.inf
+        for xi, yi in zip(x, y):
+            if yi <= y_min:    # questi punti sono sempre soddisfatti (toccano il fondo)
+                continue
+            # Vincolo: L(xi) = A - (A - y_min) * gamma^2/(gamma^2 + xi^2) >= yi
+            # => gamma^2 <= (A - yi) / (yi - y_min) * xi^2
+            # (derivazione nel testo)
+            bound_sq = (A - yi) / (yi - y_min) * xi**2
+            if bound_sq <= 0:
+                # Il vincolo non può essere soddisfatto per questo A
+                return np.inf
+            gamma_max = min(gamma_max, np.sqrt(bound_sq))
+
+        if gamma_max <= 0.0:
+            return np.inf
+
+        # Ora, fissato A, ottimizza gamma in [0, gamma_max] per minimizzare MSE
+        def mse(gamma):
+            if gamma == 0.0:
+                y_pred = np.full_like(x, A)   # curva piatta
+            else:
+                y_pred = A - (A - y_min) * gamma**2 / (gamma**2 + x**2)
+            return np.sum((y_pred - y)**2)
+
+        # Ottimizzazione locale di gamma (un solo parametro)
+        res = minimize_scalar(mse, bounds=(0.0, gamma_max), method='bounded')
+        return res.fun   # restituisce l'errore minimo per questo A
+
+    # Ottimizza A nell'intervallo [y_max, y_max + 3*(y_max - y_min)] 
+    # (l'upper bound può essere ampio, per sicurezza)
+    upper_A = y_max + 5 * (y_max - y_min) if y_max > y_min else y_max + 1.0
+    res_A = minimize_scalar(error_for_A, bounds=(y_max, upper_A), method='bounded')
+    best_A = res_A.x
+
+    # Ricalcola il gamma ottimale per il miglior A
+    gamma_max = np.inf
+    for xi, yi in zip(x, y):
+        if yi <= y_min:
+            continue
+        bound_sq = (best_A - yi) / (yi - y_min) * xi**2
+        gamma_max = min(gamma_max, np.sqrt(bound_sq))
+
+    def mse(gamma):
+        if gamma == 0.0:
+            y_pred = np.full_like(x, best_A)
+        else:
+            y_pred = best_A - (best_A - y_min) * gamma**2 / (gamma**2 + x**2)
+        return np.sum((y_pred - y)**2)
+
+    res_gamma = minimize_scalar(mse, bounds=(0.0, gamma_max), method='bounded')
+    best_gamma = res_gamma.x
+
+    return best_A, best_gamma
     
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
