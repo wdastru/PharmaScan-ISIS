@@ -35,7 +35,19 @@ METABOLITE_REGIONS: dict[str, List[float]] = {
     "GAMMA-ATP": [-3.5, -1.5],
     "ALPHA-ATP": [-8.5, -7.5],
 }
-CACHE_FILE = Path(__file__).parent / "analysis_cache.joblib"
+CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
+CACHE_DIR.mkdir(exist_ok=True)
+
+def _cache_path(config_name: str) -> Path:
+    # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
+    if not config_name:
+        import hashlib
+        key_str = json.dumps(_build_cache_key(config), sort_keys=True)
+        name = hashlib.md5(key_str.encode()).hexdigest()[:8]
+    else:
+        # Pulisci il nome per evitare caratteri problematici
+        name = "".join(c for c in config_name if c.isalnum() or c in " _-").rstrip()
+    return CACHE_DIR / f"analysis_{name}.joblib"
 
 def _build_cache_key(config: Dict[str, Any]) -> str:
     """
@@ -58,36 +70,34 @@ def _build_cache_key(config: Dict[str, Any]) -> str:
         "start_ppm": config.get("start_ppm"),
         "end_ppm": config.get("end_ppm"),
         "folders": folder_info,
+        "metabolite_regions": METABOLITE_REGIONS,
     }
     # Serializza in modo stabile (ordinato)
     key_str = json.dumps(key_data, sort_keys=True, default=str)
     return hashlib.sha256(key_str.encode()).hexdigest()
 
-def save_cache(config: Dict[str, Any], analysis_results: dict) -> None:
-    # Crea una copia pulita senza gli oggetti non serializzabili
-    clean_results = {}
-    for name, data in analysis_results.items():
-        clean_results[name] = {k: v for k, v in data.items() if k not in ("uc", "bf1")}
-    payload = {"key": _build_cache_key(config), "analysis_results": clean_results}
-    dump(payload, CACHE_FILE, compress=3)
-    print("Risultati salvati nella cache.")
-
-def load_cache(config: Dict[str, Any]) -> Optional[dict]:
-    """Carica i risultati se la cache è valida, altrimenti restituisce None."""
-    if not CACHE_FILE.exists():
+def load_cache(config_name: str, config: Dict[str, Any]) -> Optional[dict]:
+    cache_path = _cache_path(config_name)
+    if not cache_path.exists():
         return None
     try:
-        payload = load(CACHE_FILE)
+        payload = load(cache_path)
         current_key = _build_cache_key(config)
         if payload["key"] == current_key:
-            print("Cache valida, carico i risultati.")
+            print(f"Cache valida per '{config_name}', caricamento immediato.")
             return payload["analysis_results"]
         else:
-            print("Cache non aggiornata, sarà ricalcolata.")
+            print(f"Cache obsoleta per '{config_name}'.")
             return None
     except Exception as e:
-        print(f"Errore nel caricamento della cache: {e}")
+        print(f"Errore cache per '{config_name}': {e}")
         return None
+
+def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict) -> None:
+    cache_path = _cache_path(config_name)
+    payload = {"key": _build_cache_key(config), "analysis_results": analysis_results}
+    dump(payload, cache_path, compress=3)
+    print(f"Cache salvata per '{config_name}' in {cache_path.name}")
     
 # ----------------------------------------------------------------------
 # Configuration handling
@@ -1056,7 +1066,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # ═══════════════════════════════════════════════════════════════
     #  🚀 PROVA A CARICARE DALLA CACHE
     # ═══════════════════════════════════════════════════════════════
-    cached = load_cache(config)
+    cached = load_cache(config_name, config)
     if cached is not None:
         analysis_results = cached
         for name, z in analysis_results.items():
@@ -1170,6 +1180,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
                 if len(max_vals) == num_sat:
                     _accumulate_averages(avg_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount)
+                    pass
                 else:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
 
@@ -1281,7 +1292,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # ═══════════════════════════════════════════════════════════════
     #  💾 SALVA I RISULTATI NELLA CACHE
     # ═══════════════════════════════════════════════════════════════
-    save_cache(config, analysis_results)    
+    save_cache(config_name, config, analysis_results) 
 
     # ----------------------------------------------------------------------
     # Plot integrals
