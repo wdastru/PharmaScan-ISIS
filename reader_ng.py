@@ -370,10 +370,13 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
     # Create the plot
     fig = plt.figure(figsize=(8, 5))
 
+    # Data points with optional error bars
     if title in ("reference", "avg") and y_std_data is not None:
         plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color='b', label='Data')
     else:
         plt.plot(x, y, 'o', color='b', label='Data')
+    
+    # Spline fit
     plt.plot(x_fit, y_fit, 'r-', label=fit_label)
     if invert_x:
         plt.gca().invert_xaxis()
@@ -1068,22 +1071,28 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # ═══════════════════════════════════════════════════════════════
     cached = load_cache(config_name, config)
     if cached is not None:
-        analysis_results = cached
-        for name, z in analysis_results.items():
-            if "fit_result" in z and z["fit_result"]["fit_successful"]:
-                fit = z["fit_result"]
-                plot_data_with_spline(
-                    fit["x_sorted"], fit["y_sorted"],
-                    fit["x_fit"], fit["y_fit"],
-                    y_std_data=z.get("sd_max_vals"),
-                    title=name, invert_x=True
-                )
-        plot_integrals_regions(
-            data=analysis_results,
-            reference=with_ref,
-            multiple_amount_ref=multiple_amount_ref if with_ref else 0
-        )
-        return   # <-- esce dopo che il grafico a barre è stato chiuso
+        use_cache = ask_yes_no("Cache valida trovata. Vuoi usarla?", default=True)
+        if use_cache:
+            analysis_results = cached
+            # Ricrea i grafici degli Z‑spettri
+            for name, z in analysis_results.items():
+                if "fit_result" in z and z["fit_result"]["fit_successful"]:
+                    fit = z["fit_result"]
+                    plot_data_with_spline(
+                        fit["x_sorted"], fit["y_sorted"],
+                        fit["x_fit"], fit["y_fit"],
+                        y_std_data=z.get("sd_max_vals"),
+                        title=name, invert_x=True
+                    )
+            # Grafico a barre degli integrali
+            plot_integrals_regions(
+                data=analysis_results,
+                reference=with_ref,
+                multiple_amount_ref=multiple_amount_ref if with_ref else 0
+            )
+            return   # Esce senza ricalcolare
+        else:
+            print("Cache ignorata. Ricalcolo in corso...")
     # ═══════════════════════════════════════════════════════════════
 
     # Initialize accumulators using helper
