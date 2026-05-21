@@ -19,6 +19,7 @@ import tkinter as tk
 from tkinter import filedialog
 from typing import List, Optional, Tuple, Dict, Any
 from scipy.interpolate import PchipInterpolator
+from scipy.optimize import minimize_scalar
 import json
 from termcolor import colored
 import os
@@ -380,12 +381,17 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
 
     # ------------------- Lorentzian dip -------------------
     if add_lorentz:
-        gamma = compute_optimal_gamma(x, y, center=0.0)
+        A, B, gamma = fit_lorentzian_free(x, y)
         x_lor = np.linspace(np.min(x), np.max(x), 200)
-        y_lor = 1 - (gamma**2) / (gamma**2 + x_lor**2)   # centro zero
-        plt.plot(x_lor, y_lor, 'g--', linewidth=2,
-                 label=f'Lorentzian DS (γ={gamma:.4f})')
-        
+        y_lor = lorentzian_dip_free(x_lor, A, B, gamma)
+        plt.plot(
+            x_lor, 
+            y_lor, 
+            'g--', 
+            linewidth=2,
+            label=f'Lorentzian (A={A:.3f}, B={B:.3f}, gamma={gamma:.3f})'
+        )
+                        
     if invert_x:
         plt.gca().invert_xaxis()
     plt.title(title)
@@ -954,6 +960,7 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
     int
         L'intero inserito dall'utente.
     """
+
     default_prompt = f" (default {default})" if default is not None else ""
     while True:
         answer = input(f"{prompt}{default_prompt}: ").strip()
@@ -1102,11 +1109,40 @@ def estimate_lorentzian_params(x_sorted: np.ndarray, y_sorted: np.ndarray):
 
     return x0, gamma
 
+def fit_lorentzian_free(x_data, y_data):
+    """
+    Fit della lorentziana con centro zero e parametri A, B, gamma liberi.
+    Restituisce (A, B, gamma) ottimali.
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+
+    # Stima iniziale
+    A0 = np.max(y)
+    idx_min = np.argmin(y)
+    B0 = A0 - y[idx_min]          # profondità approssimativa
+    # gamma iniziale: distanza a metà profondità
+    half_level = A0 - B0/2
+    # trova il primo punto a sinistra del centro che attraversa metà livello
+    # (semplificato: prendiamo 0.1 * range x)
+    gamma0 = 0.1 * (x.max() - x.min())
+
+    try:
+        popt, _ = curve_fit(lorentzian_dip_free, x, y,
+                            p0=[A0, B0, gamma0],
+                            bounds=([0, 0, 0], [np.inf, np.inf, np.inf]))
+        return popt  # A, B, gamma
+    except Exception as e:
+        print(f"Fit lorentziana fallito: {e}")
+        return A0, B0, gamma0
+    
 def lorentzian_dip(x: np.ndarray, center: float, gamma: float) -> np.ndarray:
     """1‑Lorentzian curve normalised to [0,1]."""
     return 1 - (gamma**2) / (gamma**2 + (x - center)**2)
 
-from scipy.optimize import minimize_scalar
+def lorentzian_dip_free(x, A, B, gamma):
+    """Modello libero: A - B * gamma^2/(gamma^2 + x^2)"""
+    return A - B * (gamma**2) / (gamma**2 + x**2)
 
 def estimate_lorentzian_upper_envelope(x_data, y_data):
     """
@@ -1114,7 +1150,7 @@ def estimate_lorentzian_upper_envelope(x_data, y_data):
       - per ogni punto sperimentale, lorentzian(x) >= y_data(x)
       - minimizza la somma dei quadrati delle differenze.
 
-    Ritorna (center, gamma).
+    Ritorna (x0, gamma).
     """
     x = np.asarray(x_data)
     y = np.asarray(y_data)
@@ -1161,6 +1197,53 @@ def estimate_lorentzian_upper_envelope(x_data, y_data):
     best_gamma = np.min(bounds) if bounds else 0.1 * (x.max() - x.min())
 
     return x0, best_gamma
+
+def estimate_lorentzian_gamma(x_data, y_data):
+    """
+    Calcola il gamma ottimale per una 1‑Lorentzian con centro zero,
+    minimizzando la somma dei quadrati delle differenze e rispettando
+    il vincolo lorentzian(x_i) >= y_i per ogni punto.
+
+    Parametri
+    ---------
+    x_data, y_data : array-like
+        Punti dello Z‑spettro (x in ppm, y normalizzati [0,1]).
+
+    Restituisce
+    -----------
+    gamma_opt : float
+        Semi‑larghezza HWHM ottimale.
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+
+    # ---- 1. Determinare il massimo gamma ammissibile (vincolo superiore) ----
+    gamma_max = np.inf
+    for xi, yi in zip(x, y):
+        if yi >= 1.0:               # vincolo richiederebbe gamma=0
+            gamma_max = 0.0
+            break
+        if yi > 0.0:
+            bound = abs(xi) * np.sqrt(max(0.0, (1.0 - yi) / yi))
+            gamma_max = min(gamma_max, bound)
+
+    # Se gamma_max è NaN o infinito (nessun vincolo utile), usa un fallback ampio
+    if not np.isfinite(gamma_max):
+        gamma_max = 0.5 * (x.max() - x.min())
+
+    # ---- 2. Minimizzare l'errore quadratico nell'intervallo [0, gamma_max] ----
+    def squared_error(g):
+        # evita divisione per zero se g=0
+        if g == 0.0:
+            y_pred = np.ones_like(x)   # Lorentziana piatta a 1
+        else:
+            y_pred = 1.0 - (g**2) / (g**2 + x**2)
+        return np.sum((y_pred - y)**2)
+
+    # Bounds per gamma: [0, gamma_max]
+    res = minimize_scalar(squared_error, bounds=(0.0, gamma_max), method='bounded')
+    gamma_opt = res.x
+    return gamma_opt    
 
 def compute_optimal_gamma(x_data, y_data, center=0.0):
     """
