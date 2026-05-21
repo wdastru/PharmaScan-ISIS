@@ -23,8 +23,12 @@ from typing import List, Optional, Tuple, Dict, Any, Union
 from scipy.interpolate import UnivariateSpline
 from scipy.interpolate import make_smoothing_spline
 from scipy.interpolate import PchipInterpolator
+from scipy.optimize import minimize_scalar
 import json
 from termcolor import colored
+import os
+import hashlib
+from joblib import dump, load
 
 REGIONS: dict[str, List[float]] = {
     "Glycolytic PMEs": [5.5, 9.0],
@@ -36,7 +40,69 @@ REGIONS: dict[str, List[float]] = {
     "GAMMA-ATP": [-4, -1.3],
     "ALPHA-ATP": [-9, -6],
 }
+CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
+CACHE_DIR.mkdir(exist_ok=True)
 
+def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
+    # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
+    if not config_name:
+        import hashlib
+        key_str = json.dumps(_build_cache_key(config), sort_keys=True)
+        name = hashlib.md5(key_str.encode()).hexdigest()[:8]
+    else:
+        # Pulisci il nome per evitare caratteri problematici
+        name = "".join(c for c in config_name if c.isalnum() or c in " _-").rstrip()
+    return CACHE_DIR / f"analysis_{name}.joblib"
+
+def _build_cache_key(config: Dict[str, Any]) -> str:
+    """
+    Crea una chiave univoca basata sui parametri e sulle cartelle (compresa la data di modifica).
+    """
+    folders = config.get("folders", [])
+    # Dati delle cartelle: percorso e timestamp
+    folder_info = []
+    for f in folders:
+        try:
+            mtime = os.path.getmtime(f)
+        except OSError:
+            mtime = 0
+        folder_info.append((str(f), mtime))
+    # Parametri determinanti
+    key_data = {
+        "with_ref": config.get("with_ref"),
+        "multiple_amount_ref": config.get("multiple_amount_ref"),
+        "multiple_amount": config.get("multiple_amount"),
+        "start_ppm": config.get("start_ppm"),
+        "end_ppm": config.get("end_ppm"),
+        "folders": folder_info,
+        "metabolite_regions": METABOLITE_REGIONS,
+    }
+    # Serializza in modo stabile (ordinato)
+    key_str = json.dumps(key_data, sort_keys=True, default=str)
+    return hashlib.sha256(key_str.encode()).hexdigest()
+
+def load_cache(config_name: str, config: Dict[str, Any]) -> Optional[dict]:
+    cache_path = _cache_path(config_name, config)
+    if not cache_path.exists():
+        return None
+    try:
+        payload = load(cache_path)
+        current_key = _build_cache_key(config)
+        if payload["key"] == current_key:
+            return payload["analysis_results"]
+        else:
+            print(f"Cache obsoleta per '{config_name}'.")
+            return None
+    except Exception as e:
+        print(f"Errore cache per '{config_name}': {e}")
+        return None
+
+def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict) -> None:
+    cache_path = _cache_path(config_name, config)
+    payload = {"key": _build_cache_key(config), "analysis_results": analysis_results}
+    dump(payload, cache_path, compress=3)
+    print(f"Cache salvata per '{config_name}' in {cache_path.name}")
+    
 # ----------------------------------------------------------------------
 # Configuration handling
 # ----------------------------------------------------------------------
@@ -280,7 +346,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
 
 def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Values vs Saturation ppm",
                           xlabel="Saturation ppm", ylabel="Max Value",
-                          fit_label="", invert_x=True) -> Figure:
+                          fit_label="", invert_x=True, add_lorentz=True) -> Figure:
     """
     Plot data points and a spline fit through them.
 
@@ -308,11 +374,24 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
     # Create the plot
     fig = plt.figure(figsize=(8, 5))
 
+    # Data points with optional error bars
     if title in ("reference", "avg") and y_std_data is not None:
         plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color='b', label='Data')
     else:
         plt.plot(x, y, 'o', color='b', label='Data')
+    
+    # Spline fit
     plt.plot(x_fit, y_fit, 'r-', label=fit_label)
+
+    # ------------------- Lorentzian dip -------------------
+    if add_lorentz:
+        A, gamma = estimate_constrained_lorentzian(x, y)
+        y_min = np.min(y)
+        x_lor = np.linspace(np.min(x), np.max(x), 200)
+        y_lor = constrained_lorentzian(x_lor, A, gamma, y_min)
+        plt.plot(x_lor, y_lor, 'g--', linewidth=2,
+                label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
+                                
     if invert_x:
         plt.gca().invert_xaxis()
     plt.title(title)
@@ -824,7 +903,20 @@ def correct_sat_freq(sat_trans_hz, max_vals, max_indexes, work_offset_hz, uc, bf
         if not sat_trans_hz[i] == 0.0:
             sat_trans_hz[i] += delta
         sat_trans_f1_ppm[i] = sat_trans_hz[i] / bf1
+<<<<<<< HEAD
     return fit_curve(x=sat_trans_f1_ppm, y=max_vals, smoothing=0.02, n_points=200)
+=======
+    return sat_trans_f1_ppm
+
+
+def fit_saturation_curve(x_ppm: List[float], y_vals: List[float]) -> Dict[str, Any]:
+    """
+    Esegue il fit della curva di saturazione usando i parametri standard.
+
+    Utilizza fit_curve con smoothing=0.02 e 200 punti di campionamento.
+    """
+    return fit_curve(x=x_ppm, y=y_vals, n_points=200)
+>>>>>>> origin/main
 
 def ask_yes_no(prompt: str, default: Optional[bool] = None) -> bool:
     """
@@ -866,6 +958,7 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
     int
         L'intero inserito dall'utente.
     """
+
     default_prompt = f" (default {default})" if default is not None else ""
     while True:
         answer = input(f"{prompt}{default_prompt}: ").strip()
@@ -889,6 +982,9 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
 
 def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
     """Rende completa la configurazione chiedendo i dati mancanti (cartelle, opzioni)."""
+
+    modified = False  # <-- flag per tracciare modifiche
+
     # Se mancano le cartelle, chiedi tutto
     if not config_data.get("folders") or config_name == "":
         if config_name:
@@ -910,6 +1006,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         config_data["with_multiple"] = with_multiple
         config_data["multiple_amount"] = multiple_amount
         config_data["folders"] = folders
+        modified = True
     else:
         # Le cartelle ci sono già, usale così come sono
         pass
@@ -920,12 +1017,296 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
     else:
         config_data["ppm_missing"] = False
     
-    # Salva subito le eventuali modifiche (cartelle, opzioni)
-    save_config(config_name, config_data)
+    # Salva solo se ci sono state modifiche
+    if modified:
+        save_config(config_name, config_data)
+        
     return config_data
 
+def estimate_lorentzian_params(x_sorted: np.ndarray, y_sorted: np.ndarray):
+    """
+    Estimate center (x0) and HWHM (gamma) for a 1‑Lorentzian dip
+    from sorted data.
+    """
+    y_min = np.min(y_sorted)
+    y_max = np.max(y_sorted)
+    # Center at the point with minimum y
+    idx_min = np.argmin(y_sorted)
+    x0 = x_sorted[idx_min]
+
+    # Half-depth level: y = y_min + (y_max - y_min)/2
+    half_level = y_min + (y_max - y_min) / 2.0
+
+    # Find left and right points where y ≈ half_level
+    # (simple linear interpolation)
+    def get_crossing(x, y, level):
+        """Find x where y crosses level using linear interpolation."""
+        idx = np.where(np.diff(np.sign(y - level)))[0]
+        if len(idx) == 0:
+            return None
+        i = idx[0]
+        x_cross = x[i] + (x[i+1] - x[i]) * (level - y[i]) / (y[i+1] - y[i])
+        return x_cross
+
+    x_left = get_crossing(x_sorted[:idx_min+1], y_sorted[:idx_min+1], half_level)
+    x_right = get_crossing(x_sorted[idx_min:], y_sorted[idx_min:], half_level)
+
+    if x_left is None or x_right is None:
+        # Fallback: gamma = 0.1 * (x_max - x_min)
+        gamma = 0.1 * (x_sorted[-1] - x_sorted[0])
+    else:
+        gamma = (x_right - x_left) / 2.0   # HWHM
+
+    return x0, gamma
+
+def fit_lorentzian_free(x_data, y_data):
+    """
+    Fit della lorentziana con centro zero e parametri A, B, gamma liberi.
+    Restituisce (A, B, gamma) ottimali.
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+
+    # Stima iniziale
+    A0 = np.max(y)
+    idx_min = np.argmin(y)
+    B0 = A0 - y[idx_min]          # profondità approssimativa
+    # gamma iniziale: distanza a metà profondità
+    half_level = A0 - B0/2
+    # trova il primo punto a sinistra del centro che attraversa metà livello
+    # (semplificato: prendiamo 0.1 * range x)
+    gamma0 = 0.1 * (x.max() - x.min())
+
+    try:
+        popt, _ = curve_fit(lorentzian_dip_free, x, y,
+                            p0=[A0, B0, gamma0],
+                            bounds=([0, 0, 0], [np.inf, np.inf, np.inf]))
+        return popt  # A, B, gamma
+    except Exception as e:
+        print(f"Fit lorentziana fallito: {e}")
+        return A0, B0, gamma0
+    
+def lorentzian_dip(x: np.ndarray, center: float, gamma: float) -> np.ndarray:
+    """1‑Lorentzian curve normalised to [0,1]."""
+    return 1 - (gamma**2) / (gamma**2 + (x - center)**2)
+
+def lorentzian_dip_free(x, A, B, gamma):
+    """Modello libero: A - B * gamma^2/(gamma^2 + x^2)"""
+    return A - B * (gamma**2) / (gamma**2 + x**2)
+
+def constrained_lorentzian(x, A, gamma, y_min):
+    """Funzione di comodo per tracciare la curva ottimale."""
+    if gamma == 0.0:
+        return np.full_like(x, A)
+    return A - (A - y_min) * gamma**2 / (gamma**2 + x**2)
+
+def estimate_lorentzian_upper_envelope(x_data, y_data):
+    """
+    Trova il centro e il gamma di una 1‑Lorentzian che:
+      - per ogni punto sperimentale, lorentzian(x) >= y_data(x)
+      - minimizza la somma dei quadrati delle differenze.
+
+    Ritorna (x0, gamma).
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+
+    # Se tutti i punti sono <= 0 o >= 1, non c'è un vero dip, ritorna un fallback
+    if np.all(y >= 1.0):
+        return (x.mean(), 0.0)   # Lorentziana piatta a 1
+    if np.all(y <= 0.0):
+        return (x.mean(), 1e-6)  # Impossibile avere y <= 0 con una Lorentziana >= 0, mettiamo un gamma piccolo
+
+    # Funzione che calcola l'errore quadratico per un dato centro
+    def error_for_center(c):
+        # Calcola il massimo gamma che soddisfa i vincoli per questo centro
+        bounds = []
+        for xi, yi in zip(x, y):
+            if yi >= 1.0:         # deve valere lorentz(xi) >= 1  => gamma = 0
+                return np.inf      # errore infinito, centro non valido
+            if yi > 0.0:
+                d = abs(xi - c)
+                # vincolo: gamma^2 <= (1 - yi)/yi * d^2
+                bound = np.sqrt(max((1 - yi) / yi, 0.0)) * d
+                bounds.append(bound)
+        if bounds:
+            gamma = np.min(bounds)
+        else:
+            gamma = 0.1 * (x.max() - x.min())  # fallback, non dovrebbe capitare
+
+        # Calcola la curva lorentziana e l'errore
+        y_pred = 1 - (gamma**2) / (gamma**2 + (x - c)**2)
+        err = np.sum((y_pred - y)**2)
+        return err
+
+    # Ottimizza il centro nell'intervallo dei dati
+    res = minimize_scalar(error_for_center, bounds=(x.min(), x.max()), method='bounded')
+    x0 = res.x
+
+    # Ricalcola il gamma ottimale per il centro trovato
+    bounds = []
+    for xi, yi in zip(x, y):
+        if yi > 0.0:
+            d = abs(xi - x0)
+            bound = np.sqrt(max((1 - yi) / yi, 0.0)) * d
+            bounds.append(bound)
+    best_gamma = np.min(bounds) if bounds else 0.1 * (x.max() - x.min())
+
+    return x0, best_gamma
+
+def estimate_lorentzian_gamma(x_data, y_data):
+    """
+    Calcola il gamma ottimale per una 1‑Lorentzian con centro zero,
+    minimizzando la somma dei quadrati delle differenze e rispettando
+    il vincolo lorentzian(x_i) >= y_i per ogni punto.
+
+    Parametri
+    ---------
+    x_data, y_data : array-like
+        Punti dello Z‑spettro (x in ppm, y normalizzati [0,1]).
+
+    Restituisce
+    -----------
+    gamma_opt : float
+        Semi‑larghezza HWHM ottimale.
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+
+    # ---- 1. Determinare il massimo gamma ammissibile (vincolo superiore) ----
+    gamma_max = np.inf
+    for xi, yi in zip(x, y):
+        if yi >= 1.0:               # vincolo richiederebbe gamma=0
+            gamma_max = 0.0
+            break
+        if yi > 0.0:
+            bound = abs(xi) * np.sqrt(max(0.0, (1.0 - yi) / yi))
+            gamma_max = min(gamma_max, bound)
+
+    # Se gamma_max è NaN o infinito (nessun vincolo utile), usa un fallback ampio
+    if not np.isfinite(gamma_max):
+        gamma_max = 0.5 * (x.max() - x.min())
+
+    # ---- 2. Minimizzare l'errore quadratico nell'intervallo [0, gamma_max] ----
+    def squared_error(g):
+        # evita divisione per zero se g=0
+        if g == 0.0:
+            y_pred = np.ones_like(x)   # Lorentziana piatta a 1
+        else:
+            y_pred = 1.0 - (g**2) / (g**2 + x**2)
+        return np.sum((y_pred - y)**2)
+
+    # Bounds per gamma: [0, gamma_max]
+    res = minimize_scalar(squared_error, bounds=(0.0, gamma_max), method='bounded')
+    gamma_opt = res.x
+    return gamma_opt    
+
+def compute_optimal_gamma(x_data, y_data, center=0.0):
+    """
+    Calcola la semi‑larghezza gamma (HWHM) per una 1‑Lorentziana
+    centrata in `center` che soddisfi lorentzian(x) >= y_data(x) per ogni punto.
+    Restituisce il massimo gamma compatibile.
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+    bounds = []
+    for xi, yi in zip(x, y):
+        if yi >= 1.0:          # vincolo impossibile con gamma>0 → gamma=0
+            return 0.0
+        if yi > 0.0:
+            bound = np.sqrt((1.0 - yi) / yi) * abs(xi - center)
+            bounds.append(bound)
+    if bounds:
+        return min(bounds)
+    else:
+        # tutti yi <= 0 – impossibile per una Lorentziana >=0, ma mettiamo un valore piccolo
+        return 0.1 * (x.max() - x.min())
+
+def estimate_constrained_lorentzian(x_data, y_data):
+    """
+    Stima i parametri (A, gamma) per la Lorentziana:
+        L(x) = A - (A - y_min) * gamma^2 / (gamma^2 + x^2)
+    con i vincoli:
+        - L(x_i) >= y_i  per ogni i
+        - A >= max(y)
+        - Il fondo del dip è fissato a y_min = min(y)
+    e sceglie A e gamma che minimizzano la somma dei quadrati degli scarti.
+
+    Restituisce (A, gamma).
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+
+    y_min = np.min(y)
+    y_max = np.max(y)
+
+    # Se tutti i punti sono uguali, restituisci una curva piatta
+    if y_max == y_min:
+        return y_max, 0.0
+
+    # Funzione errore per un dato A (gamma viene ottimizzato internamente)
+    def error_for_A(A):
+        if A < y_max:          # vincolo violato
+            return np.inf
+
+        # Calcola gamma_max(A) dai vincoli per ogni punto
+        gamma_max = np.inf
+        for xi, yi in zip(x, y):
+            if yi <= y_min:    # questi punti sono sempre soddisfatti (toccano il fondo)
+                continue
+            # Vincolo: L(xi) = A - (A - y_min) * gamma^2/(gamma^2 + xi^2) >= yi
+            # => gamma^2 <= (A - yi) / (yi - y_min) * xi^2
+            # (derivazione nel testo)
+            bound_sq = (A - yi) / (yi - y_min) * xi**2
+            if bound_sq <= 0:
+                # Il vincolo non può essere soddisfatto per questo A
+                return np.inf
+            gamma_max = min(gamma_max, np.sqrt(bound_sq))
+
+        if gamma_max <= 0.0:
+            return np.inf
+
+        # Ora, fissato A, ottimizza gamma in [0, gamma_max] per minimizzare MSE
+        def mse(gamma):
+            if gamma == 0.0:
+                y_pred = np.full_like(x, A)   # curva piatta
+            else:
+                y_pred = A - (A - y_min) * gamma**2 / (gamma**2 + x**2)
+            return np.sum((y_pred - y)**2)
+
+        # Ottimizzazione locale di gamma (un solo parametro)
+        res = minimize_scalar(mse, bounds=(0.0, gamma_max), method='bounded')
+        return res.fun   # restituisce l'errore minimo per questo A
+
+    # Ottimizza A nell'intervallo [y_max, y_max + 3*(y_max - y_min)] 
+    # (l'upper bound può essere ampio, per sicurezza)
+    upper_A = y_max + 5 * (y_max - y_min) if y_max > y_min else y_max + 1.0
+    res_A = minimize_scalar(error_for_A, bounds=(y_max, upper_A), method='bounded')
+    best_A = res_A.x
+
+    # Ricalcola il gamma ottimale per il miglior A
+    gamma_max = np.inf
+    for xi, yi in zip(x, y):
+        if yi <= y_min:
+            continue
+        bound_sq = (best_A - yi) / (yi - y_min) * xi**2
+        gamma_max = min(gamma_max, np.sqrt(bound_sq))
+
+    def mse(gamma):
+        if gamma == 0.0:
+            y_pred = np.full_like(x, best_A)
+        else:
+            y_pred = best_A - (best_A - y_min) * gamma**2 / (gamma**2 + x**2)
+        return np.sum((y_pred - y)**2)
+
+    res_gamma = minimize_scalar(mse, bounds=(0.0, gamma_max), method='bounded')
+    best_gamma = res_gamma.x
+
+    return best_A, best_gamma
+    
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
+
     plt.ion()   # <-- interactive mode ON
     folders: List[Path] = config["folders"]
     with_ref: bool = config.get("with_ref", False)
@@ -935,6 +1316,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     start_ppm: float = config.get("start_ppm")
     end_ppm: float = config.get("end_ppm")
     ppm_missing: bool = config.get("ppm_missing", False)
+<<<<<<< HEAD
     z_dic: dict = {}
     region_integrals_dict = {}
     spectrum_figures = []   # <-- store figure objects
@@ -952,6 +1334,44 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     avg_sd_max_indexes: List[int] = []
     avg_sd_sat_trans_hz: List[float] = [] # reference saturation "fake" frequencies std deviation
     avg_work_offset_hz: List[float] = [] # reference work offset frequency
+=======
+    analysis_results: dict = {}
+
+    # ═══════════════════════════════════════════════════════════════
+    #  🚀 PROVA A CARICARE DALLA CACHE
+    # ═══════════════════════════════════════════════════════════════
+    cached = load_cache(config_name, config)
+    if cached is not None:
+        use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi usarla?", default=True)
+        if use_cache:
+            analysis_results = cached
+            # Ricrea i grafici degli Z‑spettri
+            for name, z in analysis_results.items():
+                if "fit_result" in z and z["fit_result"]["fit_successful"]:
+                    fit = z["fit_result"]
+                    plot_data_with_spline(
+                        fit["x_sorted"], fit["y_sorted"],
+                        fit["x_fit"], fit["y_fit"],
+                        y_std_data=z.get("sd_max_vals"),
+                        title=name, invert_x=True
+                    )
+            # Grafico a barre degli integrali
+            plot_integrals_regions(
+                data=analysis_results,
+                reference=with_ref,
+                multiple_amount_ref=multiple_amount_ref if with_ref else 0
+            )
+            return   # Esce senza ricalcolare
+        else:
+            print("Cache ignorata. Ricalcolo in corso...")
+    # ═══════════════════════════════════════════════════════════════
+
+    # Initialize accumulators using helper
+    ref_stats = None
+    avg_stats = None
+    ref_work_offset_hz = []
+    avg_work_offset_hz = []
+>>>>>>> origin/main
     
     for idx, folder in enumerate(folders):
         folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
@@ -1046,11 +1466,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # calcola la media dei valori di max_vals, max_indexes e sat_trans per gli esperimenti di riferimento
             if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
+<<<<<<< HEAD
                 if len(sat_trans_hz) == len(max_vals):
                     for k, (i, v, st) in enumerate(zip(max_indexes, max_vals, sat_trans_hz)):   # assumes same keys in val_dict
                         avg_max_indexes[k] += i / multiple_amount
                         avg_max_vals[k] += v / multiple_amount
                         avg_sat_trans_hz[k] += st / multiple_amount
+=======
+                if len(max_vals) == num_sat:
+                    _accumulate_averages(avg_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount)
+                    pass
+>>>>>>> origin/main
                 else:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
             pass
@@ -1079,6 +1505,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 else:
                     print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
 
+<<<<<<< HEAD
     if with_multiple:
         for k, _ in enumerate(avg_max_indexes):
             avg_max_indexes[k] = round(avg_max_indexes[k])
@@ -1086,6 +1513,48 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         z_dic["avg"] = {
             "max_indexes": avg_max_indexes,
             "max_vals": avg_max_vals,
+=======
+    # ----------------------------------------------------------------------
+    # After processing all folders, finalize averages and compute std dev
+    # ----------------------------------------------------------------------
+    if with_multiple and multiple_amount > 1 and avg_stats is not None:
+        analysis_results["avg"] = {
+            "max_indexes": [round(v) for v in avg_stats["max_indexes"]],
+            "max_vals": avg_stats["max_vals"],
+            "sat_trans_hz": avg_stats["sat_trans_hz"],
+            "work_offset_hz": avg_work_offset_hz,
+            # TODO: check if uc and bf1 are the same for the multiple expt 
+            "uc": uc,
+            "bf1": bf1
+        }
+        # Calculate standard deviations
+        # We need the original data again – we stored them in analysis_results for each folder.
+        # Instead of re-looping, we can loop over analysis_results items as before but now using helpers.
+        # We'll do the squared differences accumulation in a second pass over the folder data.
+        for idx, (k, v) in enumerate(analysis_results.items()):
+            if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
+                _accumulate_squared_diffs(
+                    avg_stats,
+                    (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
+                    {"max_indexes": analysis_results["avg"]["max_indexes"],
+                     "max_vals": analysis_results["avg"]["max_vals"],
+                     "sat_trans_hz": analysis_results["avg"]["sat_trans_hz"]}
+                )
+        _finalize_std_dev(avg_stats, multiple_amount)
+        analysis_results["avg"]["sd_max_indexes"] = avg_stats["sd_max_indexes"]
+        analysis_results["avg"]["sd_max_vals"] = avg_stats["sd_max_vals"]
+        analysis_results["avg"]["sd_sat_trans_hz"] = avg_stats["sd_sat_trans_hz"]
+
+    if with_ref and ref_stats is not None:
+        analysis_results["reference"] = {
+            "max_indexes": [round(v) for v in ref_stats["max_indexes"]],
+            "max_vals": ref_stats["max_vals"],
+            "sat_trans_hz": ref_stats["sat_trans_hz"],
+            "work_offset_hz": ref_work_offset_hz,
+            # TODO: check if uc and bf1 are the same for the reference expt 
+            "uc": uc,
+            "bf1": bf1
+>>>>>>> origin/main
         }
         z_dic["avg"]["sat_trans_hz"] = avg_sat_trans_hz
         z_dic["avg"]["work_offset_hz"] = avg_work_offset_hz
@@ -1164,6 +1633,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         else:
             print(f"Numero di frequenze di saturazione non corrispondente per {name}")
     
+<<<<<<< HEAD
         # ----------------------------------------------------------------------
         # Calculate integrals
         # ----------------------------------------------------------------------
@@ -1176,6 +1646,14 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         z_dic[name]["integrals"].update(region_integrals)
 
      # ----------------------------------------------------------------------
+=======
+    # ═══════════════════════════════════════════════════════════════
+    #  💾 SALVA I RISULTATI NELLA CACHE
+    # ═══════════════════════════════════════════════════════════════
+    save_cache(config_name, config, analysis_results) 
+
+    # ----------------------------------------------------------------------
+>>>>>>> origin/main
     # Plot integrals
     # ----------------------------------------------------------------------
     plot_integrals_regions(

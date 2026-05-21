@@ -5,3 +5,5 @@ parameters.txt
 pdoc/
 configs/
 .vscode/settings.json
+analysis_cache.joblib
+cache/
