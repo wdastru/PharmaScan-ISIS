@@ -842,16 +842,19 @@ def find_max_vals(spectra, start_idx, end_idx):
     # ---- Find maxima in the selected range ----
     max_vals: List[float] = []
     max_indexes: List[int] = []
-    global_max = 0.0
+    global_max: float = 0.0
+    global_min: float = float('inf')
     for exp_idx, spec in spectra.items():
         val, idx = find_maximum(spec, start=start_idx, end=end_idx)
         if val > global_max:
             global_max = val
+        elif val < global_min:
+            global_min = val
         max_vals.append(val)
         max_indexes.append(idx)
     # ---- Normalize max_vals ----
     for i in range(len(max_vals)):
-        max_vals[i] /= global_max
+        max_vals[i] = (max_vals[i] - global_min) / (global_max - global_min) if global_max > global_min else 0.0
     return max_vals, max_indexes
 
 def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
@@ -1314,6 +1317,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # Find max values and indexes in the ppm range (the z-spectra)
         # ----------------------------------------------------------------------
         max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
+
         analysis_results[folder_name_short].update({
             "max_indexes": max_indexes,
             "max_vals": max_vals, 
