@@ -1320,8 +1320,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             analysis_results = cached
             # Ricrea i grafici degli Z‑spettri
             for name, z in analysis_results.items():
-                if "fit_result" in z and z["fit_result"]["fit_successful"]:
-                    fit = z["fit_result"]
+                if "spline_fit_results" in z and z["spline_fit_results"]["fit_successful"]:
+                    fit = z["spline_fit_results"]
                     plot_data_with_spline(
                         fit["x_sorted"], fit["y_sorted"],
                         fit["x_fit"], fit["y_fit"],
@@ -1516,14 +1516,15 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 z["uc"], 
                 z["bf1"]
             )
-            fit_result = fit_saturation_curve(corrected_ppm, z["max_vals"])
-            if fit_result["fit_successful"]:
-                analysis_results[name]["fit_result"] = fit_result
+            # ------------------- Spline fit ----------------------
+            spline_fit_results = spline_fit(x=corrected_ppm, y=z["max_vals"])
+            if spline_fit_results["fit_successful"]:
+                analysis_results[name]["spline_fit_results"] = spline_fit_results
                 plot_data_with_spline(
-                    analysis_results[name]["fit_result"]["x_sorted"],  
-                    analysis_results[name]["fit_result"]["y_sorted"],
-                    analysis_results[name]["fit_result"]["x_fit"], 
-                    analysis_results[name]["fit_result"]["y_fit"],
+                    analysis_results[name]["spline_fit_results"]["x_sorted"],  
+                    analysis_results[name]["spline_fit_results"]["y_sorted"],
+                    analysis_results[name]["spline_fit_results"]["x_fit"], 
+                    analysis_results[name]["spline_fit_results"]["y_fit"],
                     y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
                     title=name, invert_x=True
                 )
@@ -1532,8 +1533,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 # Calculate integrals
                 # ----------------------------------------------------------
                 integrals = compute_regions_integrals(
-                    z["fit_result"]["x_fit"], 
-                    z["fit_result"]["y_fit"]
+                    z["spline_fit_results"]["x_fit"], 
+                    z["spline_fit_results"]["y_fit"]
                 )
                 analysis_results[name]["integrals"] = integrals
                 
