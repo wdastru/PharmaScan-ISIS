@@ -407,7 +407,7 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
     plt.show(block=False)
     return fig
 
-def fit_curve(x, y, n_points=200) -> Dict[str, Any]:
+def spline_fit(x, y, n_points=200) -> Dict[str, Any]:
     """
     Esegue lo spline fit dei dati.
 
@@ -918,15 +918,6 @@ def correct_sat_frequencies(
             sat_trans_hz[i] += delta
         sat_trans_f1_ppm[i] = sat_trans_hz[i] / bf1
     return sat_trans_f1_ppm
-
-
-def fit_saturation_curve(x_ppm: List[float], y_vals: List[float]) -> Dict[str, Any]:
-    """
-    Esegue il fit della curva di saturazione usando i parametri standard.
-
-    Utilizza fit_curve con smoothing=0.02 e 200 punti di campionamento.
-    """
-    return fit_curve(x=x_ppm, y=y_vals, n_points=200)
 
 def ask_yes_no(prompt: str, default: Optional[bool] = None) -> bool:
     """
