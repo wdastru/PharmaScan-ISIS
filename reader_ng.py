@@ -1516,6 +1516,39 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 z["uc"], 
                 z["bf1"]
             )
+            
+            
+            # ------------------- Lorentzian upper envelope -------------------
+            A, gamma = estimate_constrained_lorentzian(x_data=corrected_ppm, y_data=z["max_vals"])
+            y_min = np.min(z["max_vals"])
+            x_lor = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), 200)
+            y_lor = constrained_lorentzian(x_lor, A, gamma, y_min)
+            lorentzian_envelope_results =  {
+                "A": A,
+                "gamma": gamma,
+                "x": x_lor,
+                "y": y_lor,
+                "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
+                "fit_successful": True,
+            }
+            analysis_results[name]["lorentzian_envelope_results"] = lorentzian_envelope_results
+
+            # ------------------- Sigmoid upper envelope ----------------------
+            # Stima con centro fissato a 0 (modifica se vuoi centro libero)
+            L, R, tau = estimate_constrained_sigmoid(x_data=corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
+            x_sig = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), 200)
+            y_sig = constrained_sigmoid(x_sig, L, R, tau, x0=0.0)
+            sigmoidal_envelope_results =  {
+                "L": L,
+                "R": R,
+                "tau": tau,
+                "x": x_sig,
+                "y": y_sig,
+                "fit_label": f'Sigmoid (L={L:.3f}, R={R:.3f}, τ={tau:.3f})',
+                "fit_successful": True,
+            }
+            analysis_results[name]["sigmoidal_envelope_results"] = sigmoidal_envelope_results
+            
             # ------------------- Spline fit ----------------------
             spline_fit_results = spline_fit(x=corrected_ppm, y=z["max_vals"])
             if spline_fit_results["fit_successful"]:
