@@ -27,14 +27,14 @@ import hashlib
 from joblib import dump, load
 
 METABOLITE_REGIONS: dict[str, List[float]] = {
-    "SP": [5.6, 7.5],
+    "Glycolytic PMEs": [5.5, 9.0],
     #"G6P/G3P": [6.7, 7.0],
     #"3PG/F6P": [5.8, 6.7],
-    "Pi": [4.5, 5.2],
-    "PDE": [3.5, 4.0],
-    "PEP": [1.5, 3.0],
-    "GAMMA-ATP": [-3.5, -1.5],
-    "ALPHA-ATP": [-8.5, -7.5],
+    "Pi": [4.3, 5.3],
+    #"PDE": [3.5, 4.0],
+    "PEP 1,3 BPG": [1.5, 3.5],
+    "GAMMA-ATP": [-4, -1.3],
+    "ALPHA-ATP": [-9, -6],
 }
 CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
 CACHE_DIR.mkdir(exist_ok=True)
