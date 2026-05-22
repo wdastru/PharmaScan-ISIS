@@ -20,6 +20,7 @@ from tkinter import filedialog
 from typing import List, Optional, Tuple, Dict, Any
 from scipy.interpolate import PchipInterpolator
 from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize
 import json
 from termcolor import colored
 import os
@@ -42,7 +43,6 @@ CACHE_DIR.mkdir(exist_ok=True)
 def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
     if not config_name:
-        import hashlib
         key_str = json.dumps(_build_cache_key(config), sort_keys=True)
         name = hashlib.md5(key_str.encode()).hexdigest()[:8]
     else:
@@ -342,7 +342,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
 
 def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Values vs Saturation ppm",
                           xlabel="Saturation ppm", ylabel="Max Value",
-                          fit_label="", invert_x=True, add_lorentz=True) -> Figure:
+                          fit_label="", invert_x=True, add_lorentz=True, add_sigmoid=True) -> Figure:
     """
     Plot data points and a spline fit through them.
 
@@ -387,6 +387,15 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
         y_lor = constrained_lorentzian(x_lor, A, gamma, y_min)
         plt.plot(x_lor, y_lor, 'g--', linewidth=2,
                 label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
+
+    # ------------------- Sigmoid fit ----------------------
+    if add_sigmoid:
+        # Stima con centro fissato a 0 (modifica se vuoi centro libero)
+        L, R, tau = estimate_constrained_sigmoid(x, y, fix_center=True, x0_fixed=0.0)
+        x_sig = np.linspace(np.min(x), np.max(x), 200)
+        y_sig = constrained_sigmoid(x_sig, L, R, tau, x0=0.0)
+        plt.plot(x_sig, y_sig, 'c--', linewidth=2,
+                    label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')                
                                 
     if invert_x:
         plt.gca().invert_xaxis()
@@ -1195,7 +1204,107 @@ def estimate_constrained_lorentzian(x_data, y_data):
     best_gamma = res_gamma.x
 
     return best_A, best_gamma
+
+def constrained_sigmoid(x, L, R, tau, x0=0.0):
+    """
+    Sigmoide (logistica) per l'inviluppo superiore.
+    Parametri:
+        L : asintoto per x → +∞ (ppm piccoli, lato destro)
+        R : asintoto per x → -∞ (ppm grandi, lato sinistro)
+        tau : scala della pendenza (tau > 0)
+        x0 : centro della transizione (default 0)
+    """
+    return R + (L - R) / (1.0 + np.exp(-(x - x0) / tau))
+
+def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
+    """
+    Stima i parametri (L, R, tau) per la sigmoide:
+        S(x) = R + (L - R) / (1 + exp(-(x - x0)/tau))
+    che soddisfa S(x_i) >= y_i per ogni i, minimizzando l'errore quadratico.
+
+    Parametri
+    ----------
+    x_data, y_data : array-like
+    fix_center : bool (True)
+        Se True, centro fissato a x0_fixed.
+    x0_fixed : float
+        Centro se fix_center=True.
+
+    Restituisce
+    -----------
+    (L, R, tau) se fix_center=True, altrimenti (L, R, tau, x0).
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
     
+    # Per semplicità assumiamo fix_center=True (adatto al tuo caso).
+    x0 = x0_fixed
+
+    # Funzione obiettivo per un dato tau: trova L,R ottimi che soddisfano i vincoli
+    def solve_LR_for_tau(tau):
+        # z_i = 1 / (1 + exp(-(x_i - x0)/tau))
+        z = 1.0 / (1.0 + np.exp(-(x - x0) / tau))
+        # S(x_i) = R + (L - R) * z_i = R*(1 - z_i) + L*z_i >= y_i
+        # Vincoli lineari: L*z_i + R*(1-z_i) >= y_i  per ogni i
+        # Inoltre L,R >= 0 (fisicamente i massimi non negativi)
+        # Vogliamo minimizzare sum( (L*z_i + R*(1-z_i) - y_i)^2 )
+        # Questo è un problema di ottimizzazione quadratica con vincoli lineari.
+        # Possiamo risolverlo con scipy.optimize.minimize o con un metodo diretto.
+        
+        def mse(params):
+            L, R = params
+            y_pred = L * z + R * (1 - z)
+            return np.sum((y_pred - y)**2)
+        
+        # Vincoli: per ogni i, L*z_i + R*(1-z_i) - y_i >= 0
+        constraints = []
+        for i in range(len(x)):
+            # A_i * [L, R] >= b_i
+            A_i = np.array([z[i], 1 - z[i]])
+            b_i = y[i]
+            constraints.append({'type': 'ineq', 'fun': lambda p, A=A_i, b=b_i: A[0]*p[0] + A[1]*p[1] - b})
+        
+        # Stima iniziale: prendi il massimo di y a sinistra e destra
+        mask_left = x > x0
+        mask_right = x < x0
+        L0 = np.max(y[mask_right]) if np.any(mask_right) else np.max(y)
+        R0 = np.max(y[mask_left]) if np.any(mask_left) else np.max(y)
+        
+        # Risolvi con vincoli
+        res = minimize(mse, [L0, R0], method='SLSQP', constraints=constraints,
+                       bounds=[(0, None), (0, None)], options={'maxiter': 1000})
+        if res.success:
+            L_opt, R_opt = res.x
+            return L_opt, R_opt, res.fun
+        else:
+            # Fallback: usa il massimo assoluto per entrambi (curva piatta sopra i dati)
+            L = R = np.max(y)
+            return L, R, np.sum((np.full_like(y, L) - y)**2)
+
+    # Ora ottimizziamo tau minimizzando l'errore con i migliori L,R
+    def objective_tau(tau):
+        if tau <= 0:
+            return np.inf
+        _, _, err = solve_LR_for_tau(tau)
+        return err
+
+    # Ricerca di tau ottimale in un intervallo ragionevole
+    # tau può andare da un valore piccolo (transizione ripida) a grande (quasi lineare)
+    tau_min = 1e-6
+    tau_max = np.ptp(x) * 10  # 10 volte l'escursione in ppm
+    res_tau = minimize_scalar(objective_tau, bounds=(tau_min, tau_max), method='bounded')
+    
+    if res_tau.success:
+        tau_opt = res_tau.x
+    else:
+        tau_opt = np.ptp(x) / 4  # fallback
+        print(f"Warning: optimization for tau failed, using fallback tau={tau_opt:.4f}")
+
+    # Ricalcola L,R ottimi per il tau trovato
+    L_opt, R_opt, _ = solve_LR_for_tau(tau_opt)
+    
+    return L_opt, R_opt, tau_opt
+
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
 
