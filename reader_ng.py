@@ -342,7 +342,12 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
 
 def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Values vs Saturation ppm",
                           xlabel="Saturation ppm", ylabel="Max Value",
-                          fit_label="", invert_x=True, add_lorentz=True, add_sigmoid=True) -> Figure:
+                          fit_label="", invert_x=True, 
+                          add_lorentz=False, 
+                          lorentzian_envelope_results=None, 
+                          add_sigmoid=False, 
+                          sigmoidal_envelope_results=None,
+                          ) -> Figure:
     """
     Plot data points and a spline fit through them.
 
@@ -381,19 +386,20 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
 
     # ------------------- Lorentzian dip -------------------
     if add_lorentz:
-        A, gamma = estimate_constrained_lorentzian(x, y)
-        y_min = np.min(y)
-        x_lor = np.linspace(np.min(x), np.max(x), 200)
-        y_lor = constrained_lorentzian(x_lor, A, gamma, y_min)
+        A: float = lorentzian_envelope_results.get("A")
+        gamma: float = lorentzian_envelope_results.get("gamma")
+        x_lor = lorentzian_envelope_results["x"]
+        y_lor = lorentzian_envelope_results["y"]
         plt.plot(x_lor, y_lor, 'g--', linewidth=2,
                 label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
 
     # ------------------- Sigmoid fit ----------------------
     if add_sigmoid:
-        # Stima con centro fissato a 0 (modifica se vuoi centro libero)
-        L, R, tau = estimate_constrained_sigmoid(x, y, fix_center=True, x0_fixed=0.0)
-        x_sig = np.linspace(np.min(x), np.max(x), 200)
-        y_sig = constrained_sigmoid(x_sig, L, R, tau, x0=0.0)
+        L: float = sigmoidal_envelope_results.get("L")
+        R: float = sigmoidal_envelope_results.get("R")
+        tau: float = sigmoidal_envelope_results.get("tau")
+        x_sig = sigmoidal_envelope_results["x"]
+        y_sig = sigmoidal_envelope_results["y"]
         plt.plot(x_sig, y_sig, 'c--', linewidth=2,
                     label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')                
                                 
@@ -1326,7 +1332,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         fit["x_sorted"], fit["y_sorted"],
                         fit["x_fit"], fit["y_fit"],
                         y_std_data=z.get("sd_max_vals"),
-                        title=name, invert_x=True
+                        title=name, invert_x=True,
+                        add_lorentz=True,
+                        lorentzian_envelope_results=z.get("lorentzian_envelope_results"),
+                        add_sigmoid=True,
+                        sigmoidal_envelope_results=z.get("sigmoidal_envelope_results"),
                     )
             # Grafico a barre degli integrali
             plot_integrals_regions(
@@ -1554,10 +1564,14 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             if spline_fit_results["fit_successful"]:
                 analysis_results[name]["spline_fit_results"] = spline_fit_results
                 plot_data_with_spline(
-                    analysis_results[name]["spline_fit_results"]["x_sorted"],  
-                    analysis_results[name]["spline_fit_results"]["y_sorted"],
-                    analysis_results[name]["spline_fit_results"]["x_fit"], 
-                    analysis_results[name]["spline_fit_results"]["y_fit"],
+                    x=spline_fit_results["x_sorted"],  
+                    y=spline_fit_results["y_sorted"],
+                    x_fit=spline_fit_results["x_fit"], 
+                    y_fit=spline_fit_results["y_fit"],
+                    add_lorentz=True,
+                    lorentzian_envelope_results=lorentzian_envelope_results, 
+                    add_sigmoid=True,
+                    sigmoidal_envelope_results=sigmoidal_envelope_results,
                     y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
                     title=name, invert_x=True
                 )
