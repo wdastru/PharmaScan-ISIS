@@ -27,6 +27,8 @@ import os
 import hashlib
 from joblib import dump, load
 
+print(f"Using nmrglue version: {ng.__version__}")
+
 METABOLITE_REGIONS: dict[str, List[float]] = {
     "Glycolytic PMEs": [5.5, 9.0],
     #"G6P/G3P": [6.7, 7.0],
