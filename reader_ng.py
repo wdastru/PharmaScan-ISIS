@@ -20,6 +20,7 @@ from tkinter import filedialog
 from typing import List, Optional, Tuple, Dict, Any
 from scipy.interpolate import PchipInterpolator
 from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize
 import json
 from termcolor import colored
 import os
@@ -27,14 +28,14 @@ import hashlib
 from joblib import dump, load
 
 METABOLITE_REGIONS: dict[str, List[float]] = {
-    "SP": [5.6, 7.5],
+    "Glycolytic PMEs": [5.5, 9.0],
     #"G6P/G3P": [6.7, 7.0],
     #"3PG/F6P": [5.8, 6.7],
-    "Pi": [4.5, 5.2],
-    "PDE": [3.5, 4.0],
-    "PEP": [1.5, 3.0],
-    "GAMMA-ATP": [-3.5, -1.5],
-    "ALPHA-ATP": [-8.5, -7.5],
+    "Pi": [4.3, 5.3],
+    #"PDE": [3.5, 4.0],
+    "PEP 1,3 BPG": [1.5, 3.5],
+    "GAMMA-ATP": [-4, -1.3],
+    "ALPHA-ATP": [-9, -6],
 }
 CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
 CACHE_DIR.mkdir(exist_ok=True)
@@ -42,7 +43,6 @@ CACHE_DIR.mkdir(exist_ok=True)
 def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
     if not config_name:
-        import hashlib
         key_str = json.dumps(_build_cache_key(config), sort_keys=True)
         name = hashlib.md5(key_str.encode()).hexdigest()[:8]
     else:
@@ -335,39 +335,58 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
         mask = (x_fit >= bounds[0]) & (x_fit <= bounds[1])
         if not np.any(mask):
             return 0.0
-        bottom_area = np.trapezoid(y_fit[mask], x_fit[mask])
-        return bottom_area
+        area = np.trapezoid(y_fit[mask], x_fit[mask])
+        return area
     
     return {region: _region_integral(bounds, x_fit, y_fit) for region, bounds in METABOLITE_REGIONS.items()}
 
-def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Values vs Saturation ppm",
+def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values vs Saturation ppm",
                           xlabel="Saturation ppm", ylabel="Max Value",
-                          fit_label="", invert_x=True, add_lorentz=True) -> Figure:
+                          fit_label="", invert_x=True, 
+                          add_lorentz=False, 
+                          lorentzian_envelope_results=None, 
+                          add_sigmoid=False, 
+                          sigmoidal_envelope_results=None,
+                          show_regions=True,
+                          diff_x=None, diff_y=None, diff_label="Difference (Envelope - Spline)") -> Figure:
     """
-    Plot data points and a spline fit through them.
+    Plot data points and a spline fit through them, with optional envelope curves,
+    metabolite regions, and a difference curve.
 
     Parameters
     ----------
-    x : array-like
-        x-coordinates of the data points.
-    y : array-like
-        y-coordinates of the data points.
-    x_fit : array-like
-        x-coordinates of the fitted curve.
-    y_fit : array-like
-        y-coordinates of the fitted curve.
-    title : str, optional
-        Title of the plot.
-    xlabel : str, optional
-        Label for the x-axis.
-    ylabel : str, optional
-        Label for the y-axis.
-    fit_label : str, optional
-        Label for the fitted curve (used in legend).
+    x, y : array-like
+        Data points.
+    x_fit, y_fit : array-like
+        Fitted curve (spline).
+    y_std_data : optional
+        Standard deviations for error bars (used for 'reference' and 'avg' titles).
+    title, xlabel, ylabel : str
+        Labels.
+    fit_label : str
+        Label for the fitted curve.
     invert_x : bool, default True
-        If True, invert the x-axis (useful for ppm scales where high values are on the left).
+        Invert x-axis (typical for ppm).
+    add_lorentz : bool
+        If True, plot the Lorentzian envelope.
+    lorentzian_envelope_results : dict, optional
+        Must contain keys 'A', 'gamma', 'x', 'y'.
+    add_sigmoid : bool
+        If True, plot the sigmoid envelope.
+    sigmoidal_envelope_results : dict, optional
+        Must contain keys 'L', 'R', 'tau', 'x', 'y'.
+    show_regions : bool, default True
+        If True, display vertical shaded bands for each region in METABOLITE_REGIONS.
+    diff_x, diff_y : array-like, optional
+        Data for an additional curve (e.g., envelope - spline).
+    diff_label : str
+        Label for the difference curve.
+
+    Returns
+    -------
+    Figure
+        The matplotlib figure object.
     """
-    # Create the plot
     fig = plt.figure(figsize=(8, 5))
 
     # Data points with optional error bars
@@ -379,17 +398,41 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
     # Spline fit
     plt.plot(x_fit, y_fit, 'r-', label=fit_label)
 
-    # ------------------- Lorentzian dip -------------------
-    if add_lorentz:
-        A, gamma = estimate_constrained_lorentzian(x, y)
-        y_min = np.min(y)
-        x_lor = np.linspace(np.min(x), np.max(x), 200)
-        y_lor = constrained_lorentzian(x_lor, A, gamma, y_min)
+    # Lorentzian envelope
+    if add_lorentz and lorentzian_envelope_results is not None:
+        A = lorentzian_envelope_results.get("A")
+        gamma = lorentzian_envelope_results.get("gamma")
+        x_lor = lorentzian_envelope_results["x"]
+        y_lor = lorentzian_envelope_results["y"]
         plt.plot(x_lor, y_lor, 'g--', linewidth=2,
                 label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
-                                
+
+    # Sigmoid envelope
+    if add_sigmoid and sigmoidal_envelope_results is not None:
+        L = sigmoidal_envelope_results.get("L")
+        R = sigmoidal_envelope_results.get("R")
+        tau = sigmoidal_envelope_results.get("tau")
+        x_sig = sigmoidal_envelope_results["x"]
+        y_sig = sigmoidal_envelope_results["y"]
+        plt.plot(x_sig, y_sig, 'c--', linewidth=2,
+                    label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')                
+
+    # Difference curve (e.g., Lorentzian envelope - spline fit)
+    if diff_x is not None and diff_y is not None:
+        plt.plot(diff_x, diff_y, 'm-', linewidth=1.5, label=diff_label)
+
+    # Colored metabolite regions as vertical spans
+    if show_regions:
+        ax = plt.gca()
+        cmap = plt.get_cmap('tab10')
+        region_names = list(METABOLITE_REGIONS.keys())
+        colors = [cmap(i % 10) for i in range(len(region_names))]
+        for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
+            ax.axvspan(start, end, facecolor=colors[idx], alpha=0.25, edgecolor='none', label=region_name)
+    
     if invert_x:
         plt.gca().invert_xaxis()
+    
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
@@ -398,7 +441,7 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
     plt.show(block=False)
     return fig
 
-def fit_curve(x, y, n_points=200) -> Dict[str, Any]:
+def spline_fit(x, y, n_points=200) -> Dict[str, Any]:
     """
     Esegue lo spline fit dei dati.
 
@@ -701,7 +744,7 @@ def load_spectra(folder: Path):
 
 def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
     """
-    Elabora ogni FID: rimozione filtro digitale, zero‑filling, line broadening,
+    Elabora ogni FID: rimozione filtro digitale, zero-filling, line broadening,
     FFT, correzione di fase automatica e inversione dell'asse.
 
     Parameters
@@ -842,16 +885,19 @@ def find_max_vals(spectra, start_idx, end_idx):
     # ---- Find maxima in the selected range ----
     max_vals: List[float] = []
     max_indexes: List[int] = []
-    global_max = 0.0
+    global_max: float = 0.0
+    global_min: float = float('inf')
     for exp_idx, spec in spectra.items():
         val, idx = find_maximum(spec, start=start_idx, end=end_idx)
         if val > global_max:
             global_max = val
+        elif val < global_min:
+            global_min = val
         max_vals.append(val)
         max_indexes.append(idx)
     # ---- Normalize max_vals ----
     for i in range(len(max_vals)):
-        max_vals[i] /= global_max
+        max_vals[i] = (max_vals[i] - global_min) / (global_max - global_min) if global_max > global_min else 0.0
     return max_vals, max_indexes
 
 def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
@@ -893,28 +939,20 @@ def correct_sat_frequencies(
     """
     Corregge le frequenze di saturazione e le converte in ppm.
 
-    Modifica *in‑place* la lista sat_trans_hz:
+    Modifica *in-place* la lista sat_trans_hz:
     per ogni frequenza non nulla aggiunge il delta calcolato
     dallo scostamento del picco rispetto al work offset.
 
     Restituisce la lista delle frequenze corrette in ppm.
     """
     sat_trans_f1_ppm = [0.0] * len(sat_trans_hz)
+
     for i, (st_hz, idx) in enumerate(zip(sat_trans_hz, max_indexes)):
         delta = work_offset_hz[0] - uc.hz(idx)
         if st_hz != 0.0:
             sat_trans_hz[i] += delta
         sat_trans_f1_ppm[i] = sat_trans_hz[i] / bf1
     return sat_trans_f1_ppm
-
-
-def fit_saturation_curve(x_ppm: List[float], y_vals: List[float]) -> Dict[str, Any]:
-    """
-    Esegue il fit della curva di saturazione usando i parametri standard.
-
-    Utilizza fit_curve con smoothing=0.02 e 200 punti di campionamento.
-    """
-    return fit_curve(x=x_ppm, y=y_vals, n_points=200)
 
 def ask_yes_no(prompt: str, default: Optional[bool] = None) -> bool:
     """
@@ -979,7 +1017,7 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
 # ----------------------------------------------------------------------
 
 def _init_stats_lists(length: int) -> Dict[str, List[float]]:
-    """Create a dictionary of zero‑filled lists for statistical accumulation.
+    """Create a dictionary of zero-filled lists for statistical accumulation.
     
     Returns lists for:
         - max_indexes, max_vals, sat_trans_hz (averages)
@@ -1071,7 +1109,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
 
 def estimate_lorentzian_params(x_sorted: np.ndarray, y_sorted: np.ndarray):
     """
-    Estimate center (x0) and HWHM (gamma) for a 1‑Lorentzian dip
+    Estimate center (x0) and HWHM (gamma) for a 1-Lorentzian dip
     from sorted data.
     """
     y_min = np.min(y_sorted)
@@ -1105,168 +1143,11 @@ def estimate_lorentzian_params(x_sorted: np.ndarray, y_sorted: np.ndarray):
 
     return x0, gamma
 
-def fit_lorentzian_free(x_data, y_data):
-    """
-    Fit della lorentziana con centro zero e parametri A, B, gamma liberi.
-    Restituisce (A, B, gamma) ottimali.
-    """
-    x = np.asarray(x_data)
-    y = np.asarray(y_data)
-
-    # Stima iniziale
-    A0 = np.max(y)
-    idx_min = np.argmin(y)
-    B0 = A0 - y[idx_min]          # profondità approssimativa
-    # gamma iniziale: distanza a metà profondità
-    half_level = A0 - B0/2
-    # trova il primo punto a sinistra del centro che attraversa metà livello
-    # (semplificato: prendiamo 0.1 * range x)
-    gamma0 = 0.1 * (x.max() - x.min())
-
-    try:
-        popt, _ = curve_fit(lorentzian_dip_free, x, y,
-                            p0=[A0, B0, gamma0],
-                            bounds=([0, 0, 0], [np.inf, np.inf, np.inf]))
-        return popt  # A, B, gamma
-    except Exception as e:
-        print(f"Fit lorentziana fallito: {e}")
-        return A0, B0, gamma0
-    
-def lorentzian_dip(x: np.ndarray, center: float, gamma: float) -> np.ndarray:
-    """1‑Lorentzian curve normalised to [0,1]."""
-    return 1 - (gamma**2) / (gamma**2 + (x - center)**2)
-
-def lorentzian_dip_free(x, A, B, gamma):
-    """Modello libero: A - B * gamma^2/(gamma^2 + x^2)"""
-    return A - B * (gamma**2) / (gamma**2 + x**2)
-
 def constrained_lorentzian(x, A, gamma, y_min):
     """Funzione di comodo per tracciare la curva ottimale."""
     if gamma == 0.0:
         return np.full_like(x, A)
     return A - (A - y_min) * gamma**2 / (gamma**2 + x**2)
-
-def estimate_lorentzian_upper_envelope(x_data, y_data):
-    """
-    Trova il centro e il gamma di una 1‑Lorentzian che:
-      - per ogni punto sperimentale, lorentzian(x) >= y_data(x)
-      - minimizza la somma dei quadrati delle differenze.
-
-    Ritorna (x0, gamma).
-    """
-    x = np.asarray(x_data)
-    y = np.asarray(y_data)
-
-    # Se tutti i punti sono <= 0 o >= 1, non c'è un vero dip, ritorna un fallback
-    if np.all(y >= 1.0):
-        return (x.mean(), 0.0)   # Lorentziana piatta a 1
-    if np.all(y <= 0.0):
-        return (x.mean(), 1e-6)  # Impossibile avere y <= 0 con una Lorentziana >= 0, mettiamo un gamma piccolo
-
-    # Funzione che calcola l'errore quadratico per un dato centro
-    def error_for_center(c):
-        # Calcola il massimo gamma che soddisfa i vincoli per questo centro
-        bounds = []
-        for xi, yi in zip(x, y):
-            if yi >= 1.0:         # deve valere lorentz(xi) >= 1  => gamma = 0
-                return np.inf      # errore infinito, centro non valido
-            if yi > 0.0:
-                d = abs(xi - c)
-                # vincolo: gamma^2 <= (1 - yi)/yi * d^2
-                bound = np.sqrt(max((1 - yi) / yi, 0.0)) * d
-                bounds.append(bound)
-        if bounds:
-            gamma = np.min(bounds)
-        else:
-            gamma = 0.1 * (x.max() - x.min())  # fallback, non dovrebbe capitare
-
-        # Calcola la curva lorentziana e l'errore
-        y_pred = 1 - (gamma**2) / (gamma**2 + (x - c)**2)
-        err = np.sum((y_pred - y)**2)
-        return err
-
-    # Ottimizza il centro nell'intervallo dei dati
-    res = minimize_scalar(error_for_center, bounds=(x.min(), x.max()), method='bounded')
-    x0 = res.x
-
-    # Ricalcola il gamma ottimale per il centro trovato
-    bounds = []
-    for xi, yi in zip(x, y):
-        if yi > 0.0:
-            d = abs(xi - x0)
-            bound = np.sqrt(max((1 - yi) / yi, 0.0)) * d
-            bounds.append(bound)
-    best_gamma = np.min(bounds) if bounds else 0.1 * (x.max() - x.min())
-
-    return x0, best_gamma
-
-def estimate_lorentzian_gamma(x_data, y_data):
-    """
-    Calcola il gamma ottimale per una 1‑Lorentzian con centro zero,
-    minimizzando la somma dei quadrati delle differenze e rispettando
-    il vincolo lorentzian(x_i) >= y_i per ogni punto.
-
-    Parametri
-    ---------
-    x_data, y_data : array-like
-        Punti dello Z‑spettro (x in ppm, y normalizzati [0,1]).
-
-    Restituisce
-    -----------
-    gamma_opt : float
-        Semi‑larghezza HWHM ottimale.
-    """
-    x = np.asarray(x_data)
-    y = np.asarray(y_data)
-
-    # ---- 1. Determinare il massimo gamma ammissibile (vincolo superiore) ----
-    gamma_max = np.inf
-    for xi, yi in zip(x, y):
-        if yi >= 1.0:               # vincolo richiederebbe gamma=0
-            gamma_max = 0.0
-            break
-        if yi > 0.0:
-            bound = abs(xi) * np.sqrt(max(0.0, (1.0 - yi) / yi))
-            gamma_max = min(gamma_max, bound)
-
-    # Se gamma_max è NaN o infinito (nessun vincolo utile), usa un fallback ampio
-    if not np.isfinite(gamma_max):
-        gamma_max = 0.5 * (x.max() - x.min())
-
-    # ---- 2. Minimizzare l'errore quadratico nell'intervallo [0, gamma_max] ----
-    def squared_error(g):
-        # evita divisione per zero se g=0
-        if g == 0.0:
-            y_pred = np.ones_like(x)   # Lorentziana piatta a 1
-        else:
-            y_pred = 1.0 - (g**2) / (g**2 + x**2)
-        return np.sum((y_pred - y)**2)
-
-    # Bounds per gamma: [0, gamma_max]
-    res = minimize_scalar(squared_error, bounds=(0.0, gamma_max), method='bounded')
-    gamma_opt = res.x
-    return gamma_opt    
-
-def compute_optimal_gamma(x_data, y_data, center=0.0):
-    """
-    Calcola la semi‑larghezza gamma (HWHM) per una 1‑Lorentziana
-    centrata in `center` che soddisfi lorentzian(x) >= y_data(x) per ogni punto.
-    Restituisce il massimo gamma compatibile.
-    """
-    x = np.asarray(x_data)
-    y = np.asarray(y_data)
-    bounds = []
-    for xi, yi in zip(x, y):
-        if yi >= 1.0:          # vincolo impossibile con gamma>0 → gamma=0
-            return 0.0
-        if yi > 0.0:
-            bound = np.sqrt((1.0 - yi) / yi) * abs(xi - center)
-            bounds.append(bound)
-    if bounds:
-        return min(bounds)
-    else:
-        # tutti yi <= 0 – impossibile per una Lorentziana >=0, ma mettiamo un valore piccolo
-        return 0.1 * (x.max() - x.min())
 
 def estimate_constrained_lorentzian(x_data, y_data):
     """
@@ -1349,7 +1230,107 @@ def estimate_constrained_lorentzian(x_data, y_data):
     best_gamma = res_gamma.x
 
     return best_A, best_gamma
+
+def constrained_sigmoid(x, L, R, tau, x0=0.0):
+    """
+    Sigmoide (logistica) per l'inviluppo superiore.
+    Parametri:
+        L : asintoto per x → +∞ (ppm piccoli, lato destro)
+        R : asintoto per x → -∞ (ppm grandi, lato sinistro)
+        tau : scala della pendenza (tau > 0)
+        x0 : centro della transizione (default 0)
+    """
+    return R + (L - R) / (1.0 + np.exp(-(x - x0) / tau))
+
+def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
+    """
+    Stima i parametri (L, R, tau) per la sigmoide:
+        S(x) = R + (L - R) / (1 + exp(-(x - x0)/tau))
+    che soddisfa S(x_i) >= y_i per ogni i, minimizzando l'errore quadratico.
+
+    Parametri
+    ----------
+    x_data, y_data : array-like
+    fix_center : bool (True)
+        Se True, centro fissato a x0_fixed.
+    x0_fixed : float
+        Centro se fix_center=True.
+
+    Restituisce
+    -----------
+    (L, R, tau) se fix_center=True, altrimenti (L, R, tau, x0).
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
     
+    # Per semplicità assumiamo fix_center=True (adatto al tuo caso).
+    x0 = x0_fixed
+
+    # Funzione obiettivo per un dato tau: trova L,R ottimi che soddisfano i vincoli
+    def solve_LR_for_tau(tau):
+        # z_i = 1 / (1 + exp(-(x_i - x0)/tau))
+        z = 1.0 / (1.0 + np.exp(-(x - x0) / tau))
+        # S(x_i) = R + (L - R) * z_i = R*(1 - z_i) + L*z_i >= y_i
+        # Vincoli lineari: L*z_i + R*(1-z_i) >= y_i  per ogni i
+        # Inoltre L,R >= 0 (fisicamente i massimi non negativi)
+        # Vogliamo minimizzare sum( (L*z_i + R*(1-z_i) - y_i)^2 )
+        # Questo è un problema di ottimizzazione quadratica con vincoli lineari.
+        # Possiamo risolverlo con scipy.optimize.minimize o con un metodo diretto.
+        
+        def mse(params):
+            L, R = params
+            y_pred = L * z + R * (1 - z)
+            return np.sum((y_pred - y)**2)
+        
+        # Vincoli: per ogni i, L*z_i + R*(1-z_i) - y_i >= 0
+        constraints = []
+        for i in range(len(x)):
+            # A_i * [L, R] >= b_i
+            A_i = np.array([z[i], 1 - z[i]])
+            b_i = y[i]
+            constraints.append({'type': 'ineq', 'fun': lambda p, A=A_i, b=b_i: A[0]*p[0] + A[1]*p[1] - b})
+        
+        # Stima iniziale: prendi il massimo di y a sinistra e destra
+        mask_left = x > x0
+        mask_right = x < x0
+        L0 = np.max(y[mask_right]) if np.any(mask_right) else np.max(y)
+        R0 = np.max(y[mask_left]) if np.any(mask_left) else np.max(y)
+        
+        # Risolvi con vincoli
+        res = minimize(mse, [L0, R0], method='SLSQP', constraints=constraints,
+                       bounds=[(0, None), (0, None)], options={'maxiter': 1000})
+        if res.success:
+            L_opt, R_opt = res.x
+            return L_opt, R_opt, res.fun
+        else:
+            # Fallback: usa il massimo assoluto per entrambi (curva piatta sopra i dati)
+            L = R = np.max(y)
+            return L, R, np.sum((np.full_like(y, L) - y)**2)
+
+    # Ora ottimizziamo tau minimizzando l'errore con i migliori L,R
+    def objective_tau(tau):
+        if tau <= 0:
+            return np.inf
+        _, _, err = solve_LR_for_tau(tau)
+        return err
+
+    # Ricerca di tau ottimale in un intervallo ragionevole
+    # tau può andare da un valore piccolo (transizione ripida) a grande (quasi lineare)
+    tau_min = 1e-6
+    tau_max = np.ptp(x) * 10  # 10 volte l'escursione in ppm
+    res_tau = minimize_scalar(objective_tau, bounds=(tau_min, tau_max), method='bounded')
+    
+    if res_tau.success:
+        tau_opt = res_tau.x
+    else:
+        tau_opt = np.ptp(x) / 4  # fallback
+        print(f"Warning: optimization for tau failed, using fallback tau={tau_opt:.4f}")
+
+    # Ricalcola L,R ottimi per il tau trovato
+    L_opt, R_opt, _ = solve_LR_for_tau(tau_opt)
+    
+    return L_opt, R_opt, tau_opt
+
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
 
@@ -1372,15 +1353,19 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi usarla?", default=True)
         if use_cache:
             analysis_results = cached
-            # Ricrea i grafici degli Z‑spettri
+            # Ricrea i grafici degli Z-spettri
             for name, z in analysis_results.items():
-                if "fit_result" in z and z["fit_result"]["fit_successful"]:
-                    fit = z["fit_result"]
+                if "spline_fit_results" in z and z["spline_fit_results"]["fit_successful"]:
+                    fit = z["spline_fit_results"]
                     plot_data_with_spline(
                         fit["x_sorted"], fit["y_sorted"],
                         fit["x_fit"], fit["y_fit"],
                         y_std_data=z.get("sd_max_vals"),
-                        title=name, invert_x=True
+                        title=name, invert_x=True,
+                        add_lorentz=True,
+                        lorentzian_envelope_results=z.get("lorentzian_envelope_results"),
+                        add_sigmoid=True,
+                        sigmoidal_envelope_results=z.get("sigmoidal_envelope_results"),
                     )
             # Grafico a barre degli integrali
             plot_integrals_regions(
@@ -1471,6 +1456,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # Find max values and indexes in the ppm range (the z-spectra)
         # ----------------------------------------------------------------------
         max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
+
         analysis_results[folder_name_short].update({
             "max_indexes": max_indexes,
             "max_vals": max_vals, 
@@ -1569,25 +1555,102 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 z["uc"], 
                 z["bf1"]
             )
-            fit_result = fit_saturation_curve(corrected_ppm, z["max_vals"])
-            if fit_result["fit_successful"]:
-                analysis_results[name]["fit_result"] = fit_result
+            
+            # ------------------- Sigmoid upper envelope ----------------------
+            # Stima con centro fissato a 0 (modifica se vuoi centro libero)
+            L, R, tau = estimate_constrained_sigmoid(x_data=corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
+
+            x_sig = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), 200)
+            # For each value in corrected_ppm, find the index in x_sig where the element is closest to that value.
+            # np.abs(x_sig - val) computes the absolute differences between all points in x_sig and the current val.
+            # np.argmin returns the position (index) of the smallest difference, i.e., the closest match.
+            # The list comprehension collects these indices for all 19 elements of corrected_ppm.           
+            linspace_indices = [np.argmin(np.abs(x_sig - val)) for val in corrected_ppm]
+
+            y_sig = constrained_sigmoid(x_sig, L, R, tau, x0=0.0)
+            sigmoidal_envelope_results =  {
+                "L": L,
+                "R": R,
+                "tau": tau,
+                "x": x_sig,
+                "y": y_sig,
+                "fit_label": f'Sigmoid (L={L:.3f}, R={R:.3f}, τ={tau:.3f})',
+                "fit_successful": True,
+            }
+            analysis_results[name]["sigmoidal_envelope_results"] = sigmoidal_envelope_results
+            pass 
+            pass
+
+            # ----------------- Sigmoid correct z-specra data -----------------
+            # Create a new list of corrected_vals
+            corrected_vals: list[float] = [0.0] * len(z["max_vals"])
+
+            # Correct the max_vals values
+            for i, (idx, val) in enumerate(zip(linspace_indices,analysis_results[name]["max_vals"])):
+                corrected_vals[i] = val / analysis_results[name]["sigmoidal_envelope_results"]["y"][idx]
+            analysis_results[name]["corrected_max_vals"] = corrected_vals
+
+            # ------------------- Lorentzian upper envelope -------------------
+            A, gamma = estimate_constrained_lorentzian(x_data=corrected_ppm, y_data=z["corrected_max_vals"])
+            y_min = np.min(z["corrected_max_vals"])
+            x_lor = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), 200)
+            y_lor = constrained_lorentzian(x_lor, A, gamma, y_min)
+            lorentzian_envelope_results =  {
+                "A": A,
+                "gamma": gamma,
+                "x": x_lor,
+                "y": y_lor,
+                "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
+                "fit_successful": True,
+            }
+            analysis_results[name]["lorentzian_envelope_results"] = lorentzian_envelope_results
+
+            # ------------------- Spline fit ----------------------
+            spline_fit_results = spline_fit(x=corrected_ppm, y=z["corrected_max_vals"])
+
+            # --- Calcolo della curva differenza (Lorentzian envelope - spline fit) ---
+            diff_x = None
+            diff_y = None
+            if lorentzian_envelope_results is not None and spline_fit_results.get("fit_successful", False):
+                # Le due curve condividono lo stesso array x (np.linspace sugli stessi estremi)
+                # Verifichiamo rapidamente che le lunghezze coincidano; in caso contrario interpola
+                if (len(lorentzian_envelope_results["x"]) == len(spline_fit_results["y_fit"]) and
+                    np.allclose(lorentzian_envelope_results["x"], spline_fit_results["x_fit"], atol=1e-6)):
+                    diff_x = lorentzian_envelope_results["x"]
+                    diff_y = lorentzian_envelope_results["y"] - spline_fit_results["y_fit"]
+                else:
+                    # Interpolazione di sicurezza
+                    from scipy.interpolate import interp1d
+                    interp_lor = interp1d(lorentzian_envelope_results["x"], lorentzian_envelope_results["y"],
+                                        kind='linear', fill_value='extrapolate')
+                    diff_x = spline_fit_results["x_fit"]
+                    diff_y = interp_lor(diff_x) - spline_fit_results["y_fit"]
+                    
+            if spline_fit_results["fit_successful"]:
+                analysis_results[name]["spline_fit_results"] = spline_fit_results
                 plot_data_with_spline(
-                    analysis_results[name]["fit_result"]["x_sorted"],  
-                    analysis_results[name]["fit_result"]["y_sorted"],
-                    analysis_results[name]["fit_result"]["x_fit"], 
-                    analysis_results[name]["fit_result"]["y_fit"],
+                    x=spline_fit_results["x_sorted"],  
+                    y=spline_fit_results["y_sorted"],
+                    x_fit=spline_fit_results["x_fit"], 
+                    y_fit=spline_fit_results["y_fit"],
+                    add_lorentz=True,
+                    lorentzian_envelope_results=lorentzian_envelope_results, 
+                    add_sigmoid=True,
+                    sigmoidal_envelope_results=sigmoidal_envelope_results,
                     y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
-                    title=name, invert_x=True
+                    title=name, invert_x=True,
+                    show_regions=True,
+                    diff_x=diff_x, diff_y=diff_y, diff_label="Lorentzian envelope - Spline fit"
                 )
 
                 # ----------------------------------------------------------
                 # Calculate integrals
                 # ----------------------------------------------------------
-                integrals = compute_regions_integrals(
-                    z["fit_result"]["x_fit"], 
-                    z["fit_result"]["y_fit"]
-                )
+                integrals = compute_regions_integrals(diff_x, diff_y)
+                #integrals = compute_regions_integrals(
+                #    z["spline_fit_results"]["x_fit"], 
+                #    z["lorentzian_envelope_results"]["y"] - z["spline_fit_results"]["y_fit"]
+                #)
                 analysis_results[name]["integrals"] = integrals
                 
             else:
