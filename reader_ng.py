@@ -319,11 +319,12 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
 def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str, float]:
     """
     Calcola gli integrali di regione per tutte le regioni definite in METABOLITE_REGIONS.
+    Aggiunge i valori esatti dei bordi (start, end) all'array x per una maggiore precisione.
 
     Parameters
     ----------
     x_fit : np.ndarray
-        Array delle asycisse (ppm) della curva fitted.
+        Array delle ascisse (ppm) della curva fitted.
     y_fit : np.ndarray
         Array delle ordinate (intensità normalizzate) della curva fitted.
 
@@ -332,14 +333,40 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
     Dict[str, float]
         Dizionario con chiavi i nomi delle regioni e valori gli integrali calcolati.
     """
-    def _region_integral(bounds, x_fit, y_fit):
-        mask = (x_fit >= bounds[0]) & (x_fit <= bounds[1])
+    integrals = {}
+    for region, (start, end) in METABOLITE_REGIONS.items():
+        # Trova i punti all'interno dell'intervallo
+        mask = (x_fit >= start) & (x_fit <= end)
         if not np.any(mask):
-            return 0.0
-        area = np.trapezoid(y_fit[mask], x_fit[mask])
-        return area
-    
-    return {region: _region_integral(bounds, x_fit, y_fit) for region, bounds in METABOLITE_REGIONS.items()}
+            integrals[region] = 0.0
+            continue
+
+        # Estrai i punti interni
+        x_inside = x_fit[mask]
+        y_inside = y_fit[mask]
+
+        # Aggiungi il bordo sinistro se non è già presente
+        if start not in x_inside:
+            y_start = np.interp(start, x_fit, y_fit)
+            x_inside = np.concatenate(([start], x_inside))
+            y_inside = np.concatenate(([y_start], y_inside))
+
+        # Aggiungi il bordo destro se non è già presente
+        if end not in x_inside:
+            y_end = np.interp(end, x_fit, y_fit)
+            x_inside = np.concatenate((x_inside, [end]))
+            y_inside = np.concatenate((y_inside, [y_end]))
+
+        # Mantieni l'ordinamento crescente (x_fit è già crescente, ma dopo le aggiunte va riordinato)
+        sort_idx = np.argsort(x_inside)
+        x_inside = x_inside[sort_idx]
+        y_inside = y_inside[sort_idx]
+
+        # Calcola l'integrale con il metodo dei trapezi
+        area = np.trapezoid(y_inside, x_inside)
+        integrals[region] = area
+
+    return integrals
 
 def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values vs Saturation ppm",
                           xlabel="Saturation ppm", ylabel="Max Value",
