@@ -42,6 +42,15 @@ METABOLITE_REGIONS: dict[str, List[float]] = {
 CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
 CACHE_DIR.mkdir(exist_ok=True)
 N_POINTS_FIT = 200
+# Configurazione predefinita per i grafici
+PLOT_VISIBILITY: Dict[str, bool] = {
+    "data": True,
+    "spline": True,
+    "lorentzian": True,
+    "sigmoid": True,
+    "difference": True,
+    "regions": True,
+}
 
 def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
@@ -370,66 +379,37 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
 
     return integrals
 
-def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values vs Saturation ppm",
-                          xlabel="Saturation ppm", ylabel="Max Value",
-                          fit_label="", invert_x=True, 
-                          add_lorentz=False, 
-                          lorentzian_envelope_results=None, 
-                          add_sigmoid=False, 
-                          sigmoidal_envelope_results=None,
-                          show_regions=True,
-                          diff_x=None, diff_y=None, diff_label="Difference (Envelope - Spline)") -> Figure:
-    """
-    Plot data points and a spline fit through them, with optional envelope curves,
-    metabolite regions, and a difference curve.
-
-    Parameters
-    ----------
-    x, y : array-like
-        Data points.
-    x_fit, y_fit : array-like
-        Fitted curve (spline).
-    y_std_data : optional
-        Standard deviations for error bars (used for 'reference' and 'avg' titles).
-    title, xlabel, ylabel : str
-        Labels.
-    fit_label : str
-        Label for the fitted curve.
-    invert_x : bool, default True
-        Invert x-axis (typical for ppm).
-    add_lorentz : bool
-        If True, plot the Lorentzian envelope.
-    lorentzian_envelope_results : dict, optional
-        Must contain keys 'A', 'gamma', 'x', 'y'.
-    add_sigmoid : bool
-        If True, plot the sigmoid envelope.
-    sigmoidal_envelope_results : dict, optional
-        Must contain keys 'L', 'R', 'tau', 'x', 'y'.
-    show_regions : bool, default True
-        If True, display vertical shaded bands for each region in METABOLITE_REGIONS.
-    diff_x, diff_y : array-like, optional
-        Data for an additional curve (e.g., envelope - spline).
-    diff_label : str
-        Label for the difference curve.
-
-    Returns
-    -------
-    Figure
-        The matplotlib figure object.
-    """
+def plot_data_with_spline(
+    x, y, x_fit, y_fit, y_std_data=None, title="Max Values vs Saturation ppm",
+    xlabel="Saturation ppm", ylabel="Max Value",
+    fit_label="", invert_x=True, 
+    add_lorentz=False, 
+    lorentzian_envelope_results=None, 
+    add_sigmoid=False, 
+    sigmoidal_envelope_results=None,
+    show_regions=True,  # opzionale, ma puoi fonderlo con visibility
+    diff_x=None, diff_y=None, diff_label="Difference (Envelope - Spline)",
+    visibility: Optional[Dict[str, bool]] = None
+) -> Figure:
+    # Se non fornito, usa i default globali
+    if visibility is None:
+        visibility = PLOT_VISIBILITY.copy()
+    
     fig = plt.figure(figsize=(8, 5))
 
-    # Data points with optional error bars
-    if title in ("reference", "avg") and y_std_data is not None:
-        plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color='b', label='Data')
-    else:
-        plt.plot(x, y, 'o', color='b', label='Data')
+    # Data points
+    if visibility.get("data", True):
+        if title in ("reference", "avg") and y_std_data is not None:
+            plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color='b', label='Data')
+        else:
+            plt.plot(x, y, 'o', color='b', label='Data')
     
     # Spline fit
-    plt.plot(x_fit, y_fit, 'r-', label=fit_label)
+    if visibility.get("spline", True):
+        plt.plot(x_fit, y_fit, 'r-', label=fit_label)
 
     # Lorentzian envelope
-    if add_lorentz and lorentzian_envelope_results is not None:
+    if add_lorentz and lorentzian_envelope_results is not None and visibility.get("lorentzian", True):
         A = lorentzian_envelope_results.get("A")
         gamma = lorentzian_envelope_results.get("gamma")
         x_lor = lorentzian_envelope_results["x"]
@@ -438,7 +418,7 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values
                 label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
 
     # Sigmoid envelope
-    if add_sigmoid and sigmoidal_envelope_results is not None:
+    if add_sigmoid and sigmoidal_envelope_results is not None and visibility.get("sigmoid", True):
         L = sigmoidal_envelope_results.get("L")
         R = sigmoidal_envelope_results.get("R")
         tau = sigmoidal_envelope_results.get("tau")
@@ -447,16 +427,15 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values
         plt.plot(x_sig, y_sig, 'c--', linewidth=2,
                     label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')                
 
-    # Difference curve (e.g., Lorentzian envelope - spline fit)
-    if diff_x is not None and diff_y is not None:
+    # Difference curve
+    if diff_x is not None and diff_y is not None and visibility.get("difference", True):
         plt.plot(diff_x, diff_y, 'm-', linewidth=1.5, label=diff_label)
 
-    # Colored metabolite regions as vertical spans
-    if show_regions:
+    # Metabolite regions
+    if visibility.get("regions", True):
         ax = plt.gca()
         cmap = plt.get_cmap('tab10')
-        region_names = list(METABOLITE_REGIONS.keys())
-        colors = [cmap(i % 10) for i in range(len(region_names))]
+        colors = [cmap(i % 10) for i in range(len(METABOLITE_REGIONS))]
         for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
             ax.axvspan(start, end, facecolor=colors[idx], alpha=0.25, edgecolor='none', label=region_name)
     
