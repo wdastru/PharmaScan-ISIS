@@ -381,7 +381,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
 
     return integrals
 
-def plot_data_with_spline(
+def plot_data(
     x, 
     y, 
     x_fit, 
@@ -1383,7 +1383,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             for name, z in analysis_results.items():
                 if "spline_fit_results" in z and z["spline_fit_results"]["fit_successful"]:
                     fit = z["spline_fit_results"]
-                    plot_data_with_spline(
+                    plot_data(
                         fit["x_sorted"], 
                         fit["y_sorted"],
                         fit["x_fit"], 
@@ -1664,7 +1664,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             analysis_results[name]["diff_y"] = diff_y
             if spline_fit_results["fit_successful"]:
                 analysis_results[name]["spline_fit_results"] = spline_fit_results
-                plot_data_with_spline(
+                plot_data(
                     x=spline_fit_results["x_sorted"],  
                     y=spline_fit_results["y_sorted"],
                     x_fit=spline_fit_results["x_fit"], 
