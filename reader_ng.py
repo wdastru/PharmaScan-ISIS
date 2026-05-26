@@ -340,14 +340,14 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
     
     return {region: _region_integral(bounds, x_fit, y_fit) for region, bounds in METABOLITE_REGIONS.items()}
 
-def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Values vs Saturation ppm",
+def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values vs Saturation ppm",
                           xlabel="Saturation ppm", ylabel="Max Value",
                           fit_label="", invert_x=True, 
                           add_lorentz=False, 
                           lorentzian_envelope_results=None, 
                           add_sigmoid=False, 
                           sigmoidal_envelope_results=None,
-                          ) -> Figure:
+                          show_regions=True) -> Figure:
     """
     Plot data points and a spline fit through them.
 
@@ -371,8 +371,9 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
         Label for the fitted curve (used in legend).
     invert_x : bool, default True
         If True, invert the x-axis (useful for ppm scales where high values are on the left).
+    show_regions : bool, default True
+        If True, draw vertical shaded spans for each region in METABOLITE_REGIONS, each with its own color.
     """
-    # Create the plot
     fig = plt.figure(figsize=(8, 5))
 
     # Data points with optional error bars
@@ -384,31 +385,59 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data = None, title="Max Valu
     # Spline fit
     plt.plot(x_fit, y_fit, 'r-', label=fit_label)
 
-    # ------------------- Lorentzian dip -------------------
+    # Lorentzian dip
     if add_lorentz:
-        A: float = lorentzian_envelope_results.get("A")
-        gamma: float = lorentzian_envelope_results.get("gamma")
+        A = lorentzian_envelope_results.get("A")
+        gamma = lorentzian_envelope_results.get("gamma")
         x_lor = lorentzian_envelope_results["x"]
         y_lor = lorentzian_envelope_results["y"]
         plt.plot(x_lor, y_lor, 'g--', linewidth=2,
                 label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
 
-    # ------------------- Sigmoid fit ----------------------
+    # Sigmoid fit
     if add_sigmoid:
-        L: float = sigmoidal_envelope_results.get("L")
-        R: float = sigmoidal_envelope_results.get("R")
-        tau: float = sigmoidal_envelope_results.get("tau")
+        L = sigmoidal_envelope_results.get("L")
+        R = sigmoidal_envelope_results.get("R")
+        tau = sigmoidal_envelope_results.get("tau")
         x_sig = sigmoidal_envelope_results["x"]
         y_sig = sigmoidal_envelope_results["y"]
         plt.plot(x_sig, y_sig, 'c--', linewidth=2,
                     label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')                
-                                
+
+    # ------------------- Metabolite regions (colored vertical spans) -------------------
+    if show_regions:
+        ax = plt.gca()
+        # Ottieni una lista di colori distinti (almeno tanti quante le regioni)
+        # Usiamo la mappa 'tab10' che ha 10 colori qualitativi
+        cmap = plt.get_cmap('tab10')
+        region_names = list(METABOLITE_REGIONS.keys())
+        n_regions = len(region_names)
+        colors = [cmap(i % 10) for i in range(n_regions)]  # cicla se più di 10 regioni
+        
+        for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
+            color = colors[idx]
+            alpha = 0.25  # semitrasparente
+            ax.axvspan(start, end, facecolor=color, alpha=alpha, edgecolor='none', label=region_name)
+        
+        # La legenda mostrerà automaticamente tutte le regioni perché abbiamo usato label=
+        # Per evitare duplicati (se la funzione viene chiamata più volte), possiamo gestire i doppioni,
+        # ma la creazione di una nuova figura ogni volta rende questo non necessario.
+        # Se si desidera un legenda più compatta, si può creare un unico handle raggruppato,
+        # ma il testo richiede colori separati per regione, quindi lasciamo così.
+        
+        # Se si vuole posizionare la legenda fuori dal grafico per non sovrapporsi, si può decommentare:
+        # ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        # Altrimenti, la legenda verrà inserita automaticamente con la chiamata a plt.legend() più avanti.
+        
     if invert_x:
         plt.gca().invert_xaxis()
+    
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.grid(True)
+    
+    # La legenda viene aggiunta una sola volta, includendo tutte le etichette (dati, fit, regioni)
     plt.legend()
     plt.show(block=False)
     return fig
