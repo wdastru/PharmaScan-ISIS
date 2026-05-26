@@ -335,8 +335,8 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
         mask = (x_fit >= bounds[0]) & (x_fit <= bounds[1])
         if not np.any(mask):
             return 0.0
-        bottom_area = np.trapezoid(y_fit[mask], x_fit[mask])
-        return bottom_area
+        area = np.trapezoid(y_fit[mask], x_fit[mask])
+        return area
     
     return {region: _region_integral(bounds, x_fit, y_fit) for region, bounds in METABOLITE_REGIONS.items()}
 
@@ -716,7 +716,7 @@ def load_spectra(folder: Path):
 
 def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
     """
-    Elabora ogni FID: rimozione filtro digitale, zero‑filling, line broadening,
+    Elabora ogni FID: rimozione filtro digitale, zero-filling, line broadening,
     FFT, correzione di fase automatica e inversione dell'asse.
 
     Parameters
@@ -911,13 +911,14 @@ def correct_sat_frequencies(
     """
     Corregge le frequenze di saturazione e le converte in ppm.
 
-    Modifica *in‑place* la lista sat_trans_hz:
+    Modifica *in-place* la lista sat_trans_hz:
     per ogni frequenza non nulla aggiunge il delta calcolato
     dallo scostamento del picco rispetto al work offset.
 
     Restituisce la lista delle frequenze corrette in ppm.
     """
     sat_trans_f1_ppm = [0.0] * len(sat_trans_hz)
+
     for i, (st_hz, idx) in enumerate(zip(sat_trans_hz, max_indexes)):
         delta = work_offset_hz[0] - uc.hz(idx)
         if st_hz != 0.0:
@@ -988,7 +989,7 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
 # ----------------------------------------------------------------------
 
 def _init_stats_lists(length: int) -> Dict[str, List[float]]:
-    """Create a dictionary of zero‑filled lists for statistical accumulation.
+    """Create a dictionary of zero-filled lists for statistical accumulation.
     
     Returns lists for:
         - max_indexes, max_vals, sat_trans_hz (averages)
@@ -1080,7 +1081,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
 
 def estimate_lorentzian_params(x_sorted: np.ndarray, y_sorted: np.ndarray):
     """
-    Estimate center (x0) and HWHM (gamma) for a 1‑Lorentzian dip
+    Estimate center (x0) and HWHM (gamma) for a 1-Lorentzian dip
     from sorted data.
     """
     y_min = np.min(y_sorted)
@@ -1324,7 +1325,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi usarla?", default=True)
         if use_cache:
             analysis_results = cached
-            # Ricrea i grafici degli Z‑spettri
+            # Ricrea i grafici degli Z-spettri
             for name, z in analysis_results.items():
                 if "spline_fit_results" in z and z["spline_fit_results"]["fit_successful"]:
                     fit = z["spline_fit_results"]
@@ -1527,10 +1528,43 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 z["bf1"]
             )
             
-            
+            # ------------------- Sigmoid upper envelope ----------------------
+            # Stima con centro fissato a 0 (modifica se vuoi centro libero)
+            L, R, tau = estimate_constrained_sigmoid(x_data=corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
+
+            x_sig = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), 200)
+            # For each value in corrected_ppm, find the index in x_sig where the element is closest to that value.
+            # np.abs(x_sig - val) computes the absolute differences between all points in x_sig and the current val.
+            # np.argmin returns the position (index) of the smallest difference, i.e., the closest match.
+            # The list comprehension collects these indices for all 19 elements of corrected_ppm.           
+            linspace_indices = [np.argmin(np.abs(x_sig - val)) for val in corrected_ppm]
+
+            y_sig = constrained_sigmoid(x_sig, L, R, tau, x0=0.0)
+            sigmoidal_envelope_results =  {
+                "L": L,
+                "R": R,
+                "tau": tau,
+                "x": x_sig,
+                "y": y_sig,
+                "fit_label": f'Sigmoid (L={L:.3f}, R={R:.3f}, τ={tau:.3f})',
+                "fit_successful": True,
+            }
+            analysis_results[name]["sigmoidal_envelope_results"] = sigmoidal_envelope_results
+            pass 
+            pass
+
+            # ----------------- Sigmoid correct z-specra data -----------------
+            # Create a new list of corrected_vals
+            corrected_vals: list[float] = [0.0] * len(z["max_vals"])
+
+            # Correct the max_vals values
+            for i, (idx, val) in enumerate(zip(linspace_indices,analysis_results[name]["max_vals"])):
+                corrected_vals[i] = val / analysis_results[name]["sigmoidal_envelope_results"]["y"][idx]
+            analysis_results[name]["corrected_max_vals"] = corrected_vals
+
             # ------------------- Lorentzian upper envelope -------------------
-            A, gamma = estimate_constrained_lorentzian(x_data=corrected_ppm, y_data=z["max_vals"])
-            y_min = np.min(z["max_vals"])
+            A, gamma = estimate_constrained_lorentzian(x_data=corrected_ppm, y_data=z["corrected_max_vals"])
+            y_min = np.min(z["corrected_max_vals"])
             x_lor = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), 200)
             y_lor = constrained_lorentzian(x_lor, A, gamma, y_min)
             lorentzian_envelope_results =  {
@@ -1543,24 +1577,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             }
             analysis_results[name]["lorentzian_envelope_results"] = lorentzian_envelope_results
 
-            # ------------------- Sigmoid upper envelope ----------------------
-            # Stima con centro fissato a 0 (modifica se vuoi centro libero)
-            L, R, tau = estimate_constrained_sigmoid(x_data=corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
-            x_sig = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), 200)
-            y_sig = constrained_sigmoid(x_sig, L, R, tau, x0=0.0)
-            sigmoidal_envelope_results =  {
-                "L": L,
-                "R": R,
-                "tau": tau,
-                "x": x_sig,
-                "y": y_sig,
-                "fit_label": f'Sigmoid (L={L:.3f}, R={R:.3f}, τ={tau:.3f})',
-                "fit_successful": True,
-            }
-            analysis_results[name]["sigmoidal_envelope_results"] = sigmoidal_envelope_results
-            
             # ------------------- Spline fit ----------------------
-            spline_fit_results = spline_fit(x=corrected_ppm, y=z["max_vals"])
+            spline_fit_results = spline_fit(x=corrected_ppm, y=z["corrected_max_vals"])
             if spline_fit_results["fit_successful"]:
                 analysis_results[name]["spline_fit_results"] = spline_fit_results
                 plot_data_with_spline(
@@ -1581,7 +1599,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 # ----------------------------------------------------------
                 integrals = compute_regions_integrals(
                     z["spline_fit_results"]["x_fit"], 
-                    z["spline_fit_results"]["y_fit"]
+                    z["lorentzian_envelope_results"]["y"] - z["spline_fit_results"]["y_fit"]
                 )
                 analysis_results[name]["integrals"] = integrals
                 
