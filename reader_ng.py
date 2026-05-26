@@ -1366,6 +1366,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         lorentzian_envelope_results=z.get("lorentzian_envelope_results"),
                         add_sigmoid=True,
                         sigmoidal_envelope_results=z.get("sigmoidal_envelope_results"),
+                        show_regions=True,
+                        diff_x=z.get("diff_x"),
+                        diff_y=z.get("diff_y"),
+                        diff_label="Lorentzian envelope - Spline fit"
                     )
             # Grafico a barre degli integrali
             plot_integrals_regions(
@@ -1626,6 +1630,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_x = spline_fit_results["x_fit"]
                     diff_y = interp_lor(diff_x) - spline_fit_results["y_fit"]
                     
+            analysis_results[name]["diff_x"] = diff_x
+            analysis_results[name]["diff_y"] = diff_y
             if spline_fit_results["fit_successful"]:
                 analysis_results[name]["spline_fit_results"] = spline_fit_results
                 plot_data_with_spline(
@@ -1640,7 +1646,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
                     title=name, invert_x=True,
                     show_regions=True,
-                    diff_x=diff_x, diff_y=diff_y, diff_label="Lorentzian envelope - Spline fit"
+                    diff_x=diff_x, 
+                    diff_y=diff_y, 
+                    diff_label="Lorentzian envelope - Spline fit"
                 )
 
                 # ----------------------------------------------------------
