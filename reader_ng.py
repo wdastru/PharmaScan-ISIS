@@ -42,15 +42,6 @@ METABOLITE_REGIONS: dict[str, List[float]] = {
 CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
 CACHE_DIR.mkdir(exist_ok=True)
 N_POINTS_FIT = 200
-# Configurazione predefinita per i grafici
-PLOT_VISIBILITY: Dict[str, bool] = {
-    "data": True,
-    "spline": True,
-    "lorentzian": True,
-    "sigmoid": True,
-    "difference": True,
-    "regions": True,
-}
 
 def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
@@ -412,7 +403,7 @@ def plot_data_with_spline(
 ) -> Figure:
     # Se non fornito, usa i default globali
     if visibility is None:
-        visibility = PLOT_VISIBILITY.copy()
+        visibility = get_default_visibility()
     
     fig = plt.figure(figsize=(8, 5))
 
