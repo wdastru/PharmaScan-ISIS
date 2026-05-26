@@ -120,6 +120,17 @@ def ensure_config_dir() -> None:
     """Crea la cartella delle configurazioni se non esiste."""
     CONFIG_DIR.mkdir(exist_ok=True)
 
+def get_default_visibility() -> Dict[str, bool]:
+    return {
+        "data": True,
+        "spline": True,
+        "lorentzian": True,
+        "sigmoid": True,
+        "difference": True,
+        "regions": True,
+        "corrected": True,
+    }
+
 def list_configs() -> List[Path]:
     """Restituisce la lista dei file di configurazione (.json) nella cartella configs."""
     ensure_config_dir()
@@ -1110,6 +1121,21 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
     else:
         config_data["ppm_missing"] = False
     
+    # ========== merge / add plot_visibility ===============
+    if "plot_visibility" in config_data:
+        default_vis = get_default_visibility()
+        current_vis = config_data["plot_visibility"]
+        # add missing keys from default (e.g. when new plot elements are added)
+        for key, val in default_vis.items():
+            if key not in current_vis:
+                current_vis[key] = val
+                modified = True
+        config_data["plot_visibility"] = current_vis
+    else:
+        config_data["plot_visibility"] = get_default_visibility()
+        modified = True
+    # ======================================================
+                
     # Salva solo se ci sono state modifiche
     if modified:
         save_config(config_name, config_data)
@@ -1381,7 +1407,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         show_regions=True,
                         diff_x=z.get("diff_x"),
                         diff_y=z.get("diff_y"),
-                        diff_label="Lorentzian envelope - Spline fit"
+                        diff_label="Lorentzian envelope - Spline fit",
+                        visibility=config.get("plot_visibility", get_default_visibility())
                     )
             # Grafico a barre degli integrali
             plot_integrals_regions(
@@ -1661,7 +1688,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     show_regions=True,
                     diff_x=diff_x, 
                     diff_y=diff_y, 
-                    diff_label="Lorentzian envelope - Spline fit"
+                    diff_label="Lorentzian envelope - Spline fit",
+                    visibility=config.get("plot_visibility", get_default_visibility())
                 )
 
                 # ----------------------------------------------------------
