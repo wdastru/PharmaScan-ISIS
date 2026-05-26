@@ -347,32 +347,45 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values
                           lorentzian_envelope_results=None, 
                           add_sigmoid=False, 
                           sigmoidal_envelope_results=None,
-                          show_regions=True) -> Figure:
+                          show_regions=True,
+                          diff_x=None, diff_y=None, diff_label="Difference (Envelope - Spline)") -> Figure:
     """
-    Plot data points and a spline fit through them.
+    Plot data points and a spline fit through them, with optional envelope curves,
+    metabolite regions, and a difference curve.
 
     Parameters
     ----------
-    x : array-like
-        x-coordinates of the data points.
-    y : array-like
-        y-coordinates of the data points.
-    x_fit : array-like
-        x-coordinates of the fitted curve.
-    y_fit : array-like
-        y-coordinates of the fitted curve.
-    title : str, optional
-        Title of the plot.
-    xlabel : str, optional
-        Label for the x-axis.
-    ylabel : str, optional
-        Label for the y-axis.
-    fit_label : str, optional
-        Label for the fitted curve (used in legend).
+    x, y : array-like
+        Data points.
+    x_fit, y_fit : array-like
+        Fitted curve (spline).
+    y_std_data : optional
+        Standard deviations for error bars (used for 'reference' and 'avg' titles).
+    title, xlabel, ylabel : str
+        Labels.
+    fit_label : str
+        Label for the fitted curve.
     invert_x : bool, default True
-        If True, invert the x-axis (useful for ppm scales where high values are on the left).
+        Invert x-axis (typical for ppm).
+    add_lorentz : bool
+        If True, plot the Lorentzian envelope.
+    lorentzian_envelope_results : dict, optional
+        Must contain keys 'A', 'gamma', 'x', 'y'.
+    add_sigmoid : bool
+        If True, plot the sigmoid envelope.
+    sigmoidal_envelope_results : dict, optional
+        Must contain keys 'L', 'R', 'tau', 'x', 'y'.
     show_regions : bool, default True
-        If True, draw vertical shaded spans for each region in METABOLITE_REGIONS, each with its own color.
+        If True, display vertical shaded bands for each region in METABOLITE_REGIONS.
+    diff_x, diff_y : array-like, optional
+        Data for an additional curve (e.g., envelope - spline).
+    diff_label : str
+        Label for the difference curve.
+
+    Returns
+    -------
+    Figure
+        The matplotlib figure object.
     """
     fig = plt.figure(figsize=(8, 5))
 
@@ -385,8 +398,8 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values
     # Spline fit
     plt.plot(x_fit, y_fit, 'r-', label=fit_label)
 
-    # Lorentzian dip
-    if add_lorentz:
+    # Lorentzian envelope
+    if add_lorentz and lorentzian_envelope_results is not None:
         A = lorentzian_envelope_results.get("A")
         gamma = lorentzian_envelope_results.get("gamma")
         x_lor = lorentzian_envelope_results["x"]
@@ -394,8 +407,8 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values
         plt.plot(x_lor, y_lor, 'g--', linewidth=2,
                 label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
 
-    # Sigmoid fit
-    if add_sigmoid:
+    # Sigmoid envelope
+    if add_sigmoid and sigmoidal_envelope_results is not None:
         L = sigmoidal_envelope_results.get("L")
         R = sigmoidal_envelope_results.get("R")
         tau = sigmoidal_envelope_results.get("tau")
@@ -404,31 +417,19 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values
         plt.plot(x_sig, y_sig, 'c--', linewidth=2,
                     label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')                
 
-    # ------------------- Metabolite regions (colored vertical spans) -------------------
+    # Difference curve (e.g., Lorentzian envelope - spline fit)
+    if diff_x is not None and diff_y is not None:
+        plt.plot(diff_x, diff_y, 'm-', linewidth=1.5, label=diff_label)
+
+    # Colored metabolite regions as vertical spans
     if show_regions:
         ax = plt.gca()
-        # Ottieni una lista di colori distinti (almeno tanti quante le regioni)
-        # Usiamo la mappa 'tab10' che ha 10 colori qualitativi
         cmap = plt.get_cmap('tab10')
         region_names = list(METABOLITE_REGIONS.keys())
-        n_regions = len(region_names)
-        colors = [cmap(i % 10) for i in range(n_regions)]  # cicla se più di 10 regioni
-        
+        colors = [cmap(i % 10) for i in range(len(region_names))]
         for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
-            color = colors[idx]
-            alpha = 0.25  # semitrasparente
-            ax.axvspan(start, end, facecolor=color, alpha=alpha, edgecolor='none', label=region_name)
-        
-        # La legenda mostrerà automaticamente tutte le regioni perché abbiamo usato label=
-        # Per evitare duplicati (se la funzione viene chiamata più volte), possiamo gestire i doppioni,
-        # ma la creazione di una nuova figura ogni volta rende questo non necessario.
-        # Se si desidera un legenda più compatta, si può creare un unico handle raggruppato,
-        # ma il testo richiede colori separati per regione, quindi lasciamo così.
-        
-        # Se si vuole posizionare la legenda fuori dal grafico per non sovrapporsi, si può decommentare:
-        # ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        # Altrimenti, la legenda verrà inserita automaticamente con la chiamata a plt.legend() più avanti.
-        
+            ax.axvspan(start, end, facecolor=colors[idx], alpha=0.25, edgecolor='none', label=region_name)
+    
     if invert_x:
         plt.gca().invert_xaxis()
     
@@ -436,8 +437,6 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.grid(True)
-    
-    # La legenda viene aggiunta una sola volta, includendo tutte le etichette (dati, fit, regioni)
     plt.legend()
     plt.show(block=False)
     return fig
@@ -1608,6 +1607,25 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # ------------------- Spline fit ----------------------
             spline_fit_results = spline_fit(x=corrected_ppm, y=z["corrected_max_vals"])
+
+            # --- Calcolo della curva differenza (Lorentzian envelope - spline fit) ---
+            diff_x = None
+            diff_y = None
+            if lorentzian_envelope_results is not None and spline_fit_results.get("fit_successful", False):
+                # Le due curve condividono lo stesso array x (np.linspace sugli stessi estremi)
+                # Verifichiamo rapidamente che le lunghezze coincidano; in caso contrario interpola
+                if (len(lorentzian_envelope_results["x"]) == len(spline_fit_results["y_fit"]) and
+                    np.allclose(lorentzian_envelope_results["x"], spline_fit_results["x_fit"], atol=1e-6)):
+                    diff_x = lorentzian_envelope_results["x"]
+                    diff_y = lorentzian_envelope_results["y"] - spline_fit_results["y_fit"]
+                else:
+                    # Interpolazione di sicurezza
+                    from scipy.interpolate import interp1d
+                    interp_lor = interp1d(lorentzian_envelope_results["x"], lorentzian_envelope_results["y"],
+                                        kind='linear', fill_value='extrapolate')
+                    diff_x = spline_fit_results["x_fit"]
+                    diff_y = interp_lor(diff_x) - spline_fit_results["y_fit"]
+                    
             if spline_fit_results["fit_successful"]:
                 analysis_results[name]["spline_fit_results"] = spline_fit_results
                 plot_data_with_spline(
@@ -1620,16 +1638,19 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     add_sigmoid=True,
                     sigmoidal_envelope_results=sigmoidal_envelope_results,
                     y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
-                    title=name, invert_x=True
+                    title=name, invert_x=True,
+                    show_regions=True,
+                    diff_x=diff_x, diff_y=diff_y, diff_label="Lorentzian envelope - Spline fit"
                 )
 
                 # ----------------------------------------------------------
                 # Calculate integrals
                 # ----------------------------------------------------------
-                integrals = compute_regions_integrals(
-                    z["spline_fit_results"]["x_fit"], 
-                    z["lorentzian_envelope_results"]["y"] - z["spline_fit_results"]["y_fit"]
-                )
+                integrals = compute_regions_integrals(diff_x, diff_y)
+                #integrals = compute_regions_integrals(
+                #    z["spline_fit_results"]["x_fit"], 
+                #    z["lorentzian_envelope_results"]["y"] - z["spline_fit_results"]["y_fit"]
+                #)
                 analysis_results[name]["integrals"] = integrals
                 
             else:
