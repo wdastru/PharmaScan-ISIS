@@ -391,15 +391,23 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
     return integrals
 
 def plot_data_with_spline(
-    x, y, x_fit, y_fit, y_std_data=None, title="Max Values vs Saturation ppm",
-    xlabel="Saturation ppm", ylabel="Max Value",
-    fit_label="", invert_x=True, 
+    x, 
+    y, 
+    x_fit, 
+    y_fit, 
+    y_std_data=None, 
+    title="Max Values vs Saturation ppm",
+    xlabel="Saturation ppm", 
+    ylabel="Max Value",
+    fit_label="", 
+    invert_x=True, 
     add_lorentz=False, 
     lorentzian_envelope_results=None, 
     add_sigmoid=False, 
     sigmoidal_envelope_results=None,
-    show_regions=True,  # opzionale, ma puoi fonderlo con visibility
-    diff_x=None, diff_y=None, diff_label="Difference (Envelope - Spline)",
+    diff_x=None, 
+    diff_y=None, 
+    diff_label="Difference (Envelope - Spline)",
     visibility: Optional[Dict[str, bool]] = None
 ) -> Figure:
     # Se non fornito, usa i default globali
@@ -1685,7 +1693,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
                     title=name, 
                     invert_x=True,
-                    show_regions=True,
                     diff_x=diff_x, 
                     diff_y=diff_y, 
                     diff_label="Lorentzian envelope - Spline fit",
