@@ -1581,7 +1581,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # ----------------------------------------------------------------------
     for name, z in analysis_results.items():
         if len(z["sat_trans_hz"]) == len(z["max_vals"]):
-            corrected_ppm  = correct_sat_frequencies(
+            zero_corrected_ppm  = correct_sat_frequencies(
                 z["sat_trans_hz"], 
                 z["max_indexes"], 
                 z["work_offset_hz"], 
@@ -1590,17 +1590,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             )
 
             # Common x grid for all curves
-            x_common = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), N_POINTS_FIT)
+            x_common = np.linspace(np.min(zero_corrected_ppm), np.max(zero_corrected_ppm), N_POINTS_FIT)
             
             # ------------------- Sigmoid upper envelope ----------------------
             # Stima con centro fissato a 0 (modifica se vuoi centro libero)
-            L, R, tau = estimate_constrained_sigmoid(x_data=corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
+            L, R, tau = estimate_constrained_sigmoid(x_data=zero_corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
 
-            # For each value in corrected_ppm, find the index in x_common where the element is closest to that value.
+            # For each value in zero_corrected_ppm, find the index in x_common where the element is closest to that value.
             # np.abs(x_common - val) computes the absolute differences between all points in x_common and the current val.
             # np.argmin returns the position (index) of the smallest difference, i.e., the closest match.
-            # The list comprehension collects these indices for all 19 elements of corrected_ppm.           
-            linspace_indices = [np.argmin(np.abs(x_common - val)) for val in corrected_ppm]
+            # The list comprehension collects these indices for all 19 elements of zero_corrected_ppm.           
+            linspace_indices = [np.argmin(np.abs(x_common - val)) for val in zero_corrected_ppm]
 
             y_sig = constrained_sigmoid(x_common, L, R, tau, x0=0.0)
             sigmoidal_envelope_results =  {
@@ -1617,17 +1617,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             pass
 
             # ----------------- Sigmoid correct z-specra data -----------------
-            # Create a new list of corrected_vals
-            corrected_vals: list[float] = [0.0] * len(z["max_vals"])
+            # Create a new list of sigmoid_corrected_max_vals
+            sigmoid_corrected_max_vals: list[float] = [0.0] * len(z["max_vals"])
 
             # Correct the max_vals values
             for i, (idx, val) in enumerate(zip(linspace_indices,analysis_results[name]["max_vals"])):
-                corrected_vals[i] = val / analysis_results[name]["sigmoidal_envelope_results"]["y"][idx]
-            analysis_results[name]["corrected_max_vals"] = corrected_vals
+                sigmoid_corrected_max_vals[i] = val / analysis_results[name]["sigmoidal_envelope_results"]["y"][idx]
+            analysis_results[name]["sigmoid_corrected_max_vals"] = sigmoid_corrected_max_vals
 
             # ------------------- Lorentzian upper envelope -------------------
-            A, gamma = estimate_constrained_lorentzian(x_data=corrected_ppm, y_data=z["corrected_max_vals"])
-            y_min = np.min(z["corrected_max_vals"])
+            A, gamma = estimate_constrained_lorentzian(x_data=zero_corrected_ppm, y_data=z["sigmoid_corrected_max_vals"])
+            y_min = np.min(z["sigmoid_corrected_max_vals"])
             y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
             lorentzian_envelope_results =  {
                 "A": A,
@@ -1640,7 +1640,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             analysis_results[name]["lorentzian_envelope_results"] = lorentzian_envelope_results
 
             # ------------------- Spline fit ----------------------
-            spline_fit_results = spline_fit(x=corrected_ppm, y=z["corrected_max_vals"], x_fit=x_common)
+            spline_fit_results = spline_fit(x=zero_corrected_ppm, y=z["sigmoid_corrected_max_vals"], x_fit=x_common)
 
             # --- Calcolo della curva differenza (Lorentzian envelope - spline fit) ---
             diff_x = None
