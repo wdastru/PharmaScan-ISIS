@@ -39,6 +39,7 @@ METABOLITE_REGIONS: dict[str, List[float]] = {
 }
 CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
 CACHE_DIR.mkdir(exist_ok=True)
+N_POINTS_FIT = 200
 
 def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
@@ -441,7 +442,7 @@ def plot_data_with_spline(x, y, x_fit, y_fit, y_std_data=None, title="Max Values
     plt.show(block=False)
     return fig
 
-def spline_fit(x, y, n_points=200) -> Dict[str, Any]:
+def spline_fit(x, y, n_points=N_POINTS_FIT) -> Dict[str, Any]:
     """
     Esegue lo spline fit dei dati.
 
@@ -1567,7 +1568,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # Stima con centro fissato a 0 (modifica se vuoi centro libero)
             L, R, tau = estimate_constrained_sigmoid(x_data=corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
 
-            x_sig = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), 200)
+            x_sig = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), N_POINTS_FIT)
             # For each value in corrected_ppm, find the index in x_sig where the element is closest to that value.
             # np.abs(x_sig - val) computes the absolute differences between all points in x_sig and the current val.
             # np.argmin returns the position (index) of the smallest difference, i.e., the closest match.
@@ -1600,7 +1601,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # ------------------- Lorentzian upper envelope -------------------
             A, gamma = estimate_constrained_lorentzian(x_data=corrected_ppm, y_data=z["corrected_max_vals"])
             y_min = np.min(z["corrected_max_vals"])
-            x_lor = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), 200)
+            x_lor = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), N_POINTS_FIT)
             y_lor = constrained_lorentzian(x_lor, A, gamma, y_min)
             lorentzian_envelope_results =  {
                 "A": A,
