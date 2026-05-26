@@ -460,46 +460,38 @@ def plot_data_with_spline(
     plt.show(block=False)
     return fig
 
-def spline_fit(x, y, n_points=N_POINTS_FIT) -> Dict[str, Any]:
+def spline_fit(x, y, x_fit=None, n_points=N_POINTS_FIT) -> Dict[str, Any]:
     """
-    Esegue lo spline fit dei dati.
-
     Parameters
     ----------
     x, y : array-like
-        Dati originali.
+        Data points.
+    x_fit : array-like, optional
+        Pre‑computed x values for the fitted curve. If None, generate with np.linspace.
     n_points : int
-        Numero di punti per la curva fitted.
-
-    Returns
-    -------
-    dict con chiavi:
-        'x_sorted' : np.ndarray
-        'y_sorted' : np.ndarray
-        'x_fit' : np.ndarray o None se fit fallito
-        'y_fit' : np.ndarray o None se fit fallito
-        'fit_label' : str (vuota se fallito)
-        'fit_successful' : bool
+        Only used if x_fit is None.
     """
     x = np.asarray(x)
     y = np.asarray(y)
     sort_idx = np.argsort(x)
     x_sorted = x[sort_idx]
     y_sorted = y[sort_idx]
+
     fit_successful = False
-    x_fit = None
     y_fit = None
     fit_label = ""
     try:
         spline = PchipInterpolator(x_sorted, y_sorted)
-        fit_successful = True
-        x_fit = np.linspace(x_sorted.min(), x_sorted.max(), n_points)
+        if x_fit is None:
+            x_fit = np.linspace(x_sorted.min(), x_sorted.max(), n_points)
         y_fit = spline(x_fit)
-        fit_label = f"Spline Fit"
+        fit_successful = True
+        fit_label = "Spline Fit"
     except ImportError:
         print("scipy not available - cannot perform spline fit.")
     except Exception as e:
         print(f"Spline fit failed: {e}")
+
     return {
         'x_sorted': x_sorted, 'y_sorted': y_sorted,
         'x_fit': x_fit, 'y_fit': y_fit,
@@ -1403,7 +1395,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         lorentzian_envelope_results=z.get("lorentzian_envelope_results"),
                         add_sigmoid=True,
                         sigmoidal_envelope_results=z.get("sigmoidal_envelope_results"),
-                        show_regions=True,
                         diff_x=z.get("diff_x"),
                         diff_y=z.get("diff_y"),
                         diff_label="Lorentzian envelope - Spline fit",
@@ -1597,24 +1588,26 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 z["uc"], 
                 z["bf1"]
             )
+
+            # Common x grid for all curves
+            x_common = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), N_POINTS_FIT)
             
             # ------------------- Sigmoid upper envelope ----------------------
             # Stima con centro fissato a 0 (modifica se vuoi centro libero)
             L, R, tau = estimate_constrained_sigmoid(x_data=corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
 
-            x_sig = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), N_POINTS_FIT)
-            # For each value in corrected_ppm, find the index in x_sig where the element is closest to that value.
-            # np.abs(x_sig - val) computes the absolute differences between all points in x_sig and the current val.
+            # For each value in corrected_ppm, find the index in x_common where the element is closest to that value.
+            # np.abs(x_common - val) computes the absolute differences between all points in x_common and the current val.
             # np.argmin returns the position (index) of the smallest difference, i.e., the closest match.
             # The list comprehension collects these indices for all 19 elements of corrected_ppm.           
-            linspace_indices = [np.argmin(np.abs(x_sig - val)) for val in corrected_ppm]
+            linspace_indices = [np.argmin(np.abs(x_common - val)) for val in corrected_ppm]
 
-            y_sig = constrained_sigmoid(x_sig, L, R, tau, x0=0.0)
+            y_sig = constrained_sigmoid(x_common, L, R, tau, x0=0.0)
             sigmoidal_envelope_results =  {
                 "L": L,
                 "R": R,
                 "tau": tau,
-                "x": x_sig,
+                "x": x_common,
                 "y": y_sig,
                 "fit_label": f'Sigmoid (L={L:.3f}, R={R:.3f}, τ={tau:.3f})',
                 "fit_successful": True,
@@ -1635,12 +1628,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # ------------------- Lorentzian upper envelope -------------------
             A, gamma = estimate_constrained_lorentzian(x_data=corrected_ppm, y_data=z["corrected_max_vals"])
             y_min = np.min(z["corrected_max_vals"])
-            x_lor = np.linspace(np.min(corrected_ppm), np.max(corrected_ppm), N_POINTS_FIT)
-            y_lor = constrained_lorentzian(x_lor, A, gamma, y_min)
+            y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
             lorentzian_envelope_results =  {
                 "A": A,
                 "gamma": gamma,
-                "x": x_lor,
+                "x": x_common,
                 "y": y_lor,
                 "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
                 "fit_successful": True,
@@ -1648,7 +1640,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             analysis_results[name]["lorentzian_envelope_results"] = lorentzian_envelope_results
 
             # ------------------- Spline fit ----------------------
-            spline_fit_results = spline_fit(x=corrected_ppm, y=z["corrected_max_vals"])
+            spline_fit_results = spline_fit(x=corrected_ppm, y=z["corrected_max_vals"], x_fit=x_common)
 
             # --- Calcolo della curva differenza (Lorentzian envelope - spline fit) ---
             diff_x = None
