@@ -1358,10 +1358,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 if "spline_fit_results" in z and z["spline_fit_results"]["fit_successful"]:
                     fit = z["spline_fit_results"]
                     plot_data_with_spline(
-                        fit["x_sorted"], fit["y_sorted"],
-                        fit["x_fit"], fit["y_fit"],
+                        fit["x_sorted"], 
+                        fit["y_sorted"],
+                        fit["x_fit"], 
+                        fit["y_fit"],
                         y_std_data=z.get("sd_max_vals"),
-                        title=name, invert_x=True,
+                        title=name, 
+                        invert_x=True,
                         add_lorentz=True,
                         lorentzian_envelope_results=z.get("lorentzian_envelope_results"),
                         add_sigmoid=True,
@@ -1644,7 +1647,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     add_sigmoid=True,
                     sigmoidal_envelope_results=sigmoidal_envelope_results,
                     y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
-                    title=name, invert_x=True,
+                    title=name, 
+                    invert_x=True,
                     show_regions=True,
                     diff_x=diff_x, 
                     diff_y=diff_y, 
