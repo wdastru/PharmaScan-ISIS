@@ -87,7 +87,7 @@ def load_cache(config_name: str, config: Dict[str, Any]) -> Optional[dict]:
     try:
         payload = load(cache_path)
         current_key = _build_cache_key(config)
-        if payload["key"] == current_key:
+        if payload.get("key") == current_key:
             return payload["analysis_results"]
         else:
             print(f"Cache obsoleta per '{config_name}'.")
@@ -225,52 +225,27 @@ def find_maximum(arr: np.ndarray,
     return float(max_val), int(max_idx)
 
 def parameter_extract(file_path: Path, PARAMETER: str) -> List[float]:
-    """
-    Extract numerical values following a Bruker parameter header in a text file
-    (e.g., method).
-
-    Expected format:
-        ##$PARAMETER= ( N )
-        val1 val2 ... valN
-
-    Parameters
-    ----------
-    file_path : Path
-        Path to the file (e.g., method).
-    PARAMETER : str
-        Parameter name (e.g., "PVM_SatTransFL").
-
-    Returns
-    -------
-    List[float]
-        List of N numerical values.
-
-    Raises
-    ------
-    ValueError
-        If the header is not found or if fewer numbers than N are extracted.
-    """
     if not file_path.exists():
         raise FileNotFoundError(f"{file_path} not found.")
     text = file_path.read_text(encoding="utf-8", errors="ignore")
 
-    # Look for the parameter header: ##$PARAMETER= ( N )
-    hdr_pattern = rf"##\${PARAMETER}=\(\s*(?P<N>\d+)\s*\)"
-    hdr_match = re.search(hdr_pattern, text)
-    if not hdr_match:
+    # Look for the header and also capture the block up to the next '##$'
+    hdr_pattern = rf"##\${PARAMETER}=\(\s*(?P<N>\d+)\s*\)\s*\n(?P<block>.*?)(?=\n##\$|\Z)"
+    match = re.search(hdr_pattern, text, re.DOTALL)
+    if not match:
         raise ValueError(f"Header '##${PARAMETER}=( N )' non trovato in {file_path}.")
-    N = int(hdr_match.group("N"))
+
+    N = int(match.group("N"))
+    block = match.group("block")
     print(f"{PARAMETER} dimension: {N}")
 
-    # The rest of the text after the header
-    start_pos = hdr_match.end()
-    tail = text[start_pos:]
-
-    # Extract all numbers (integers or floats, including scientific notation)
+    # Extract numbers only from this block
     num_pattern = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
-    vals = re.findall(num_pattern, tail)
+    vals = re.findall(num_pattern, block)
     if len(vals) < N:
-        raise ValueError(f"Trovati solo {len(vals)} numeri, attesi {N}.")
+        raise ValueError(f"Trovati solo {len(vals)} numeri nel blocco, attesi {N}.")
+    if len(vals) > N:
+        print(f"Attenzione: trovati {len(vals)} numeri nel blocco (attesi {N}), uso i primi {N}.")
     return [float(v) for v in vals[:N]]
 
 def apply_phase(data: np.ndarray, p0: float, p1: float) -> np.ndarray:
@@ -313,6 +288,8 @@ def show_phase(data: np.ndarray, p0: float, p1: float) -> None:
 def ppm_to_index(uc: Any, user_ppm: float) -> int:
     """
     Convert a ppm value to the nearest index on the frequency axis.
+    If user_ppm is outside the spectrum, a warning is printed but the
+    nearest valid index is still returned.
 
     Parameters
     ----------
@@ -327,6 +304,12 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
         Corresponding index.
     """
     ppm_axis = uc.ppm_scale()
+    if user_ppm < ppm_axis.min() or user_ppm > ppm_axis.max():
+        print(
+            f"Warning: ppm {user_ppm} is outside the spectrum range "
+            f"({ppm_axis.min():.2f} - {ppm_axis.max():.2f}). "
+            "Using the nearest point."
+        )
     return int(np.abs(ppm_axis - user_ppm).argmin())
 
 def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str, float]:
@@ -369,13 +352,6 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
             y_end = np.interp(end, x_fit, y_fit)
             x_inside = np.concatenate((x_inside, [end]))
             y_inside = np.concatenate((y_inside, [y_end]))
-
-        # Mantieni l'ordinamento crescente (x_fit è già crescente, ma dopo le 
-        # aggiunte va riordinato)
-        # Probabilmente inutile... 
-        sort_idx = np.argsort(x_inside)
-        x_inside = x_inside[sort_idx]
-        y_inside = y_inside[sort_idx]
 
         # Calcola l'integrale con il metodo dei trapezi
         area = np.trapezoid(y_inside, x_inside)
@@ -486,15 +462,16 @@ def spline_fit(x, y, x_fit=None, n_points=N_POINTS_FIT) -> Dict[str, Any]:
         y_fit = spline(x_fit)
         fit_successful = True
         fit_label = "Spline Fit"
-    except ImportError:
-        print("scipy not available - cannot perform spline fit.")
     except Exception as e:
         print(f"Spline fit failed: {e}")
 
     return {
-        'x': x, 'y': y,
-        'x_fit': x_fit, 'y_fit': y_fit,
-        'fit_label': fit_label, 'fit_successful': fit_successful
+        'x': x, 
+        'y': y,
+        'x_fit': x_fit, 
+        'y_fit': y_fit,
+        'fit_label': fit_label, 
+        'fit_successful': fit_successful
     }
 
 def plot_integrals_regions(
@@ -895,7 +872,7 @@ def find_max_vals(spectra, start_idx, end_idx):
     # ---- Find maxima in the selected range ----
     max_vals: List[float] = []
     max_indexes: List[int] = []
-    global_max: float = 0.0
+    global_max: float = float('-inf')
     global_min: float = float('inf')
     for exp_idx, spec in spectra.items():
         val, idx = find_maximum(spec, start=start_idx, end=end_idx)
@@ -1131,42 +1108,6 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         save_config(config_name, config_data)
         
     return config_data
-
-def estimate_lorentzian_params(x: np.ndarray, y: np.ndarray):
-    """
-    Estimate center (x0) and HWHM (gamma) for a 1-Lorentzian dip
-    from sorted data.
-    """
-    y_min = np.min(y)
-    y_max = np.max(y)
-    # Center at the point with minimum y
-    idx_min = np.argmin(y)
-    x0 = x[idx_min]
-
-    # Half-depth level: y = y_min + (y_max - y_min)/2
-    half_level = y_min + (y_max - y_min) / 2.0
-
-    # Find left and right points where y ≈ half_level
-    # (simple linear interpolation)
-    def get_crossing(x, y, level):
-        """Find x where y crosses level using linear interpolation."""
-        idx = np.where(np.diff(np.sign(y - level)))[0]
-        if len(idx) == 0:
-            return None
-        i = idx[0]
-        x_cross = x[i] + (x[i+1] - x[i]) * (level - y[i]) / (y[i+1] - y[i])
-        return x_cross
-
-    x_left = get_crossing(x[:idx_min+1], y[:idx_min+1], half_level)
-    x_right = get_crossing(x[idx_min:], y[idx_min:], half_level)
-
-    if x_left is None or x_right is None:
-        # Fallback: gamma = 0.1 * (x_max - x_min)
-        gamma = 0.1 * (x[-1] - x[0])
-    else:
-        gamma = (x_right - x_left) / 2.0   # HWHM
-
-    return x0, gamma
 
 def constrained_lorentzian(x, A, gamma, y_min):
     """Funzione di comodo per tracciare la curva ottimale."""
