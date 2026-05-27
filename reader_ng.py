@@ -370,7 +370,9 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
             x_inside = np.concatenate((x_inside, [end]))
             y_inside = np.concatenate((y_inside, [y_end]))
 
-        # Mantieni l'ordinamento crescente (x_fit è già crescente, ma dopo le aggiunte va riordinato)
+        # Mantieni l'ordinamento crescente (x_fit è già crescente, ma dopo le 
+        # aggiunte va riordinato)
+        # Probabilmente inutile... 
         sort_idx = np.argsort(x_inside)
         x_inside = x_inside[sort_idx]
         y_inside = y_inside[sort_idx]
@@ -473,17 +475,14 @@ def spline_fit(x, y, x_fit=None, n_points=N_POINTS_FIT) -> Dict[str, Any]:
     """
     x = np.asarray(x)
     y = np.asarray(y)
-    sort_idx = np.argsort(x)
-    x_sorted = x[sort_idx]
-    y_sorted = y[sort_idx]
-
+    
     fit_successful = False
     y_fit = None
     fit_label = ""
     try:
-        spline = PchipInterpolator(x_sorted, y_sorted)
+        spline = PchipInterpolator(x, y)
         if x_fit is None:
-            x_fit = np.linspace(x_sorted.min(), x_sorted.max(), n_points)
+            x_fit = np.linspace(x.min(), x.max(), n_points)
         y_fit = spline(x_fit)
         fit_successful = True
         fit_label = "Spline Fit"
@@ -493,7 +492,7 @@ def spline_fit(x, y, x_fit=None, n_points=N_POINTS_FIT) -> Dict[str, Any]:
         print(f"Spline fit failed: {e}")
 
     return {
-        'x_sorted': x_sorted, 'y_sorted': y_sorted,
+        'x': x, 'y': y,
         'x_fit': x_fit, 'y_fit': y_fit,
         'fit_label': fit_label, 'fit_successful': fit_successful
     }
@@ -1133,16 +1132,16 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         
     return config_data
 
-def estimate_lorentzian_params(x_sorted: np.ndarray, y_sorted: np.ndarray):
+def estimate_lorentzian_params(x: np.ndarray, y: np.ndarray):
     """
     Estimate center (x0) and HWHM (gamma) for a 1-Lorentzian dip
     from sorted data.
     """
-    y_min = np.min(y_sorted)
-    y_max = np.max(y_sorted)
+    y_min = np.min(y)
+    y_max = np.max(y)
     # Center at the point with minimum y
-    idx_min = np.argmin(y_sorted)
-    x0 = x_sorted[idx_min]
+    idx_min = np.argmin(y)
+    x0 = x[idx_min]
 
     # Half-depth level: y = y_min + (y_max - y_min)/2
     half_level = y_min + (y_max - y_min) / 2.0
@@ -1158,12 +1157,12 @@ def estimate_lorentzian_params(x_sorted: np.ndarray, y_sorted: np.ndarray):
         x_cross = x[i] + (x[i+1] - x[i]) * (level - y[i]) / (y[i+1] - y[i])
         return x_cross
 
-    x_left = get_crossing(x_sorted[:idx_min+1], y_sorted[:idx_min+1], half_level)
-    x_right = get_crossing(x_sorted[idx_min:], y_sorted[idx_min:], half_level)
+    x_left = get_crossing(x[:idx_min+1], y[:idx_min+1], half_level)
+    x_right = get_crossing(x[idx_min:], y[idx_min:], half_level)
 
     if x_left is None or x_right is None:
         # Fallback: gamma = 0.1 * (x_max - x_min)
-        gamma = 0.1 * (x_sorted[-1] - x_sorted[0])
+        gamma = 0.1 * (x[-1] - x[0])
     else:
         gamma = (x_right - x_left) / 2.0   # HWHM
 
@@ -1384,8 +1383,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 if "spline_fit_results" in z and z["spline_fit_results"]["fit_successful"]:
                     fit = z["spline_fit_results"]
                     plot_data(
-                        fit["x_sorted"], 
-                        fit["y_sorted"],
+                        fit["x"], 
+                        fit["y"],
                         fit["x_fit"], 
                         fit["y_fit"],
                         y_std_data=z.get("sd_max_vals"),
@@ -1596,6 +1595,18 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 z["bf1"]
             )
 
+            # ----------------------------------------------------------------------
+            # correct_sat_frequencies(...) può in linea di principio cambiare 
+            # l'ordine dei dati. Riordina dopo la correzione in modo che 
+            # zero_corrected_ppm sia crescente
+            # ----------------------------------------------------------------------
+            combined = list(zip(zero_corrected_ppm, z["sat_trans_hz"], z["max_indexes"], z["max_vals"]))
+            combined.sort()   # ordina per zero_corrected_ppm (primo elemento)
+            (zero_corrected_ppm[:],
+            z["sat_trans_hz"][:],
+            z["max_indexes"][:],
+            z["max_vals"][:]) = zip(*combined)            
+
             # Common x grid for all curves
             x_common = np.linspace(np.min(zero_corrected_ppm), np.max(zero_corrected_ppm), N_POINTS_FIT)
             
@@ -1620,8 +1631,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "fit_successful": True,
             }
             analysis_results[name]["sigmoidal_envelope_results"] = sigmoidal_envelope_results
-            pass 
-            pass
 
             # ----------------- Sigmoid correct z-specra data -----------------
             # Create a new list of sigmoid_corrected_max_vals
@@ -1672,8 +1681,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             if spline_fit_results["fit_successful"]:
                 analysis_results[name]["spline_fit_results"] = spline_fit_results
                 plot_data(
-                    x=spline_fit_results["x_sorted"],  
-                    y=spline_fit_results["y_sorted"],
+                    x=spline_fit_results["x"],  
+                    y=spline_fit_results["y"],
                     x_fit=spline_fit_results["x_fit"], 
                     y_fit=spline_fit_results["y_fit"],
                     add_lorentz=True,
