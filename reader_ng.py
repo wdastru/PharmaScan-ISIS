@@ -1374,7 +1374,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     avg_work_offset_hz = []
     
     for idx, folder in enumerate(folders):
-        folder_name_short = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
+        base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
+        folder_name_short = base_name
+        counter = 1
+        while folder_name_short in analysis_results:
+            print(colored(
+                f"Warning: folder name clash for '{base_name}'. Using '{folder_name_short}_{counter}' instead.",
+                "yellow"
+            ))
+            folder_name_short = f"{base_name}_{counter}"
+            counter += 1
+
         analysis_results[folder_name_short] = {}
 
         # ----------------------------------------------------------------------
@@ -1687,7 +1697,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # ═══════════════════════════════════════════════════════════════
     #  💾 SALVA I RISULTATI NELLA CACHE
     # ═══════════════════════════════════════════════════════════════
-    save_cache(config_name, config, analysis_results) 
+    save_cache(config_name, config, analysis_results)
 
     # ----------------------------------------------------------------------
     # Plot integrals
