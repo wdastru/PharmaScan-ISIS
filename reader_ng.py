@@ -21,6 +21,7 @@ from typing import List, Optional, Tuple, Dict, Any
 from scipy.interpolate import PchipInterpolator
 from scipy.optimize import minimize_scalar
 from scipy.optimize import minimize
+from scipy import stats
 import json
 from termcolor import colored
 import os
@@ -1346,6 +1347,63 @@ def _compute_integrals_stats(keys, analysis_results):
 
     return {"mean": mean_dict, "std": std_dict}
 
+def _compute_pvalues(ref_keys, sample_keys, analysis_results, test='t-test'):
+    """
+    Compute p-values comparing reference vs. sample integrals for each region.
+
+    Parameters
+    ----------
+    ref_keys, sample_keys : List[str]
+        Folder keys for the two groups.
+    analysis_results : dict
+    test : str
+        't-test' or 'mann-whitney'.
+
+    Returns
+    -------
+    dict
+        {region: p_value} for regions present in both groups.
+    """
+    # Collect all non‑empty integral dicts from each group
+    ref_integrals = []
+    for key in ref_keys:
+        integr = analysis_results.get(key, {}).get("integrals")
+        if integr:
+            ref_integrals.append(integr)
+
+    sample_integrals = []
+    for key in sample_keys:
+        integr = analysis_results.get(key, {}).get("integrals")
+        if integr:
+            sample_integrals.append(integr)
+
+    if not ref_integrals or not sample_integrals:
+        print("Not enough data for p‑value calculation.")
+        return {}
+
+    # Assume both groups have the same regions (already verified)
+    regions = list(ref_integrals[0].keys())
+    pvalues = {}
+
+    for reg in regions:
+        ref_vals = [d[reg] for d in ref_integrals if reg in d]
+        samp_vals = [d[reg] for d in sample_integrals if reg in d]
+
+        if len(ref_vals) < 2 or len(samp_vals) < 2:
+            pvalues[reg] = None   # not enough data
+            continue
+
+        if test == 't-test':
+            # Welch's t‑test (default)
+            _, p = stats.ttest_ind(ref_vals, samp_vals, equal_var=False)
+        elif test == 'mann-whitney':
+            _, p = stats.mannwhitneyu(ref_vals, samp_vals, alternative='two-sided')
+        else:
+            raise ValueError(f"Unknown test: {test}")
+        pvalues[reg] = float(p)
+
+    return pvalues
+
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
 
@@ -1742,6 +1800,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     if with_multiple and sample_keys:
         analysis_results["sample_integrals_stats"] = _compute_integrals_stats(
             sample_keys, analysis_results
+        )
+
+    if with_ref and with_multiple and ref_keys and sample_keys:
+        analysis_results["p_values"] = _compute_pvalues(
+            ref_keys, sample_keys, analysis_results, test='t-test'
         )
 
     # ═══════════════════════════════════════════════════════════════
