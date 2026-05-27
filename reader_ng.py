@@ -1313,6 +1313,39 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
     
     return L_opt, R_opt, tau_opt
 
+def _compute_integrals_stats(keys, analysis_results):
+    """
+    Compute mean and sample std of integrals per region for a list of folder keys.
+    """
+    integrals_list = []
+    for key in keys:
+        entry = analysis_results.get(key, {})
+        integrals = entry.get("integrals", {})
+        if integrals:                     # skip entries with no integrals
+            integrals_list.append(integrals)
+
+    if not integrals_list:
+        return {"mean": {}, "std": {}}
+
+    regions = list(integrals_list[0].keys())
+    mean_dict = {}
+    std_dict = {}
+
+    for reg in regions:
+        vals = [d[reg] for d in integrals_list if reg in d]
+        n = len(vals)
+        if n > 1:
+            mean_dict[reg] = float(np.mean(vals))
+            std_dict[reg] = float(np.std(vals, ddof=1))
+        elif n == 1:
+            mean_dict[reg] = float(vals[0])
+            std_dict[reg] = 0.0
+        else:
+            mean_dict[reg] = 0.0
+            std_dict[reg] = 0.0
+
+    return {"mean": mean_dict, "std": std_dict}
+
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
 
@@ -1370,6 +1403,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # Initialize accumulators using helper
     ref_stats = None
     avg_stats = None
+    ref_keys = []
+    sample_keys = []
     ref_work_offset_hz = []
     avg_work_offset_hz = []
     
@@ -1380,12 +1415,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         while folder_name_short in analysis_results:
             print(colored(
                 f"Warning: folder name clash for '{base_name}'. Using '{folder_name_short}_{counter}' instead.",
-                "yellow"
+                "yellow", attrs=["bold"]
             ))
             folder_name_short = f"{base_name}_{counter}"
             counter += 1
 
         analysis_results[folder_name_short] = {}
+
+        if with_ref and idx < multiple_amount_ref:
+            ref_keys.append(folder_name_short)
+        if with_multiple and multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
+            sample_keys.append(folder_name_short)        
 
         # ----------------------------------------------------------------------
         # Extract sat_trans_hz and work_offset_hz parameters from folder files
@@ -1694,6 +1734,16 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         else:
             print(f"Numero di frequenze di saturazione non corrispondente per {name}")
     
+    if with_ref and ref_keys:
+        analysis_results["reference_integrals_stats"] = _compute_integrals_stats(
+            ref_keys, analysis_results
+        )
+
+    if with_multiple and sample_keys:
+        analysis_results["sample_integrals_stats"] = _compute_integrals_stats(
+            sample_keys, analysis_results
+        )
+
     # ═══════════════════════════════════════════════════════════════
     #  💾 SALVA I RISULTATI NELLA CACHE
     # ═══════════════════════════════════════════════════════════════
