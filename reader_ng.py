@@ -695,10 +695,10 @@ def plot_integrals_regions(
         # Aggiungi legenda se più serie
         ax_referenced.legend()
         fig_referenced.tight_layout()
-        plt.show(block=True)
+        plt.show(block=False)
         return fig_absolute, fig_referenced
     
-    plt.show(block=True)
+    plt.show(block=False)
     return fig_absolute
 
 def select_experiment_folder(title="Select a folder") -> Path:
@@ -1404,6 +1404,91 @@ def _compute_pvalues(ref_keys, sample_keys, analysis_results, test='t-test'):
 
     return pvalues
 
+def plot_grouped_comparison(
+    ref_stats: dict,
+    sample_stats: dict,
+    pvalues: Optional[dict] = None,
+    title: str = "Reference vs Sample – Integrals by Region",
+    ylabel: str = "Integral (mean ± std)",
+    figsize: tuple = (12, 6),
+    significance_levels: Optional[dict] = None,
+) -> Figure:
+    """
+    Grouped bar chart comparing reference and sample per‑region integrals.
+
+    Parameters
+    ----------
+    ref_stats, sample_stats : dict
+        Each must contain ``"mean"`` and ``"std"`` dicts keyed by region.
+    pvalues : dict, optional
+        p‑values keyed by region. If provided, significance stars are shown.
+    title, ylabel, figsize : standard matplotlib parameters.
+    significance_levels : dict, optional
+        Mapping from p‑value threshold to annotation, e.g.
+        {0.001: '***', 0.01: '**', 0.05: '*'}.
+        Default: {0.001: '***', 0.01: '**', 0.05: '*'}.
+    """
+    if significance_levels is None:
+        significance_levels = {0.001: '***', 0.01: '**', 0.05: '*'}
+
+    # Gather regions that appear in both stats
+    regions = [reg for reg in ref_stats["mean"] if reg in sample_stats["mean"]]
+    if not regions:
+        print("No common regions to plot.")
+        return None
+
+    n_regions = len(regions)
+    x = np.arange(n_regions)
+    bar_width = 0.35
+
+    ref_means = [ref_stats["mean"][reg] for reg in regions]
+    ref_stds  = [ref_stats["std"][reg] for reg in regions]
+    samp_means = [sample_stats["mean"][reg] for reg in regions]
+    samp_stds  = [sample_stats["std"][reg] for reg in regions]
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    bars_ref = ax.bar(
+        x - bar_width/2, ref_means, bar_width,
+        yerr=ref_stds, capsize=5,
+        label="Reference", color="steelblue", edgecolor="black"
+    )
+    bars_samp = ax.bar(
+        x + bar_width/2, samp_means, bar_width,
+        yerr=samp_stds, capsize=5,
+        label="Sample", color="darkorange", edgecolor="black"
+    )
+
+    # Add significance annotations
+    if pvalues is not None:
+        for i, reg in enumerate(regions):
+            p = pvalues.get(reg)
+            if p is None:
+                continue
+            # Determine star(s) based on thresholds
+            txt = None
+            for threshold in sorted(significance_levels, reverse=True):
+                if p < threshold:
+                    txt = significance_levels[threshold]
+                    break
+            if txt is None:
+                txt = f"p={p:.3f}"
+
+            # Position above the higher bar
+            y_max = max(ref_means[i] + ref_stds[i], samp_means[i] + samp_stds[i])
+            ax.text(x[i], y_max * 1.05, txt, ha='center', va='bottom',
+                    fontweight='bold', fontsize=10)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(regions, rotation=45, ha='right')
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(axis='y', alpha=0.3)
+    fig.tight_layout()
+    plt.show(block=True)
+    return fig
+
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
 
@@ -1820,6 +1905,19 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         reference=with_ref,
         multiple_amount_ref=multiple_amount_ref if with_ref else 0
     )
+
+    # ----------------------------------------------------------------------
+    # Grouped comparison plot (reference vs sample)
+    # ----------------------------------------------------------------------
+    if with_ref and with_multiple:
+        ref_stats = analysis_results.get("reference_integrals_stats")
+        sample_stats = analysis_results.get("sample_integrals_stats")
+        pvals = analysis_results.get("p_values")
+        if ref_stats and sample_stats:
+            plot_grouped_comparison(
+                ref_stats, sample_stats, pvals,
+                title="Reference vs Sample - Integrals by Region"
+            )    
 
 def main() -> None:
     config_name, config_data = select_or_create_config()
