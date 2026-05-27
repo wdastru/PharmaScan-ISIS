@@ -93,7 +93,9 @@ def load_cache(config_name: str, config: Dict[str, Any]) -> Optional[dict]:
             print(f"Cache obsoleta per '{config_name}'.")
             return None
     except Exception as e:
-        print(f"Errore cache per '{config_name}': {e}")
+        print(colored(
+            f"Errore cache per '{config_name}': {e}", "red", attrs=["bold"])
+        )
         return None
 
 def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict) -> None:
@@ -140,7 +142,9 @@ def load_config(name: str) -> Dict[str, Any]:
             config["folders"] = [Path(p) for p in config["folders"]]
         return config
     except Exception as e:
-        print(f"Errore nel caricamento della configurazione '{name}': {e}")
+        print(colored(
+            f"Errore nel caricamento della configurazione '{name}': {e}", "red", attrs=["bold"])
+        )
         return {}
 
 def save_config(name: str, config: Dict[str, Any]) -> None:
@@ -156,7 +160,9 @@ def save_config(name: str, config: Dict[str, Any]) -> None:
             json.dump(to_save, f, indent=4)
         print(f"Configurazione salvata come '{name}'")
     except Exception as e:
-        print(f"Errore nel salvataggio: {e}")
+        print(colored(
+            f"Errore nel salvataggio: {e}", "red", attrs=["bold"])
+        )
 
 def select_or_create_config() -> Tuple[str, Dict[str, Any]]:
     """Mostra config esistenti, permette di scegliere o crearne una nuova."""
@@ -226,14 +232,18 @@ def find_maximum(arr: np.ndarray,
 
 def parameter_extract(file_path: Path, PARAMETER: str) -> List[float]:
     if not file_path.exists():
-        raise FileNotFoundError(f"{file_path} not found.")
+        raise FileNotFoundError(colored(
+            f"{file_path} not found.", "red", attrs=["bold"])
+        )
     text = file_path.read_text(encoding="utf-8", errors="ignore")
 
     # Look for the header and also capture the block up to the next '##$'
     hdr_pattern = rf"##\${PARAMETER}=\(\s*(?P<N>\d+)\s*\)\s*\n(?P<block>.*?)(?=\n##\$|\Z)"
     match = re.search(hdr_pattern, text, re.DOTALL)
     if not match:
-        raise ValueError(f"Header '##${PARAMETER}=( N )' non trovato in {file_path}.")
+        raise ValueError(colored(
+            f"Header '##${PARAMETER}=( N )' non trovato in {file_path}.", "red", attrs=["bold"])
+        )
 
     N = int(match.group("N"))
     block = match.group("block")
@@ -243,9 +253,13 @@ def parameter_extract(file_path: Path, PARAMETER: str) -> List[float]:
     num_pattern = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
     vals = re.findall(num_pattern, block)
     if len(vals) < N:
-        raise ValueError(f"Trovati solo {len(vals)} numeri nel blocco, attesi {N}.")
+        raise ValueError(colored(
+            f"Trovati solo {len(vals)} numeri nel blocco, attesi {N}.", "red", attrs=["bold"])
+        )
     if len(vals) > N:
-        print(f"Attenzione: trovati {len(vals)} numeri nel blocco (attesi {N}), uso i primi {N}.")
+        print(colored(
+            f"Attenzione: trovati {len(vals)} numeri nel blocco (attesi {N}), uso i primi {N}.", "yellow")
+        )
     return [float(v) for v in vals[:N]]
 
 def apply_phase(data: np.ndarray, p0: float, p1: float) -> np.ndarray:
@@ -305,11 +319,11 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
     """
     ppm_axis = uc.ppm_scale()
     if user_ppm < ppm_axis.min() or user_ppm > ppm_axis.max():
-        print(
+        print(colored(
             f"Warning: ppm {user_ppm} is outside the spectrum range "
-            f"({ppm_axis.min():.2f} - {ppm_axis.max():.2f}). "
-            "Using the nearest point."
-        )
+            f"({ppm_axis.min():.2f} - {ppm_axis.max():.2f}). Using the nearest point.",
+            'yellow'
+        ))
     return int(np.abs(ppm_axis - user_ppm).argmin())
 
 def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str, float]:
@@ -1290,7 +1304,9 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
         tau_opt = res_tau.x
     else:
         tau_opt = np.ptp(x) / 4  # fallback
-        print(f"Warning: optimization for tau failed, using fallback tau={tau_opt:.4f}")
+        print(colored(
+            f"Warning: optimization for tau failed, using fallback tau={tau_opt:.4f}", "yellow", attrs=["bold"])
+        )
 
     # Ricalcola L,R ottimi per il tau trovato
     L_opt, R_opt, _ = solve_LR_for_tau(tau_opt)
@@ -1369,7 +1385,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
             analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
         except (FileNotFoundError, ValueError) as e:
-            print(f"Errore in {folder}: {e}")
+            print(colored(
+                f"Errore in {folder}: {e}", "red", attrs=["bold"])
+            )
             return
         
         if with_multiple:
@@ -1377,14 +1395,18 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 if not avg_work_offset_hz:
                     avg_work_offset_hz = work_offset_hz
                 elif avg_work_offset_hz != work_offset_hz:
-                    print(f"{colored('Error', 'red', attrs=['bold'])}: different work_offset_hz in sample folders.")
+                    print(colored(
+                        f"Error: different work_offset_hz in sample folders.", "red", attrs=["bold"])
+                    )
 
         if with_ref:
             if idx < multiple_amount_ref:
                 if not ref_work_offset_hz:
                     ref_work_offset_hz = work_offset_hz
                 elif ref_work_offset_hz != work_offset_hz:
-                    print(f"{colored('Error', 'red', attrs=['bold'])}: different work_offset_hz in reference folders.")
+                    print(colored(
+                        f"Error: different work_offset_hz in reference folders.", "red", attrs=["bold"])
+                    )
                 
         # ----------------------------------------------------------------------
         # Load spectra
