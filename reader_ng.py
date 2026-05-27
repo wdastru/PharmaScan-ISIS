@@ -806,7 +806,7 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
     labels = []
     for exp_idx in range(n_exp):
         line, = ax.plot(ppm_axis, np.real(spectra[exp_idx]),
-                        label=f"{sat_trans_hz[exp_idx]:.2f}",
+                        label = f"{exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}",
                         alpha=0.7, linewidth=1.2)
         lines.append(line)
         labels.append(line.get_label())
@@ -892,7 +892,7 @@ def find_max_vals(spectra, start_idx, end_idx):
         val, idx = find_maximum(spec, start=start_idx, end=end_idx)
         if val > global_max:
             global_max = val
-        elif val < global_min:
+        if val < global_min:
             global_min = val
         max_vals.append(val)
         max_indexes.append(idx)
