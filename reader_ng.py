@@ -1583,7 +1583,19 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # Correct the max_vals values
             for i, (idx, val) in enumerate(zip(linspace_indices,analysis_results[name]["max_vals"])):
-                sigmoid_corrected_max_vals[i] = val / analysis_results[name]["sigmoidal_envelope_results"]["y"][idx]
+                envelope_val = analysis_results[name]["sigmoidal_envelope_results"]["y"][idx]
+                if np.abs(envelope_val) < 1e-12:
+                    # If envelope is essentially zero, skip correction or 
+                    # set to original val. Emit a warning and fall back to 
+                    # uncorrected value
+                    print(colored(
+                        f"Warning: Sigmoid envelope near zero at index {idx} "
+                        f"(ppm ~{zero_corrected_ppm[i]:.3f}). Using uncorrected value.", "yellow", attrs=["bold"])
+                    )
+                    sigmoid_corrected_max_vals[i] = val  # or some other fallback
+
+                else:
+                    sigmoid_corrected_max_vals[i] = val / envelope_val
             analysis_results[name]["sigmoid_corrected_max_vals"] = sigmoid_corrected_max_vals
 
             # ------------------- Lorentzian upper envelope -------------------
