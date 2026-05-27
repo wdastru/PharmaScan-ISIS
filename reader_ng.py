@@ -238,7 +238,7 @@ def parameter_extract(file_path: Path, PARAMETER: str) -> List[float]:
     text = file_path.read_text(encoding="utf-8", errors="ignore")
 
     # Look for the header and also capture the block up to the next '##$'
-    hdr_pattern = rf"##\${PARAMETER}=\(\s*(?P<N>\d+)\s*\)\s*\n(?P<block>.*?)(?=\n##\$|\Z)"
+    hdr_pattern = rf"##\${PARAMETER}=\s*\(\s*(?P<N>\d+)\s*\)\s*\n(?P<block>.*?)(?=\n##\$|\Z)"
     match = re.search(hdr_pattern, text, re.DOTALL)
     if not match:
         raise ValueError(colored(
