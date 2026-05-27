@@ -1614,10 +1614,14 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # Stima con centro fissato a 0 (modifica se vuoi centro libero)
             L, R, tau = estimate_constrained_sigmoid(x_data=zero_corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
 
-            # For each value in zero_corrected_ppm, find the index in x_common where the element is closest to that value.
-            # np.abs(x_common - val) computes the absolute differences between all points in x_common and the current val.
-            # np.argmin returns the position (index) of the smallest difference, i.e., the closest match.
-            # The list comprehension collects these indices for all 19 elements of zero_corrected_ppm.           
+            # For each value in zero_corrected_ppm, find the index in x_common where the
+            # element is closest to that value.
+            # np.abs(x_common - val) computes the absolute differences between all points
+            # in x_common and the current val.
+            # np.argmin returns the position (index) of the smallest difference, i.e.,
+            # the closest match.
+            # The list comprehension collects these indices for all 19 elements of
+            # zero_corrected_ppm.           
             linspace_indices = [np.argmin(np.abs(x_common - val)) for val in zero_corrected_ppm]
 
             y_sig = constrained_sigmoid(x_common, L, R, tau, x0=0.0)
@@ -1658,59 +1662,50 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # ------------------- Spline fit ----------------------
             spline_fit_results = spline_fit(x=zero_corrected_ppm, y=z["sigmoid_corrected_max_vals"], x_fit=x_common)
 
+            # Early exit se il fit non ha successo
+            if not spline_fit_results.get("fit_successful", False):
+                print(f"Spline fit fallito per {name}")
+                analysis_results[name]["spline_fit_results"] = spline_fit_results  # salviamo comunque per eventuale debug
+                analysis_results[name]["diff_x"] = None
+                analysis_results[name]["diff_y"] = None
+                analysis_results[name]["integrals"] = {}
+                continue
+
+            # --- Fit riuscito: salva i risultati ---
+            analysis_results[name]["spline_fit_results"] = spline_fit_results
+
             # --- Calcolo della curva differenza (Lorentzian envelope - spline fit) ---
-            diff_x = None
-            diff_y = None
-            if lorentzian_envelope_results is not None and spline_fit_results.get("fit_successful", False):
-                # Le due curve condividono lo stesso array x (np.linspace sugli stessi estremi)
-                # Verifichiamo rapidamente che le lunghezze coincidano; in caso contrario interpola
-                if (len(lorentzian_envelope_results["x"]) == len(spline_fit_results["y_fit"]) and
-                    np.allclose(lorentzian_envelope_results["x"], spline_fit_results["x_fit"], atol=1e-6)):
-                    diff_x = lorentzian_envelope_results["x"]
-                    diff_y = lorentzian_envelope_results["y"] - spline_fit_results["y_fit"]
-                else:
-                    # Interpolazione di sicurezza
-                    from scipy.interpolate import interp1d
-                    interp_lor = interp1d(lorentzian_envelope_results["x"], lorentzian_envelope_results["y"],
-                                        kind='linear', fill_value='extrapolate')
-                    diff_x = spline_fit_results["x_fit"]
-                    diff_y = interp_lor(diff_x) - spline_fit_results["y_fit"]
-                    
+            # Poiché abbiamo creato x_common = np.linspace(...) e sia lorentzian che spline usano lo stesso x_common,
+            # non serve il controllo di lunghezza: sono identici per costruzione.
+            diff_x = x_common
+            diff_y = lorentzian_envelope_results["y"] - spline_fit_results["y_fit"]
+
             analysis_results[name]["diff_x"] = diff_x
             analysis_results[name]["diff_y"] = diff_y
-            if spline_fit_results["fit_successful"]:
-                analysis_results[name]["spline_fit_results"] = spline_fit_results
-                plot_data(
-                    x=spline_fit_results["x"],  
-                    y=spline_fit_results["y"],
-                    x_fit=spline_fit_results["x_fit"], 
-                    y_fit=spline_fit_results["y_fit"],
-                    add_lorentz=True,
-                    lorentzian_envelope_results=lorentzian_envelope_results, 
-                    add_sigmoid=True,
-                    sigmoidal_envelope_results=sigmoidal_envelope_results,
-                    y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
-                    title=name, 
-                    invert_x=True,
-                    diff_x=diff_x, 
-                    diff_y=diff_y, 
-                    diff_label="Lorentzian envelope - Spline fit",
-                    visibility=config.get("plot_visibility", get_default_visibility())
-                )
 
-                # ----------------------------------------------------------
-                # Calculate integrals
-                # ----------------------------------------------------------
-                integrals = compute_regions_integrals(diff_x, diff_y)
-                #integrals = compute_regions_integrals(
-                #    z["spline_fit_results"]["x_fit"], 
-                #    z["lorentzian_envelope_results"]["y"] - z["spline_fit_results"]["y_fit"]
-                #)
-                analysis_results[name]["integrals"] = integrals
-                
-            else:
-                print(f"Fit fallito per {name}")
-                analysis_results[name]["integrals"] = {}
+            # --- Plot ---
+            plot_data(
+                x=spline_fit_results["x"],   # qui stai passando i punti originali ordinati
+                y=spline_fit_results["y"],
+                x_fit=spline_fit_results["x_fit"],
+                y_fit=spline_fit_results["y_fit"],
+                add_lorentz=True,
+                lorentzian_envelope_results=lorentzian_envelope_results,
+                add_sigmoid=True,
+                sigmoidal_envelope_results=sigmoidal_envelope_results,
+                y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
+                title=name,
+                invert_x=True,
+                diff_x=diff_x,
+                diff_y=diff_y,
+                diff_label="Lorentzian envelope - Spline fit",
+                visibility=config.get("plot_visibility", get_default_visibility())
+            )
+
+            # --- Calcolo integrali ---
+            integrals = compute_regions_integrals(diff_x, diff_y)
+            analysis_results[name]["integrals"] = integrals
+
         else:
             print(f"Numero di frequenze di saturazione non corrispondente per {name}")
     
