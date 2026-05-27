@@ -2,6 +2,8 @@ import numpy as np
 import pytest
 from reader_ng import find_maximum
 from reader_ng import compute_regions_integrals, METABOLITE_REGIONS, N_POINTS_FIT
+from reader_ng import parameter_extract
+from pathlib import Path
 
 def test_find_maximum():
     arr = np.array([1, 3, 2, 5, 4])
@@ -95,4 +97,75 @@ def test_compute_regions_integrals_oscillatory():
         computed = computed_integrals[region]
         # Relative tolerance 1e-2 is safe because of coarser grid + boundary insertion
         assert np.isclose(computed, expected, rtol=1e-2, atol=1e-5), \
-            f"Region {region}: expected {expected:.6f}, got {computed:.6f}"            
+            f"Region {region}: expected {expected:.6f}, got {computed:.6f}"
+
+# Minimal method file snippets containing the parameters we need,
+# plus another block to confirm that only the correct numbers are taken.
+
+SAT_TRANS_FL_BLOCK = (
+    "##$PVM_SatTransFL= ( 19 )\n"
+    "-1094.20948068296 1094.20948068296 -972.630649495964 972.630649495964\n"
+    "-851.051818308968 851.051818308968 -729.472987121973 729.472987121973\n"
+    "-607.894155934977 607.894155934977 -486.315324747982 486.315324747982\n"
+    "-364.736493560986 364.736493560986 -243.157662373991 243.157662373991\n"
+    "-121.578831186995 121.578831186995 0\n"
+    "##$PVM_SatTransRepetitions=19\n"
+    "##$PVM_SatTransRefScan=Off\n"
+)
+
+WORK_OFFSET_BLOCK = (
+    "##$PVM_FrqWorkOffset= ( 8 )\n"
+    "-252.155018851338 0 0 0 0 0 0 0\n"
+    "##$PVM_FrqWork= ( 8 )\n"
+    "121.578831186995 0 0 0 0 0 0 0\n"
+)
+
+# Expected values for PVM_SatTransFL (19 numbers)
+EXPECTED_SAT_TRANS_FL = [
+    -1094.20948068296, 1094.20948068296, -972.630649495964, 972.630649495964,
+    -851.051818308968, 851.051818308968, -729.472987121973, 729.472987121973,
+    -607.894155934977, 607.894155934977, -486.315324747982, 486.315324747982,
+    -364.736493560986, 364.736493560986, -243.157662373991, 243.157662373991,
+    -121.578831186995, 121.578831186995, 0.0
+]
+
+EXPECTED_WORK_OFFSET = [-252.155018851338, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+def test_parameter_extract_sat_trans_fl(tmp_path):
+    """Extract PVM_SatTransFL correctly, ignoring other parameters."""
+    file = tmp_path / "method"
+    file.write_text(SAT_TRANS_FL_BLOCK)
+    result = parameter_extract(file, "PVM_SatTransFL")
+    assert result == EXPECTED_SAT_TRANS_FL
+
+
+def test_parameter_extract_work_offset(tmp_path):
+    """Extract PVM_FrqWorkOffset correctly, ignoring subsequent parameters."""
+    file = tmp_path / "method"
+    file.write_text(WORK_OFFSET_BLOCK)
+    result = parameter_extract(file, "PVM_FrqWorkOffset")
+    assert result == EXPECTED_WORK_OFFSET
+
+
+def test_parameter_extract_missing_header(tmp_path):
+    """Raise ValueError when parameter not found."""
+    file = tmp_path / "method"
+    file.write_text("##$SomeOther= ( 2 )\n1.0 2.0\n")
+    with pytest.raises(ValueError, match="non trovato"):
+        parameter_extract(file, "PVM_SatTransFL")
+
+
+def test_parameter_extract_too_many_numbers(tmp_path, capsys):
+    """Warn if block contains more numbers than declared, but take first N."""
+    block = (
+        "##$PVM_SatTransFL= ( 2 )\n"
+        "10.0 20.0 30.0\n"   # three numbers, expected 2
+        "##$NextParam= ( 1 )\n"
+        "100.0\n"
+    )
+    file = tmp_path / "method"
+    file.write_text(block)
+    result = parameter_extract(file, "PVM_SatTransFL")
+    assert result == [10.0, 20.0]
+    captured = capsys.readouterr().out
+    assert "Attenzione" in captured
