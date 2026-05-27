@@ -1490,6 +1490,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # ----------------------------------------------------------------------
         max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
 
+        # ----------------------------------------------------------------------
+        # Sort them all!!! 
+        # ----------------------------------------------------------------------
+        combined = list(zip(sat_trans_hz, max_indexes, max_vals))
+        combined.sort()  # or sorted()
+        sat_trans_hz[:], max_indexes[:], max_vals[:] = zip(*combined)
+
         analysis_results[folder_name_short].update({
             "max_indexes": max_indexes,
             "max_vals": max_vals, 
