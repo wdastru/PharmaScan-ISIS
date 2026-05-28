@@ -3,6 +3,13 @@ import pytest
 from reader_ng import find_maximum
 from reader_ng import compute_regions_integrals, METABOLITE_REGIONS, N_POINTS_FIT
 from reader_ng import parameter_extract
+from reader_ng import (
+    _init_stats_lists,
+    _accumulate_averages,
+    _accumulate_squared_diffs,
+    _finalize_std_dev,
+    _compute_integrals_stats,
+)
 from pathlib import Path
 
 def test_find_maximum():
@@ -169,3 +176,86 @@ def test_parameter_extract_too_many_numbers(tmp_path, capsys):
     assert result == [10.0, 20.0]
     captured = capsys.readouterr().out
     assert "Attenzione" in captured
+
+"""
+Test per le funzioni di accumulo statistico in reader_ng.
+Esegui con: python test_statistics.py  (oppure pytest test_statistics.py)
+"""
+
+def test_init_stats_lists():
+    length = 5
+    stats = _init_stats_lists(length)
+    # Tutti i campi devono essere liste di zeri della lunghezza giusta
+    assert len(stats["max_vals"]) == length
+    assert all(v == 0.0 for v in stats["max_vals"])
+    assert len(stats["sd_max_vals"]) == length
+
+def test_accumulate_averages():
+    acc = _init_stats_lists(3)
+    total_folders = 2  # numero totale di cartelle
+    val1 = ([10, 20, 30], [1.0, 2.0, 3.0], [100.0, 200.0, 300.0])
+    _accumulate_averages(acc, val1, total_folders)   # divisore fisso
+    val2 = ([30, 40, 50], [3.0, 4.0, 5.0], [300.0, 400.0, 500.0])
+    _accumulate_averages(acc, val2, total_folders)
+
+    expected_idx = [20, 30, 40]
+    expected_val = [2, 3, 4]
+    expected_freq = [200, 300, 400]
+    for i in range(3):
+        assert np.isclose(acc["max_indexes"][i], expected_idx[i])
+        assert np.isclose(acc["max_vals"][i], expected_val[i])
+        assert np.isclose(acc["sat_trans_hz"][i], expected_freq[i])
+
+def test_std_dev():
+    # Simula due cartelle, calcola la deviazione standard campionaria
+    acc = _init_stats_lists(2)
+    val1 = ([0, 0], [1.0, 2.0], [10.0, 20.0])
+    val2 = ([0, 0], [3.0, 6.0], [30.0, 60.0])
+
+    # Calcola medie
+    _accumulate_averages(acc, val1, 2)   # contributo diviso 2
+    _accumulate_averages(acc, val2, 2)
+
+    # Somma quadrati degli scarti
+    sd_acc = _init_stats_lists(2)  # useremo i campi sd_...
+    avg = {
+        "max_indexes": acc["max_indexes"],
+        "max_vals": acc["max_vals"],
+        "sat_trans_hz": acc["sat_trans_hz"],
+    }
+    _accumulate_squared_diffs(sd_acc, val1, avg)
+    _accumulate_squared_diffs(sd_acc, val2, avg)
+
+    _finalize_std_dev(sd_acc, 2)
+
+    # Per due elementi, dev std campionaria = |a-b|/sqrt(2)
+    assert np.isclose(sd_acc["sd_max_vals"][0], np.sqrt(((1-2)**2 + (3-2)**2) / 1))
+    assert np.isclose(sd_acc["sd_max_vals"][1], np.sqrt(((2-4)**2 + (6-4)**2) / 1))
+    assert np.isclose(sd_acc["sd_sat_trans_hz"][0], np.sqrt(((10-20)**2 + (30-20)**2) / 1))
+
+def test_compute_integrals_stats():
+    # Simula tre campioni con integrali di due regioni
+    analysis_results = {
+        "s1": {"integrals": {"regionA": 1.0, "regionB": 2.0}},
+        "s2": {"integrals": {"regionA": 2.0, "regionB": 4.0}},
+        "s3": {"integrals": {"regionA": 3.0, "regionB": 6.0}},
+    }
+    keys = ["s1", "s2", "s3"]
+    stats = _compute_integrals_stats(keys, analysis_results)
+    mean = stats["mean"]
+    std = stats["std"]
+
+    # Media
+    assert np.isclose(mean["regionA"], 2.0)
+    assert np.isclose(mean["regionB"], 4.0)
+
+    # Deviazione standard campionaria (n=3)
+    # Per regionA: valori 1,2,3, media=2, var = ((1-2)^2+(2-2)^2+(3-2)^2)/(3-1) = (1+0+1)/2 = 1, std=1
+    assert np.isclose(std["regionA"], 1.0)
+    # Per regionB: valori 2,4,6, media=4, var = (4+0+4)/2 = 4, std=2
+    assert np.isclose(std["regionB"], 2.0)
+
+    # Caso con un solo campione: std deve essere 0
+    single = _compute_integrals_stats(["s1"], analysis_results)
+    assert single["mean"]["regionA"] == 1.0
+    assert single["std"]["regionA"] == 0.0  
