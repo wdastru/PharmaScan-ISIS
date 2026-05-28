@@ -1,0 +1,6 @@
+nmrglue
+numpy
+matplotlib
+scipy
+termcolor
+joblib
