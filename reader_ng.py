@@ -45,6 +45,21 @@ CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
 CACHE_DIR.mkdir(exist_ok=True)
 N_POINTS_FIT = 200
 
+def merge_config_defaults (defaults: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Recursively merge `defaults` into `current`.
+    For every key in `defaults` that is missing in `current`, add it.
+    If both values are dicts, recurse.
+    Otherwise, keep the `current` value.
+    """
+    merged = current.copy()
+    for key, default_val in defaults.items():
+        if key not in merged:
+            merged[key] = default_val
+        elif isinstance(default_val, dict) and isinstance(merged[key], dict):
+            merged[key] = merge_config_defaults (default_val, merged[key])
+    return merged
+    
 def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
     if not config_name:
@@ -124,6 +139,10 @@ def get_default_visibility() -> Dict[str, bool]:
         "difference": True,
         "regions": True,
         "corrected": True,
+        "legend": {
+            "z-spectra": True,
+            "integrals": True,
+        },
     }
 
 def list_configs() -> List[Path]:
@@ -450,7 +469,8 @@ def plot_data(
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.grid(True)
-    plt.legend()
+    if visibility["legend"].get("z-spectra", True):
+        plt.legend()
     plt.show(block=False)
     return fig
 
@@ -498,7 +518,8 @@ def plot_integrals_regions(
     figsize: tuple = (12, 6),
     show_values: bool = True,
     reference: Optional[bool] = False,
-    multiple_amount_ref: Optional[int] = 0
+    multiple_amount_ref: Optional[int] = 0,
+    visibility: Optional[Dict[str, bool]] = None
 ) -> Figure:
     """
     Crea un grafico a barre (singolo o raggruppato) degli integrali di regione.
@@ -609,7 +630,8 @@ def plot_integrals_regions(
     ax_absolute.set_xticks(x, region_labels, rotation=45, ha='right')
     
     # Aggiungi legenda se più serie
-    ax_absolute.legend()
+    if visibility["legend"].get("integrals", True):
+        ax_absolute.legend()
     fig_absolute.tight_layout()
 
     if reference:
@@ -694,7 +716,8 @@ def plot_integrals_regions(
         ax_referenced.set_xticks(x, region_labels, rotation=45, ha='right')
         
         # Aggiungi legenda se più serie
-        ax_referenced.legend()
+        if visibility["legend"].get("integrals", True):
+            ax_referenced.legend()
         fig_referenced.tight_layout()
         plt.show(block=False)
         return fig_absolute, fig_referenced
@@ -783,7 +806,14 @@ def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
         spectra[exp_idx] = spectrum_phased
     return spectra
 
-def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
+def plot_spectra(
+        title, 
+        spectra, 
+        n_exp, 
+        ppm_axis, 
+        sat_trans_hz,
+        visibility: Optional[Dict[str, bool]] = None
+    ) -> Figure:
     """
     Crea un plot interattivo di tutti gli spettri con checkbox per mostrare/nascondere
     ogni traccia.
@@ -800,6 +830,8 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
         Asse dei ppm.
     sat_trans_hz : List[float]
         Frequenze di saturazione in Hz (usate come etichette).
+    visibility : Optional[Dict[str, bool]]
+        Dizionario per controllare la visibilità nei plot.
     """
 
     #TODO: i check boxes non funzionano in multi-exp
@@ -1105,17 +1137,15 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         config_data["ppm_missing"] = False
     
     # ========== merge / add plot_visibility ===============
+    default_vis = get_default_visibility()
     if "plot_visibility" in config_data:
-        default_vis = get_default_visibility()
         current_vis = config_data["plot_visibility"]
-        # add missing keys from default (e.g. when new plot elements are added)
-        for key, val in default_vis.items():
-            if key not in current_vis:
-                current_vis[key] = val
-                modified = True
-        config_data["plot_visibility"] = current_vis
+        new_vis = merge_config_defaults (default_vis, current_vis)
+        if new_vis != current_vis:
+            config_data["plot_visibility"] = new_vis
+            modified = True
     else:
-        config_data["plot_visibility"] = get_default_visibility()
+        config_data["plot_visibility"] = default_vis
         modified = True
     # ======================================================
                 
@@ -1409,10 +1439,11 @@ def plot_grouped_comparison(
     ref_stats: dict,
     sample_stats: dict,
     pvalues: Optional[dict] = None,
-    title: str = "Reference vs Sample – Integrals by Region",
+    title: str = "Reference vs Sample - Integrals by Region",
     ylabel: str = "Integral (mean ± std)",
     figsize: tuple = (12, 6),
     significance_levels: Optional[dict] = None,
+    visibility: Optional[Dict[str, bool]] = None
 ) -> Figure:
     """
     Grouped bar chart comparing reference and sample per‑region integrals.
@@ -1428,6 +1459,8 @@ def plot_grouped_comparison(
         Mapping from p‑value threshold to annotation, e.g.
         {0.001: '***', 0.01: '**', 0.05: '*'}.
         Default: {0.001: '***', 0.01: '**', 0.05: '*'}.
+    visibility : dict, optional
+        Mapping from plot element names to boolean visibility flags.
     """
     if significance_levels is None:
         significance_levels = {0.001: '***', 0.01: '**', 0.05: '*'}
@@ -1484,10 +1517,11 @@ def plot_grouped_comparison(
     ax.set_xticklabels(regions, rotation=45, ha='right')
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.legend()
+    if visibility["legend"].get("integrals", True):
+        ax.legend()
     ax.grid(axis='y', alpha=0.3)
     fig.tight_layout()
-    plt.show(block=True)
+    plt.show(block=False)
     return fig
 
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
@@ -1508,404 +1542,411 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     #  🚀 PROVA A CARICARE DALLA CACHE
     # ═══════════════════════════════════════════════════════════════
     cached = load_cache(config_name, config)
-    if cached is not None:
-        use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi usarla?", default=True)
-        if use_cache:
-            analysis_results = cached
-            # Ricrea i grafici degli Z-spettri
-            for name, z in analysis_results.items():
-                if "spline_fit_results" in z and z["spline_fit_results"]["fit_successful"]:
-                    fit = z["spline_fit_results"]
-                    plot_data(
-                        fit["x"], 
-                        fit["y"],
-                        fit["x_fit"], 
-                        fit["y_fit"],
-                        y_std_data=z.get("sd_max_vals"),
-                        title=name, 
-                        invert_x=True,
-                        add_lorentz=True,
-                        lorentzian_envelope_results=z.get("lorentzian_envelope_results"),
-                        add_sigmoid=True,
-                        sigmoidal_envelope_results=z.get("sigmoidal_envelope_results"),
-                        diff_x=z.get("diff_x"),
-                        diff_y=z.get("diff_y"),
-                        diff_label="Lorentzian envelope - Spline fit",
-                        visibility=config.get("plot_visibility", get_default_visibility())
-                    )
-            # Grafico a barre degli integrali
-            plot_integrals_regions(
-                data=analysis_results,
-                reference=with_ref,
-                multiple_amount_ref=multiple_amount_ref if with_ref else 0
-            )
-            return   # Esce senza ricalcolare
-        else:
-            print("Cache ignorata. Ricalcolo in corso...")
+    use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi usarla?", default=True)
+    if cached and use_cache:
+        analysis_results = cached
+        # Ricrea i grafici degli Z-spettri
+        for name, z in analysis_results.items():
+            if "spline_fit_results" in z and z["spline_fit_results"]["fit_successful"]:
+                fit = z["spline_fit_results"]
+                plot_data(
+                    fit["x"], 
+                    fit["y"],
+                    fit["x_fit"], 
+                    fit["y_fit"],
+                    y_std_data=z.get("sd_max_vals"),
+                    title=name, 
+                    invert_x=True,
+                    add_lorentz=True,
+                    lorentzian_envelope_results=z.get("lorentzian_envelope_results"),
+                    add_sigmoid=True,
+                    sigmoidal_envelope_results=z.get("sigmoidal_envelope_results"),
+                    diff_x=z.get("diff_x"),
+                    diff_y=z.get("diff_y"),
+                    diff_label="Lorentzian envelope - Spline fit",
+                    visibility=config.get("plot_visibility", get_default_visibility())
+                )
+        # Grafico a barre degli integrali
+        plot_integrals_regions(
+            data=analysis_results,
+            reference=with_ref,
+            multiple_amount_ref=multiple_amount_ref if with_ref else 0,
+            visibility=config.get("plot_visibility", get_default_visibility())
+        )
     # ═══════════════════════════════════════════════════════════════
-
-    # Initialize accumulators using helper
-    ref_stats = None
-    avg_stats = None
-    ref_keys = []
-    sample_keys = []
-    ref_work_offset_hz = []
-    avg_work_offset_hz = []
     
-    for idx, folder in enumerate(folders):
-        base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
-        folder_name_short = base_name
-        counter = 1
-        while folder_name_short in analysis_results:
-            print(colored(
-                f"Warning: folder name clash for '{base_name}'. Using '{folder_name_short}_{counter}' instead.",
-                "yellow", attrs=["bold"]
-            ))
-            folder_name_short = f"{base_name}_{counter}"
-            counter += 1
+    else:
 
-        analysis_results[folder_name_short] = {}
-
-        if with_ref and idx < multiple_amount_ref:
-            ref_keys.append(folder_name_short)
-        if with_multiple and multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
-            sample_keys.append(folder_name_short)        
-
-        # ----------------------------------------------------------------------
-        # Extract sat_trans_hz and work_offset_hz parameters from folder files
-        # ----------------------------------------------------------------------
-        try:
-            sat_trans_hz, work_offset_hz = extract_parameters(folder)
-            analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
-            analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
-        except (FileNotFoundError, ValueError) as e:
-            print(colored(
-                f"Errore in {folder}: {e}", "red", attrs=["bold"])
-            )
-            return
+        # Initialize accumulators using helper
+        ref_stats = None
+        avg_stats = None
+        ref_keys = []
+        sample_keys = []
+        ref_work_offset_hz = []
+        avg_work_offset_hz = []
         
-        if with_multiple:
-            if idx < multiple_amount:
-                if not avg_work_offset_hz:
-                    avg_work_offset_hz = work_offset_hz
-                elif avg_work_offset_hz != work_offset_hz:
-                    print(colored(
-                        f"Error: different work_offset_hz in sample folders.", "red", attrs=["bold"])
-                    )
+        for idx, folder in enumerate(folders):
+            base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
+            folder_name_short = base_name
+            counter = 1
+            while folder_name_short in analysis_results:
+                print(colored(
+                    f"Warning: folder name clash for '{base_name}'. Using '{folder_name_short}_{counter}' instead.",
+                    "yellow", attrs=["bold"]
+                ))
+                folder_name_short = f"{base_name}_{counter}"
+                counter += 1
 
-        if with_ref:
-            if idx < multiple_amount_ref:
-                if not ref_work_offset_hz:
-                    ref_work_offset_hz = work_offset_hz
-                elif ref_work_offset_hz != work_offset_hz:
-                    print(colored(
-                        f"Error: different work_offset_hz in reference folders.", "red", attrs=["bold"])
-                    )
-                
-        # ----------------------------------------------------------------------
-        # Load spectra
-        # ----------------------------------------------------------------------
-        dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
-        analysis_results[folder_name_short]["uc"] = uc
-        analysis_results[folder_name_short]["bf1"] = bf1
-        if n_exp <= 0:
-            print(f"Nessun esperimento in {folder}")
-            return
-        
-        # ----------------------------------------------------------------------
-        # Process and plot spectra
-        # ----------------------------------------------------------------------
-        spectra = process_spectra(data, dic, n_exp)
-        fig: Figure = plot_spectra(title=f"Spectra - {folder_name_short}", spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
-        
-        # ----------------------------------------------------------------------
-        # Se i ppm non sono ancora noti, chiediamo usando la prima cartella
-        # ----------------------------------------------------------------------
-        if ppm_missing and idx == 0:
-            plt.pause(0.05) # <-- keep figures alive
-            start_ppm, end_ppm = ask_user_for_ppm_range()
-            # Aggiorna la configurazione
-            config["start_ppm"] = start_ppm
-            config["end_ppm"] = end_ppm
-            config["ppm_missing"] = False
-            ppm_missing = False
-            if config_name:
-                save_config(config_name, config)
-        elif ppm_missing and idx > 0:
-            print("Errore: ppm non definiti e non siamo alla prima cartella. Questo non dovrebbe accadere.")
-            return
-        
-        start_idx = ppm_to_index(uc, end_ppm)
-        end_idx = ppm_to_index(uc, start_ppm)
-        if start_idx < 0 or end_idx < 0:
-            print("Indici ppm non validi.")
-            return
-        
-        # ----------------------------------------------------------------------
-        # Find max values and indexes in the ppm range (the z-spectra)
-        # ----------------------------------------------------------------------
-        max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
+            analysis_results[folder_name_short] = {}
 
-        # ----------------------------------------------------------------------
-        # Sort them all!!! 
-        # ----------------------------------------------------------------------
-        combined = list(zip(sat_trans_hz, max_indexes, max_vals))
-        combined.sort()  # or sorted()
-        sat_trans_hz[:], max_indexes[:], max_vals[:] = zip(*combined)
-
-        analysis_results[folder_name_short].update({
-            "max_indexes": max_indexes,
-            "max_vals": max_vals, 
-        })
-
-        # ------------------------------------------------------------------
-        # Accumulate averages for reference and multiple (sample) groups
-        # ------------------------------------------------------------------
-        num_sat = len(sat_trans_hz)
-        if with_multiple:
-            if avg_stats is None:
-                avg_stats = _init_stats_lists(num_sat)
-            # belong to multiple group?
-            if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
-                if len(max_vals) == num_sat:
-                    _accumulate_averages(avg_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount)
-                    pass
-                else:
-                    print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
-
-        if with_ref:
-            if ref_stats is None:
-                ref_stats = _init_stats_lists(num_sat)
-            
-            # belong to reference group?
-            if idx < multiple_amount_ref:
-                if len(max_vals) == num_sat:
-                    _accumulate_averages(ref_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount_ref)
-                else:
-                    print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
-
-    # ----------------------------------------------------------------------
-    # After processing all folders, finalize averages and compute std dev
-    # ----------------------------------------------------------------------
-    if with_multiple and multiple_amount > 1 and avg_stats is not None:
-        analysis_results["avg"] = {
-            "max_indexes": [round(v) for v in avg_stats["max_indexes"]],
-            "max_vals": avg_stats["max_vals"],
-            "sat_trans_hz": avg_stats["sat_trans_hz"],
-            "work_offset_hz": avg_work_offset_hz,
-            # TODO: check if uc and bf1 are the same for the multiple expt 
-            "uc": uc,
-            "bf1": bf1
-        }
-        # Calculate standard deviations
-        # We need the original data again – we stored them in analysis_results for each folder.
-        # Instead of re-looping, we can loop over analysis_results items as before but now using helpers.
-        # We'll do the squared differences accumulation in a second pass over the folder data.
-        for idx, (k, v) in enumerate(analysis_results.items()):
-            if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
-                _accumulate_squared_diffs(
-                    avg_stats,
-                    (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
-                    {"max_indexes": analysis_results["avg"]["max_indexes"],
-                     "max_vals": analysis_results["avg"]["max_vals"],
-                     "sat_trans_hz": analysis_results["avg"]["sat_trans_hz"]}
-                )
-        _finalize_std_dev(avg_stats, multiple_amount)
-        analysis_results["avg"]["sd_max_indexes"] = avg_stats["sd_max_indexes"]
-        analysis_results["avg"]["sd_max_vals"] = avg_stats["sd_max_vals"]
-        analysis_results["avg"]["sd_sat_trans_hz"] = avg_stats["sd_sat_trans_hz"]
-
-    if with_ref and ref_stats is not None:
-        analysis_results["reference"] = {
-            "max_indexes": [round(v) for v in ref_stats["max_indexes"]],
-            "max_vals": ref_stats["max_vals"],
-            "sat_trans_hz": ref_stats["sat_trans_hz"],
-            "work_offset_hz": ref_work_offset_hz,
-            # TODO: check if uc and bf1 are the same for the reference expt 
-            "uc": uc,
-            "bf1": bf1
-        }
-        for idx, (k, v) in enumerate(analysis_results.items()):
-            if idx < multiple_amount_ref:
-                _accumulate_squared_diffs(
-                    ref_stats,
-                    (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
-                    {"max_indexes": analysis_results["reference"]["max_indexes"],
-                     "max_vals": analysis_results["reference"]["max_vals"],
-                     "sat_trans_hz": analysis_results["reference"]["sat_trans_hz"]}
-                )
-        _finalize_std_dev(ref_stats, multiple_amount_ref)
-        analysis_results["reference"]["sd_max_indexes"] = ref_stats["sd_max_indexes"]
-        analysis_results["reference"]["sd_max_vals"] = ref_stats["sd_max_vals"]
-        analysis_results["reference"]["sd_sat_trans_hz"] = ref_stats["sd_sat_trans_hz"]
-    
-    # ----------------------------------------------------------------------
-    # Correct saturation frequencies, fit z-spectra and calculate integrals
-    # ----------------------------------------------------------------------
-    for name, z in analysis_results.items():
-        if len(z["sat_trans_hz"]) == len(z["max_vals"]):
-            zero_corrected_ppm  = correct_sat_frequencies(
-                z["sat_trans_hz"], 
-                z["max_indexes"], 
-                z["work_offset_hz"], 
-                z["uc"], 
-                z["bf1"]
-            )
+            if with_ref and idx < multiple_amount_ref:
+                ref_keys.append(folder_name_short)
+            if with_multiple and multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
+                sample_keys.append(folder_name_short)        
 
             # ----------------------------------------------------------------------
-            # correct_sat_frequencies(...) può in linea di principio cambiare 
-            # l'ordine dei dati. Riordina dopo la correzione in modo che 
-            # zero_corrected_ppm sia crescente
+            # Extract sat_trans_hz and work_offset_hz parameters from folder files
             # ----------------------------------------------------------------------
-            combined = list(zip(zero_corrected_ppm, z["sat_trans_hz"], z["max_indexes"], z["max_vals"]))
-            combined.sort()   # ordina per zero_corrected_ppm (primo elemento)
-            (zero_corrected_ppm[:],
-            z["sat_trans_hz"][:],
-            z["max_indexes"][:],
-            z["max_vals"][:]) = zip(*combined)            
-
-            # Common x grid for all curves
-            x_common = np.linspace(np.min(zero_corrected_ppm), np.max(zero_corrected_ppm), N_POINTS_FIT)
+            try:
+                sat_trans_hz, work_offset_hz = extract_parameters(folder)
+                analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
+                analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
+            except (FileNotFoundError, ValueError) as e:
+                print(colored(
+                    f"Errore in {folder}: {e}", "red", attrs=["bold"])
+                )
+                return
             
-            # ------------------- Sigmoid upper envelope ----------------------
-            # Stima con centro fissato a 0 (modifica se vuoi centro libero)
-            L, R, tau = estimate_constrained_sigmoid(x_data=zero_corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
+            if with_multiple:
+                if idx < multiple_amount:
+                    if not avg_work_offset_hz:
+                        avg_work_offset_hz = work_offset_hz
+                    elif avg_work_offset_hz != work_offset_hz:
+                        print(colored(
+                            f"Error: different work_offset_hz in sample folders.", "red", attrs=["bold"])
+                        )
 
-            # For each value in zero_corrected_ppm, find the index in x_common where the
-            # element is closest to that value.
-            # np.abs(x_common - val) computes the absolute differences between all points
-            # in x_common and the current val.
-            # np.argmin returns the position (index) of the smallest difference, i.e.,
-            # the closest match.
-            # The list comprehension collects these indices for all 19 elements of
-            # zero_corrected_ppm.           
-            linspace_indices = [np.argmin(np.abs(x_common - val)) for val in zero_corrected_ppm]
-
-            y_sig = constrained_sigmoid(x_common, L, R, tau, x0=0.0)
-            sigmoidal_envelope_results =  {
-                "L": L,
-                "R": R,
-                "tau": tau,
-                "x": x_common,
-                "y": y_sig,
-                "fit_label": f'Sigmoid (L={L:.3f}, R={R:.3f}, τ={tau:.3f})',
-                "fit_successful": True,
-            }
-            analysis_results[name]["sigmoidal_envelope_results"] = sigmoidal_envelope_results
-
-            # ----------------- Sigmoid correct z-specra data -----------------
-            # Create a new list of sigmoid_corrected_max_vals
-            sigmoid_corrected_max_vals: list[float] = [0.0] * len(z["max_vals"])
-
-            # Correct the max_vals values
-            for i, (idx, val) in enumerate(zip(linspace_indices,analysis_results[name]["max_vals"])):
-                envelope_val = analysis_results[name]["sigmoidal_envelope_results"]["y"][idx]
-                if np.abs(envelope_val) < 1e-12:
-                    # If envelope is essentially zero, skip correction or 
-                    # set to original val. Emit a warning and fall back to 
-                    # uncorrected value
-                    print(colored(
-                        f"Warning: Sigmoid envelope near zero at index {idx} "
-                        f"(ppm ~{zero_corrected_ppm[i]:.3f}). Using uncorrected value.", "yellow", attrs=["bold"])
-                    )
-                    sigmoid_corrected_max_vals[i] = val  # or some other fallback
-
-                else:
-                    sigmoid_corrected_max_vals[i] = val / envelope_val
-            analysis_results[name]["sigmoid_corrected_max_vals"] = sigmoid_corrected_max_vals
-
-            # ------------------- Lorentzian upper envelope -------------------
-            A, gamma = estimate_constrained_lorentzian(x_data=zero_corrected_ppm, y_data=z["sigmoid_corrected_max_vals"])
-            y_min = np.min(z["sigmoid_corrected_max_vals"])
-            y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
-            lorentzian_envelope_results =  {
-                "A": A,
-                "gamma": gamma,
-                "x": x_common,
-                "y": y_lor,
-                "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
-                "fit_successful": True,
-            }
-            analysis_results[name]["lorentzian_envelope_results"] = lorentzian_envelope_results
-
-            # ------------------- Spline fit ----------------------
-            spline_fit_results = spline_fit(x=zero_corrected_ppm, y=z["sigmoid_corrected_max_vals"], x_fit=x_common)
-
-            # Early exit se il fit non ha successo
-            if not spline_fit_results.get("fit_successful", False):
-                print(f"Spline fit fallito per {name}")
-                analysis_results[name]["spline_fit_results"] = spline_fit_results  # salviamo comunque per eventuale debug
-                analysis_results[name]["diff_x"] = None
-                analysis_results[name]["diff_y"] = None
-                analysis_results[name]["integrals"] = {}
-                continue
-
-            # --- Fit riuscito: salva i risultati ---
-            analysis_results[name]["spline_fit_results"] = spline_fit_results
-
-            # --- Calcolo della curva differenza (Lorentzian envelope - spline fit) ---
-            # Poiché abbiamo creato x_common = np.linspace(...) e sia lorentzian che spline usano lo stesso x_common,
-            # non serve il controllo di lunghezza: sono identici per costruzione.
-            diff_x = x_common
-            diff_y = lorentzian_envelope_results["y"] - spline_fit_results["y_fit"]
-
-            analysis_results[name]["diff_x"] = diff_x
-            analysis_results[name]["diff_y"] = diff_y
-
-            # --- Plot ---
-            plot_data(
-                x=spline_fit_results["x"],   # qui stai passando i punti originali ordinati
-                y=spline_fit_results["y"],
-                x_fit=spline_fit_results["x_fit"],
-                y_fit=spline_fit_results["y_fit"],
-                add_lorentz=True,
-                lorentzian_envelope_results=lorentzian_envelope_results,
-                add_sigmoid=True,
-                sigmoidal_envelope_results=sigmoidal_envelope_results,
-                y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
-                title=name,
-                invert_x=True,
-                diff_x=diff_x,
-                diff_y=diff_y,
-                diff_label="Lorentzian envelope - Spline fit",
+            if with_ref:
+                if idx < multiple_amount_ref:
+                    if not ref_work_offset_hz:
+                        ref_work_offset_hz = work_offset_hz
+                    elif ref_work_offset_hz != work_offset_hz:
+                        print(colored(
+                            f"Error: different work_offset_hz in reference folders.", "red", attrs=["bold"])
+                        )
+                    
+            # ----------------------------------------------------------------------
+            # Load spectra
+            # ----------------------------------------------------------------------
+            dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
+            analysis_results[folder_name_short]["uc"] = uc
+            analysis_results[folder_name_short]["bf1"] = bf1
+            if n_exp <= 0:
+                print(f"Nessun esperimento in {folder}")
+                return
+            
+            # ----------------------------------------------------------------------
+            # Process and plot spectra
+            # ----------------------------------------------------------------------
+            spectra = process_spectra(data, dic, n_exp)
+            fig: Figure = plot_spectra(
+                title=f"Spectra - {folder_name_short}", 
+                spectra=spectra, 
+                n_exp=n_exp, 
+                ppm_axis=ppm_axis, 
+                sat_trans_hz=sat_trans_hz,
                 visibility=config.get("plot_visibility", get_default_visibility())
             )
+            
+            # ----------------------------------------------------------------------
+            # Se i ppm non sono ancora noti, chiediamo usando la prima cartella
+            # ----------------------------------------------------------------------
+            if ppm_missing and idx == 0:
+                plt.pause(0.05) # <-- keep figures alive
+                start_ppm, end_ppm = ask_user_for_ppm_range()
+                # Aggiorna la configurazione
+                config["start_ppm"] = start_ppm
+                config["end_ppm"] = end_ppm
+                config["ppm_missing"] = False
+                ppm_missing = False
+                if config_name:
+                    save_config(config_name, config)
+            elif ppm_missing and idx > 0:
+                print("Errore: ppm non definiti e non siamo alla prima cartella. Questo non dovrebbe accadere.")
+                return
+            
+            start_idx = ppm_to_index(uc, end_ppm)
+            end_idx = ppm_to_index(uc, start_ppm)
+            if start_idx < 0 or end_idx < 0:
+                print("Indici ppm non validi.")
+                return
+            
+            # ----------------------------------------------------------------------
+            # Find max values and indexes in the ppm range (the z-spectra)
+            # ----------------------------------------------------------------------
+            max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
 
-            # --- Calcolo integrali ---
-            integrals = compute_regions_integrals(diff_x, diff_y)
-            analysis_results[name]["integrals"] = integrals
+            # ----------------------------------------------------------------------
+            # Sort them all!!! 
+            # ----------------------------------------------------------------------
+            combined = list(zip(sat_trans_hz, max_indexes, max_vals))
+            combined.sort()  # or sorted()
+            sat_trans_hz[:], max_indexes[:], max_vals[:] = zip(*combined)
 
-        else:
-            print(f"Numero di frequenze di saturazione non corrispondente per {name}")
-    
-    if with_ref and ref_keys:
-        analysis_results["reference_integrals_stats"] = _compute_integrals_stats(
-            ref_keys, analysis_results
+            analysis_results[folder_name_short].update({
+                "max_indexes": max_indexes,
+                "max_vals": max_vals, 
+            })
+
+            # ------------------------------------------------------------------
+            # Accumulate averages for reference and multiple (sample) groups
+            # ------------------------------------------------------------------
+            num_sat = len(sat_trans_hz)
+            if with_multiple:
+                if avg_stats is None:
+                    avg_stats = _init_stats_lists(num_sat)
+                # belong to multiple group?
+                if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
+                    if len(max_vals) == num_sat:
+                        _accumulate_averages(avg_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount)
+                        pass
+                    else:
+                        print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
+
+            if with_ref:
+                if ref_stats is None:
+                    ref_stats = _init_stats_lists(num_sat)
+                
+                # belong to reference group?
+                if idx < multiple_amount_ref:
+                    if len(max_vals) == num_sat:
+                        _accumulate_averages(ref_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount_ref)
+                    else:
+                        print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
+
+        # ----------------------------------------------------------------------
+        # After processing all folders, finalize averages and compute std dev
+        # ----------------------------------------------------------------------
+        if with_multiple and multiple_amount > 1 and avg_stats is not None:
+            analysis_results["avg"] = {
+                "max_indexes": [round(v) for v in avg_stats["max_indexes"]],
+                "max_vals": avg_stats["max_vals"],
+                "sat_trans_hz": avg_stats["sat_trans_hz"],
+                "work_offset_hz": avg_work_offset_hz,
+                # TODO: check if uc and bf1 are the same for the multiple expt 
+                "uc": uc,
+                "bf1": bf1
+            }
+            # Calculate standard deviations
+            # We need the original data again – we stored them in analysis_results for each folder.
+            # Instead of re-looping, we can loop over analysis_results items as before but now using helpers.
+            # We'll do the squared differences accumulation in a second pass over the folder data.
+            for idx, (k, v) in enumerate(analysis_results.items()):
+                if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
+                    _accumulate_squared_diffs(
+                        avg_stats,
+                        (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
+                        {"max_indexes": analysis_results["avg"]["max_indexes"],
+                        "max_vals": analysis_results["avg"]["max_vals"],
+                        "sat_trans_hz": analysis_results["avg"]["sat_trans_hz"]}
+                    )
+            _finalize_std_dev(avg_stats, multiple_amount)
+            analysis_results["avg"]["sd_max_indexes"] = avg_stats["sd_max_indexes"]
+            analysis_results["avg"]["sd_max_vals"] = avg_stats["sd_max_vals"]
+            analysis_results["avg"]["sd_sat_trans_hz"] = avg_stats["sd_sat_trans_hz"]
+
+        if with_ref and ref_stats is not None:
+            analysis_results["reference"] = {
+                "max_indexes": [round(v) for v in ref_stats["max_indexes"]],
+                "max_vals": ref_stats["max_vals"],
+                "sat_trans_hz": ref_stats["sat_trans_hz"],
+                "work_offset_hz": ref_work_offset_hz,
+                # TODO: check if uc and bf1 are the same for the reference expt 
+                "uc": uc,
+                "bf1": bf1
+            }
+            for idx, (k, v) in enumerate(analysis_results.items()):
+                if idx < multiple_amount_ref:
+                    _accumulate_squared_diffs(
+                        ref_stats,
+                        (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
+                        {"max_indexes": analysis_results["reference"]["max_indexes"],
+                        "max_vals": analysis_results["reference"]["max_vals"],
+                        "sat_trans_hz": analysis_results["reference"]["sat_trans_hz"]}
+                    )
+            _finalize_std_dev(ref_stats, multiple_amount_ref)
+            analysis_results["reference"]["sd_max_indexes"] = ref_stats["sd_max_indexes"]
+            analysis_results["reference"]["sd_max_vals"] = ref_stats["sd_max_vals"]
+            analysis_results["reference"]["sd_sat_trans_hz"] = ref_stats["sd_sat_trans_hz"]
+        
+        # ----------------------------------------------------------------------
+        # Correct saturation frequencies, fit z-spectra and calculate integrals
+        # ----------------------------------------------------------------------
+        for name, z in analysis_results.items():
+            if len(z["sat_trans_hz"]) == len(z["max_vals"]):
+                zero_corrected_ppm  = correct_sat_frequencies(
+                    z["sat_trans_hz"], 
+                    z["max_indexes"], 
+                    z["work_offset_hz"], 
+                    z["uc"], 
+                    z["bf1"]
+                )
+
+                # ----------------------------------------------------------------------
+                # correct_sat_frequencies(...) può in linea di principio cambiare 
+                # l'ordine dei dati. Riordina dopo la correzione in modo che 
+                # zero_corrected_ppm sia crescente
+                # ----------------------------------------------------------------------
+                combined = list(zip(zero_corrected_ppm, z["sat_trans_hz"], z["max_indexes"], z["max_vals"]))
+                combined.sort()   # ordina per zero_corrected_ppm (primo elemento)
+                (zero_corrected_ppm[:],
+                z["sat_trans_hz"][:],
+                z["max_indexes"][:],
+                z["max_vals"][:]) = zip(*combined)            
+
+                # Common x grid for all curves
+                x_common = np.linspace(np.min(zero_corrected_ppm), np.max(zero_corrected_ppm), N_POINTS_FIT)
+                
+                # ------------------- Sigmoid upper envelope ----------------------
+                # Stima con centro fissato a 0 (modifica se vuoi centro libero)
+                L, R, tau = estimate_constrained_sigmoid(x_data=zero_corrected_ppm, y_data=z["max_vals"], fix_center=True, x0_fixed=0.0)
+
+                # For each value in zero_corrected_ppm, find the index in x_common where the
+                # element is closest to that value.
+                # np.abs(x_common - val) computes the absolute differences between all points
+                # in x_common and the current val.
+                # np.argmin returns the position (index) of the smallest difference, i.e.,
+                # the closest match.
+                # The list comprehension collects these indices for all 19 elements of
+                # zero_corrected_ppm.           
+                linspace_indices = [np.argmin(np.abs(x_common - val)) for val in zero_corrected_ppm]
+
+                y_sig = constrained_sigmoid(x_common, L, R, tau, x0=0.0)
+                sigmoidal_envelope_results =  {
+                    "L": L,
+                    "R": R,
+                    "tau": tau,
+                    "x": x_common,
+                    "y": y_sig,
+                    "fit_label": f'Sigmoid (L={L:.3f}, R={R:.3f}, τ={tau:.3f})',
+                    "fit_successful": True,
+                }
+                analysis_results[name]["sigmoidal_envelope_results"] = sigmoidal_envelope_results
+
+                # ----------------- Sigmoid correct z-specra data -----------------
+                # Create a new list of sigmoid_corrected_max_vals
+                sigmoid_corrected_max_vals: list[float] = [0.0] * len(z["max_vals"])
+
+                # Correct the max_vals values
+                for i, (idx, val) in enumerate(zip(linspace_indices,analysis_results[name]["max_vals"])):
+                    envelope_val = analysis_results[name]["sigmoidal_envelope_results"]["y"][idx]
+                    if np.abs(envelope_val) < 1e-12:
+                        # If envelope is essentially zero, skip correction or 
+                        # set to original val. Emit a warning and fall back to 
+                        # uncorrected value
+                        print(colored(
+                            f"Warning: Sigmoid envelope near zero at index {idx} "
+                            f"(ppm ~{zero_corrected_ppm[i]:.3f}). Using uncorrected value.", "yellow", attrs=["bold"])
+                        )
+                        sigmoid_corrected_max_vals[i] = val  # or some other fallback
+
+                    else:
+                        sigmoid_corrected_max_vals[i] = val / envelope_val
+                analysis_results[name]["sigmoid_corrected_max_vals"] = sigmoid_corrected_max_vals
+
+                # ------------------- Lorentzian upper envelope -------------------
+                A, gamma = estimate_constrained_lorentzian(x_data=zero_corrected_ppm, y_data=z["sigmoid_corrected_max_vals"])
+                y_min = np.min(z["sigmoid_corrected_max_vals"])
+                y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
+                lorentzian_envelope_results =  {
+                    "A": A,
+                    "gamma": gamma,
+                    "x": x_common,
+                    "y": y_lor,
+                    "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
+                    "fit_successful": True,
+                }
+                analysis_results[name]["lorentzian_envelope_results"] = lorentzian_envelope_results
+
+                # ------------------- Spline fit ----------------------
+                spline_fit_results = spline_fit(x=zero_corrected_ppm, y=z["sigmoid_corrected_max_vals"], x_fit=x_common)
+
+                # Early exit se il fit non ha successo
+                if not spline_fit_results.get("fit_successful", False):
+                    print(f"Spline fit fallito per {name}")
+                    analysis_results[name]["spline_fit_results"] = spline_fit_results  # salviamo comunque per eventuale debug
+                    analysis_results[name]["diff_x"] = None
+                    analysis_results[name]["diff_y"] = None
+                    analysis_results[name]["integrals"] = {}
+                    continue
+
+                # --- Fit riuscito: salva i risultati ---
+                analysis_results[name]["spline_fit_results"] = spline_fit_results
+
+                # --- Calcolo della curva differenza (Lorentzian envelope - spline fit) ---
+                # Poiché abbiamo creato x_common = np.linspace(...) e sia lorentzian che spline usano lo stesso x_common,
+                # non serve il controllo di lunghezza: sono identici per costruzione.
+                diff_x = x_common
+                diff_y = lorentzian_envelope_results["y"] - spline_fit_results["y_fit"]
+
+                analysis_results[name]["diff_x"] = diff_x
+                analysis_results[name]["diff_y"] = diff_y
+
+                # --- Plot ---
+                plot_data(
+                    x=spline_fit_results["x"],   # qui stai passando i punti originali ordinati
+                    y=spline_fit_results["y"],
+                    x_fit=spline_fit_results["x_fit"],
+                    y_fit=spline_fit_results["y_fit"],
+                    add_lorentz=True,
+                    lorentzian_envelope_results=lorentzian_envelope_results,
+                    add_sigmoid=True,
+                    sigmoidal_envelope_results=sigmoidal_envelope_results,
+                    y_std_data=analysis_results[name].get("sd_max_vals") if name in ("reference", "avg") else None,
+                    title=name,
+                    invert_x=True,
+                    diff_x=diff_x,
+                    diff_y=diff_y,
+                    diff_label="Lorentzian envelope - Spline fit",
+                    visibility=config.get("plot_visibility", get_default_visibility())
+                )
+
+                # --- Calcolo integrali ---
+                integrals = compute_regions_integrals(diff_x, diff_y)
+                analysis_results[name]["integrals"] = integrals
+
+            else:
+                print(f"Numero di frequenze di saturazione non corrispondente per {name}")
+        
+        if with_ref and ref_keys:
+            analysis_results["reference_integrals_stats"] = _compute_integrals_stats(
+                ref_keys, analysis_results
+            )
+
+        if with_multiple and sample_keys:
+            analysis_results["sample_integrals_stats"] = _compute_integrals_stats(
+                sample_keys, analysis_results
+            )
+
+        if with_ref and with_multiple and ref_keys and sample_keys:
+            analysis_results["p_values"] = _compute_pvalues(
+                ref_keys, sample_keys, analysis_results, test='t-test'
+            )
+
+        # ═══════════════════════════════════════════════════════════════
+        #  💾 SALVA I RISULTATI NELLA CACHE
+        # ═══════════════════════════════════════════════════════════════
+        save_cache(config_name, config, analysis_results)
+
+        # ----------------------------------------------------------------------
+        # Plot integrals
+        # ----------------------------------------------------------------------
+        plot_integrals_regions(
+            data=analysis_results,
+            reference=with_ref,
+            multiple_amount_ref=multiple_amount_ref if with_ref else 0,
+            visibility=config.get("plot_visibility", get_default_visibility())
         )
-
-    if with_multiple and sample_keys:
-        analysis_results["sample_integrals_stats"] = _compute_integrals_stats(
-            sample_keys, analysis_results
-        )
-
-    if with_ref and with_multiple and ref_keys and sample_keys:
-        analysis_results["p_values"] = _compute_pvalues(
-            ref_keys, sample_keys, analysis_results, test='t-test'
-        )
-
-    # ═══════════════════════════════════════════════════════════════
-    #  💾 SALVA I RISULTATI NELLA CACHE
-    # ═══════════════════════════════════════════════════════════════
-    save_cache(config_name, config, analysis_results)
-
-    # ----------------------------------------------------------------------
-    # Plot integrals
-    # ----------------------------------------------------------------------
-    plot_integrals_regions(
-        data=analysis_results,
-        reference=with_ref,
-        multiple_amount_ref=multiple_amount_ref if with_ref else 0
-    )
 
     # ----------------------------------------------------------------------
     # Grouped comparison plot (reference vs sample)
@@ -1916,9 +1957,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         pvals = analysis_results.get("p_values")
         if ref_stats and sample_stats:
             plot_grouped_comparison(
-                ref_stats, sample_stats, pvals,
-                title="Reference vs Sample - Integrals by Region"
-            )    
+                ref_stats, 
+                sample_stats, 
+                pvals,
+                title="Reference vs Sample - Integrals by Region",
+                visibility=config.get("plot_visibility", get_default_visibility())
+            )
+    
+    print("\nTutti i grafici sono stati creati.")
+    print("Puoi interagire con le finestre. Quando hai finito, premi Invio nel terminale per chiudere tutto e uscire.")
+    input()                     # aspetta che l'utente prema Invio
+    plt.close('all')           # chiude tutte le figure
 
 def main() -> None:
     config_name, config_data = select_or_create_config()
