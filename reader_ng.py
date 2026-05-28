@@ -1442,6 +1442,7 @@ def plot_grouped_comparison(
     ylabel: str = "Integral (mean ± std)",
     figsize: tuple = (12, 6),
     significance_levels: Optional[dict] = None,
+    visibility: Optional[Dict[str, bool]] = None
 ) -> Figure:
     """
     Grouped bar chart comparing reference and sample per‑region integrals.
@@ -1457,6 +1458,8 @@ def plot_grouped_comparison(
         Mapping from p‑value threshold to annotation, e.g.
         {0.001: '***', 0.01: '**', 0.05: '*'}.
         Default: {0.001: '***', 0.01: '**', 0.05: '*'}.
+    visibility : dict, optional
+        Mapping from plot element names to boolean visibility flags.
     """
     if significance_levels is None:
         significance_levels = {0.001: '***', 0.01: '**', 0.05: '*'}
@@ -1513,7 +1516,8 @@ def plot_grouped_comparison(
     ax.set_xticklabels(regions, rotation=45, ha='right')
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.legend()
+    if visibility["legend"].get("integrals", True):
+        ax.legend()
     ax.grid(axis='y', alpha=0.3)
     fig.tight_layout()
     plt.show(block=False)
@@ -1952,8 +1956,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         pvals = analysis_results.get("p_values")
         if ref_stats and sample_stats:
             plot_grouped_comparison(
-                ref_stats, sample_stats, pvals,
-                title="Reference vs Sample - Integrals by Region"
+                ref_stats, 
+                sample_stats, 
+                pvals,
+                title="Reference vs Sample - Integrals by Region",
+                visibility=config.get("plot_visibility", get_default_visibility())
             )
     
     print("\nTutti i grafici sono stati creati.")
