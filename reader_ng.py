@@ -44,6 +44,21 @@ CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
 CACHE_DIR.mkdir(exist_ok=True)
 N_POINTS_FIT = 200
 
+def merge_config_defaults (defaults: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Recursively merge `defaults` into `current`.
+    For every key in `defaults` that is missing in `current`, add it.
+    If both values are dicts, recurse.
+    Otherwise, keep the `current` value.
+    """
+    merged = current.copy()
+    for key, default_val in defaults.items():
+        if key not in merged:
+            merged[key] = default_val
+        elif isinstance(default_val, dict) and isinstance(merged[key], dict):
+            merged[key] = merge_config_defaults (default_val, merged[key])
+    return merged
+    
 def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
     if not config_name:
@@ -123,6 +138,10 @@ def get_default_visibility() -> Dict[str, bool]:
         "difference": True,
         "regions": True,
         "corrected": True,
+        "legend": {
+            "z-spectra": True,
+            "integrals": True,
+        },
     }
 
 def list_configs() -> List[Path]:
@@ -449,7 +468,8 @@ def plot_data(
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.grid(True)
-    plt.legend()
+    if visibility["legend"].get("z-spectra", True):
+        plt.legend()
     plt.show(block=False)
     return fig
 
@@ -497,7 +517,8 @@ def plot_integrals_regions(
     figsize: tuple = (12, 6),
     show_values: bool = True,
     reference: Optional[bool] = False,
-    multiple_amount_ref: Optional[int] = 0
+    multiple_amount_ref: Optional[int] = 0,
+    visibility: Optional[Dict[str, bool]] = None
 ) -> Figure:
     """
     Crea un grafico a barre (singolo o raggruppato) degli integrali di regione.
@@ -608,7 +629,8 @@ def plot_integrals_regions(
     ax_absolute.set_xticks(x, region_labels, rotation=45, ha='right')
     
     # Aggiungi legenda se più serie
-    ax_absolute.legend()
+    if visibility["legend"].get("integrals", True):
+        ax_absolute.legend()
     fig_absolute.tight_layout()
 
     if reference:
@@ -693,7 +715,8 @@ def plot_integrals_regions(
         ax_referenced.set_xticks(x, region_labels, rotation=45, ha='right')
         
         # Aggiungi legenda se più serie
-        ax_referenced.legend()
+        if visibility["legend"].get("integrals", True):
+            ax_referenced.legend()
         fig_referenced.tight_layout()
         plt.show(block=False)
         return fig_absolute, fig_referenced
@@ -782,7 +805,14 @@ def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
         spectra[exp_idx] = spectrum_phased
     return spectra
 
-def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
+def plot_spectra(
+        title, 
+        spectra, 
+        n_exp, 
+        ppm_axis, 
+        sat_trans_hz,
+        visibility: Optional[Dict[str, bool]] = None
+    ) -> Figure:
     """
     Crea un plot interattivo di tutti gli spettri con checkbox per mostrare/nascondere
     ogni traccia.
@@ -799,6 +829,8 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz) -> Figure:
         Asse dei ppm.
     sat_trans_hz : List[float]
         Frequenze di saturazione in Hz (usate come etichette).
+    visibility : Optional[Dict[str, bool]]
+        Dizionario per controllare la visibilità nei plot.
     """
 
     #TODO: i check boxes non funzionano in multi-exp
@@ -1104,17 +1136,15 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         config_data["ppm_missing"] = False
     
     # ========== merge / add plot_visibility ===============
+    default_vis = get_default_visibility()
     if "plot_visibility" in config_data:
-        default_vis = get_default_visibility()
         current_vis = config_data["plot_visibility"]
-        # add missing keys from default (e.g. when new plot elements are added)
-        for key, val in default_vis.items():
-            if key not in current_vis:
-                current_vis[key] = val
-                modified = True
-        config_data["plot_visibility"] = current_vis
+        new_vis = merge_config_defaults (default_vis, current_vis)
+        if new_vis != current_vis:
+            config_data["plot_visibility"] = new_vis
+            modified = True
     else:
-        config_data["plot_visibility"] = get_default_visibility()
+        config_data["plot_visibility"] = default_vis
         modified = True
     # ======================================================
                 
@@ -1535,7 +1565,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         plot_integrals_regions(
             data=analysis_results,
             reference=with_ref,
-            multiple_amount_ref=multiple_amount_ref if with_ref else 0
+            multiple_amount_ref=multiple_amount_ref if with_ref else 0,
+            visibility=config.get("plot_visibility", get_default_visibility())
         )
     # ═══════════════════════════════════════════════════════════════
     
@@ -1613,7 +1644,14 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # Process and plot spectra
             # ----------------------------------------------------------------------
             spectra = process_spectra(data, dic, n_exp)
-            fig: Figure = plot_spectra(title=f"Spectra - {folder_name_short}", spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis, sat_trans_hz=sat_trans_hz)
+            fig: Figure = plot_spectra(
+                title=f"Spectra - {folder_name_short}", 
+                spectra=spectra, 
+                n_exp=n_exp, 
+                ppm_axis=ppm_axis, 
+                sat_trans_hz=sat_trans_hz,
+                visibility=config.get("plot_visibility", get_default_visibility())
+            )
             
             # ----------------------------------------------------------------------
             # Se i ppm non sono ancora noti, chiediamo usando la prima cartella
@@ -1901,7 +1939,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         plot_integrals_regions(
             data=analysis_results,
             reference=with_ref,
-            multiple_amount_ref=multiple_amount_ref if with_ref else 0
+            multiple_amount_ref=multiple_amount_ref if with_ref else 0,
+            visibility=config.get("plot_visibility", get_default_visibility())
         )
 
     # ----------------------------------------------------------------------
