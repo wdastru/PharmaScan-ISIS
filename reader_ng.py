@@ -36,9 +36,10 @@ METABOLITE_REGIONS: dict[str, List[float]] = {
     #"3PG/F6P": [5.8, 6.7],
     "Pi": [4.3, 5.3],
     #"PDE": [3.5, 4.0],
-    "PEP 1,3 BPG": [1.5, 3.5],
-    "GAMMA-ATP": [-4, -1.3],
+    "PEP 1,3 BPG": [0.5, 4.3],
+    "GAMMA-ATP": [-3.5, -1.3],
     "ALPHA-ATP": [-9, -6],
+    "ALPHA,BETA-ADP": [-6, -3]
 }
 CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
 CACHE_DIR.mkdir(exist_ok=True)
