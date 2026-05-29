@@ -1046,54 +1046,6 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
             print("Inserire un numero intero.")
 
 # ----------------------------------------------------------------------
-# Helper functions for statistics accumulation (refactored)
-# ----------------------------------------------------------------------
-
-def _init_stats_lists(length: int) -> Dict[str, List[float]]:
-    """Create a dictionary of zero-filled lists for statistical accumulation.
-    
-    Returns lists for:
-        - max_indexes, max_vals, sat_trans_hz (averages)
-        - sd_max_indexes, sd_max_vals, sd_sat_trans_hz (for standard deviations)
-    """
-    return {
-        "max_indexes": [0.0] * length,
-        "max_vals": [0.0] * length,
-        "sat_trans_hz": [0.0] * length,
-        "sd_max_indexes": [0.0] * length,
-        "sd_max_vals": [0.0] * length,
-        "sd_sat_trans_hz": [0.0] * length,
-    }
-
-def _accumulate_averages(acc: Dict[str, List[float]], 
-                         values: Tuple[List[int], List[float], List[float]], 
-                         divisor: int) -> None:
-    """Add weighted contributions to the average accumulators."""
-    max_indexes, max_vals, sat_trans_hz = values
-    for k, (i, v, st) in enumerate(zip(max_indexes, max_vals, sat_trans_hz)):
-        acc["max_indexes"][k] += i / divisor
-        acc["max_vals"][k] += v / divisor
-        acc["sat_trans_hz"][k] += st / divisor
-
-def _accumulate_squared_diffs(
-    sd_acc: Dict[str, List[float]],
-    values: Tuple[List[int], List[float], List[float]],
-    avg: Dict[str, List[float]]
-) -> None:
-    """Sum squared differences from the mean for standard deviation."""
-    max_indexes, max_vals, sat_trans_hz = values
-    for j, (index, val, freq) in enumerate(zip(max_indexes, max_vals, sat_trans_hz)):
-        sd_acc["sd_max_indexes"][j] += (index - avg["max_indexes"][j]) ** 2
-        sd_acc["sd_max_vals"][j] += (val - avg["max_vals"][j]) ** 2
-        sd_acc["sd_sat_trans_hz"][j] += (freq - avg["sat_trans_hz"][j]) ** 2
-
-def _finalize_std_dev(sd_acc: Dict[str, List[float]], count: int) -> None:
-    """Compute square root of variance (sample std. dev.)."""
-    for key in ("sd_max_indexes", "sd_max_vals", "sd_sat_trans_hz"):
-        for j in range(len(sd_acc[key])):
-            sd_acc[key][j] = np.sqrt(sd_acc[key][j] / (count - 1)) if count > 1 else 0.0
-
-# ----------------------------------------------------------------------
 # Core logic: ensure complete config and run analysis
 # ----------------------------------------------------------------------
 

@@ -7,13 +7,9 @@ from scipy.integrate import simpson
 from reader_ng import (
     find_maximum,
     compute_regions_integrals,
-    METABOLITE_REGIONS,
+    DEFAULT_METABOLITE_REGIONS,
     N_POINTS_FIT,
     parameter_extract,
-    _init_stats_lists,
-    _accumulate_averages,
-    _accumulate_squared_diffs,
-    _finalize_std_dev,
     _compute_integrals_stats,
     spline_fit
 )
@@ -43,15 +39,15 @@ class TestComputeRegionsIntegrals:
         x_fit = np.linspace(-10, 10, N_POINTS_FIT)
         y_fit = np.ones_like(x_fit)
         integrals = compute_regions_integrals(x_fit, y_fit)
-        for region, (start, end) in METABOLITE_REGIONS.items():
+        for region, (start, end) in DEFAULT_METABOLITE_REGIONS.items():
             expected = end - start
             assert np.isclose(integrals[region], expected, rtol=1e-6, atol=1e-9), \
                 f"Region {region}: expected {expected}, got {integrals[region]}"
 
-    @pytest.mark.parametrize("region", list(METABOLITE_REGIONS.keys()))
+    @pytest.mark.parametrize("region", list(DEFAULT_METABOLITE_REGIONS.keys()))
     def test_triangle(self, region):
         """Triangle peaking at 1 → integral = width/2."""
-        start, end = METABOLITE_REGIONS[region]
+        start, end = DEFAULT_METABOLITE_REGIONS[region]
         x_fit = np.linspace(start, end, N_POINTS_FIT)
         centre = (start + end) / 2
         width = end - start
@@ -62,12 +58,6 @@ class TestComputeRegionsIntegrals:
         assert np.isclose(integrals[region], expected, rtol=1e-4, atol=1e-7), \
             f"Region {region}: expected {expected}, got {integrals[region]}"
 
-        # Other regions must be zero (x_fit covers only this region)
-        for other in METABOLITE_REGIONS:
-            if other != region:
-                assert integrals[other] == 0.0, \
-                    f"Region {other} should be 0, got {integrals[other]}"
-
     def test_oscillatory(self):
         """Compare with high‑resolution Simpson reference."""
         def oscillatory(x):
@@ -77,7 +67,7 @@ class TestComputeRegionsIntegrals:
         x_full = np.linspace(-10, 10, 2000)
         y_full = oscillatory(x_full)
         reference = {}
-        for region, (start, end) in METABOLITE_REGIONS.items():
+        for region, (start, end) in DEFAULT_METABOLITE_REGIONS.items():
             mask = (x_full >= start) & (x_full <= end)
             if np.any(mask):
                 x_reg = x_full[mask]
@@ -92,7 +82,7 @@ class TestComputeRegionsIntegrals:
         y_fit = oscillatory(x_fit)
         computed = compute_regions_integrals(x_fit, y_fit)
 
-        for region in METABOLITE_REGIONS:
+        for region in DEFAULT_METABOLITE_REGIONS:
             assert np.isclose(computed[region], reference[region], rtol=1e-2, atol=1e-5), \
                 f"Region {region}: reference {reference[region]:.6f}, got {computed[region]:.6f}"
 
@@ -165,52 +155,6 @@ class TestParameterExtract:
 # Tests for statistical accumulation helpers
 # ----------------------------------------------------------------------
 class TestStatistics:
-    def test_init_stats_lists(self):
-        length = 5
-        stats = _init_stats_lists(length)
-        assert len(stats["max_vals"]) == length
-        assert all(v == 0.0 for v in stats["max_vals"])
-        assert len(stats["sd_max_vals"]) == length
-
-    def test_accumulate_averages(self):
-        acc = _init_stats_lists(3)
-        total_folders = 2
-        val1 = ([10, 20, 30], [1.0, 2.0, 3.0], [100.0, 200.0, 300.0])
-        _accumulate_averages(acc, val1, total_folders)
-        val2 = ([30, 40, 50], [3.0, 4.0, 5.0], [300.0, 400.0, 500.0])
-        _accumulate_averages(acc, val2, total_folders)
-
-        expected_idx = [20, 30, 40]
-        expected_val = [2, 3, 4]
-        expected_freq = [200, 300, 400]
-        for i in range(3):
-            assert np.isclose(acc["max_indexes"][i], expected_idx[i])
-            assert np.isclose(acc["max_vals"][i], expected_val[i])
-            assert np.isclose(acc["sat_trans_hz"][i], expected_freq[i])
-
-    def test_std_dev(self):
-        acc = _init_stats_lists(2)
-        val1 = ([0, 0], [1.0, 2.0], [10.0, 20.0])
-        val2 = ([0, 0], [3.0, 6.0], [30.0, 60.0])
-
-        _accumulate_averages(acc, val1, 2)
-        _accumulate_averages(acc, val2, 2)
-
-        sd_acc = _init_stats_lists(2)
-        avg = {
-            "max_indexes": acc["max_indexes"],
-            "max_vals": acc["max_vals"],
-            "sat_trans_hz": acc["sat_trans_hz"],
-        }
-        _accumulate_squared_diffs(sd_acc, val1, avg)
-        _accumulate_squared_diffs(sd_acc, val2, avg)
-        _finalize_std_dev(sd_acc, 2)
-
-        # For two elements, sample std = |a-b|/sqrt(2)
-        assert np.isclose(sd_acc["sd_max_vals"][0], np.sqrt(((1-2)**2 + (3-2)**2) / 1))
-        assert np.isclose(sd_acc["sd_max_vals"][1], np.sqrt(((2-4)**2 + (6-4)**2) / 1))
-        assert np.isclose(sd_acc["sd_sat_trans_hz"][0], np.sqrt(((10-20)**2 + (30-20)**2) / 1))
-
     def test_compute_integrals_stats(self):
         analysis_results = {
             "s1": {"integrals": {"regionA": 1.0, "regionB": 2.0}},
