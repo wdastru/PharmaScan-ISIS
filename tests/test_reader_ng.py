@@ -10,7 +10,7 @@ from reader_ng import (
     DEFAULT_METABOLITE_REGIONS,
     N_POINTS_FIT,
     parameter_extract,
-    _compute_integrals_stats,
+    _compute_group_stats,
     spline_fit
 )
 
@@ -162,16 +162,16 @@ class TestStatistics:
             "s3": {"integrals": {"regionA": 3.0, "regionB": 6.0}},
         }
         keys = ["s1", "s2", "s3"]
-        stats = _compute_integrals_stats(keys, analysis_results)
+        stats = _compute_group_stats(keys, analysis_results) 
         mean, std = stats["mean"], stats["std"]
-
+        
         assert np.isclose(mean["regionA"], 2.0)
         assert np.isclose(mean["regionB"], 4.0)
         assert np.isclose(std["regionA"], 1.0)   # sample std of 1,2,3
         assert np.isclose(std["regionB"], 2.0)   # sample std of 2,4,6
 
         # Single sample → std = 0
-        single = _compute_integrals_stats(["s1"], analysis_results)
+        single = _compute_group_stats(["s1"], analysis_results)
         assert single["mean"]["regionA"] == 1.0
         assert single["std"]["regionA"] == 0.0
 
