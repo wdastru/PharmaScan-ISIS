@@ -15,6 +15,7 @@ from reader_ng import (
     _accumulate_squared_diffs,
     _finalize_std_dev,
     _compute_integrals_stats,
+    spline_fit
 )
 
 # ----------------------------------------------------------------------
@@ -229,3 +230,40 @@ class TestStatistics:
         single = _compute_integrals_stats(["s1"], analysis_results)
         assert single["mean"]["regionA"] == 1.0
         assert single["std"]["regionA"] == 0.0
+
+# ----------------------------------------------------------------------
+# Tests for Spline fit
+# ----------------------------------------------------------------------
+class TestSplineFit:
+    def test_spline_passes_through_original_points(self):
+        x = np.array([1, 2, 3, 4])
+        y = np.array([2, 4, 1, 3])
+        # Build an x_fit that includes the original x values
+        x_fit = np.linspace(1, 4, 50)
+        res = spline_fit(x, y, x_fit=x_fit)
+        assert res["fit_successful"]
+        # Find indices of original x in x_fit
+        idx = [np.argmin(np.abs(x_fit - xi)) for xi in x]
+        np.testing.assert_allclose(res["y_fit"][idx], y, rtol=1e-3)
+
+    def test_x_fit_custom(self):
+        x = np.array([0, 1, 2])
+        y = np.array([0, 1, 0])
+        custom_x = np.linspace(0, 2, 10)
+        res = spline_fit(x, y, x_fit=custom_x)
+        assert np.array_equal(res["x_fit"], custom_x)
+
+    def test_spline_fit_returns_valid_output(self):
+        x = np.array([1.0, 2.0, 3.0, 4.0])
+        y = np.array([2.0, 4.0, 1.0, 3.0])
+        res = spline_fit(x, y, n_points=50)
+
+        assert res["fit_successful"] is True
+        assert isinstance(res["x"], np.ndarray)
+        assert isinstance(res["y"], np.ndarray)
+        assert isinstance(res["x_fit"], np.ndarray)
+        assert isinstance(res["y_fit"], np.ndarray)
+        assert res["x_fit"].shape == (50,)
+        assert res["y_fit"].shape == (50,)
+        np.testing.assert_array_equal(res["x"], x)
+        np.testing.assert_array_equal(res["y"], y)                

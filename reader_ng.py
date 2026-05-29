@@ -1577,14 +1577,18 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # ═══════════════════════════════════════════════════════════════
     
     else:
-
-        # Initialize accumulators using helper
-        ref_stats = None
-        avg_stats = None
+        # Liste per accumulare i dati grezzi di ciascun gruppo
+        ref_data = []      # conterrà tuple (max_indexes, max_vals, sat_trans_hz)
+        avg_data = []      # per il gruppo sample (multiple)
+        
         ref_keys = []
         sample_keys = []
-        ref_work_offset_hz = []
-        avg_work_offset_hz = []
+        ref_work_offset_hz = None
+        avg_work_offset_hz = None
+        ref_uc = None
+        avg_uc = None
+        ref_bf1 = None
+        avg_bf1 = None
         
         for idx, folder in enumerate(folders):
             base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
@@ -1618,23 +1622,21 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 )
                 return
             
-            if with_multiple:
-                if idx < multiple_amount:
-                    if not avg_work_offset_hz:
-                        avg_work_offset_hz = work_offset_hz
-                    elif avg_work_offset_hz != work_offset_hz:
-                        print(colored(
-                            f"Error: different work_offset_hz in sample folders.", "red", attrs=["bold"])
-                        )
+            if with_multiple and idx < multiple_amount:
+                if avg_work_offset_hz is None:
+                    avg_work_offset_hz = work_offset_hz
+                elif avg_work_offset_hz != work_offset_hz:
+                    print(colored(
+                        f"Error: different work_offset_hz in sample folders.", "red", attrs=["bold"])
+                    )
 
-            if with_ref:
-                if idx < multiple_amount_ref:
-                    if not ref_work_offset_hz:
-                        ref_work_offset_hz = work_offset_hz
-                    elif ref_work_offset_hz != work_offset_hz:
-                        print(colored(
-                            f"Error: different work_offset_hz in reference folders.", "red", attrs=["bold"])
-                        )
+            if with_ref and idx < multiple_amount_ref:
+                if ref_work_offset_hz is None:
+                    ref_work_offset_hz = work_offset_hz
+                elif ref_work_offset_hz != work_offset_hz:
+                    print(colored(
+                        f"Error: different work_offset_hz in reference folders.", "red", attrs=["bold"])
+                    )
                     
             # ----------------------------------------------------------------------
             # Load spectra
@@ -1700,85 +1702,111 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             })
 
             # ------------------------------------------------------------------
-            # Accumulate averages for reference and multiple (sample) groups
+            # Accumula dati grezzi per i gruppi (invece di fare medie progressive)
             # ------------------------------------------------------------------
-            num_sat = len(sat_trans_hz)
-            if with_multiple:
-                if avg_stats is None:
-                    avg_stats = _init_stats_lists(num_sat)
-                # belong to multiple group?
-                if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
-                    if len(max_vals) == num_sat:
-                        _accumulate_averages(avg_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount)
-                        pass
-                    else:
-                        print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
+            if with_multiple and multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
+                avg_data.append((max_indexes, max_vals, sat_trans_hz))
+                # Conserva i metadati del gruppo (supponendo siano uguali per tutti i membri)
+                if avg_uc is None:
+                    avg_uc = uc
+                    avg_bf1 = bf1
+                else:
+                    if not np.allclose(avg_uc.ppm_scale(), uc.ppm_scale()):
+                        print(colored(
+                            f"Warning: uc differs in average group (folder {folder}).", 
+                            "yellow", 
+                            attrs=["bold"])
+                        )
+                    if avg_bf1 != bf1:
+                        print(colored(
+                            f"Warning: parameter bf1 differs in average group (folder {folder}).", 
+                            "yellow", 
+                            attrs=["bold"])
+                        )
 
-            if with_ref:
-                if ref_stats is None:
-                    ref_stats = _init_stats_lists(num_sat)
-                
-                # belong to reference group?
-                if idx < multiple_amount_ref:
-                    if len(max_vals) == num_sat:
-                        _accumulate_averages(ref_stats, (max_indexes, max_vals, sat_trans_hz), multiple_amount_ref)
-                    else:
-                        print(f"{colored('Error', 'red', attrs=['bold'])}: number of saturation frequencies not matching number of experiments (max_values).")
+            if with_ref and idx < multiple_amount_ref:
+                ref_data.append((max_indexes, max_vals, sat_trans_hz))
+                if ref_uc is None:
+                    ref_uc = uc
+                    ref_bf1 = bf1
+                else:
+                    if not np.allclose(ref_uc.ppm_scale(), uc.ppm_scale()):
+                        print(colored(
+                            f"Warning: uc differs in reference group (folder {folder}).", 
+                            "yellow", 
+                            attrs=["bold"])
+                        )
+                    if ref_bf1 != bf1:
+                        print(colored(
+                            f"Warning: parameter bf1 differs in reference group (folder {folder}).", 
+                            "yellow", 
+                            attrs=["bold"])
+                        )
 
         # ----------------------------------------------------------------------
-        # After processing all folders, finalize averages and compute std dev
+        # Calcolo medie e deviazioni standard con numpy (dopo il ciclo)
         # ----------------------------------------------------------------------
-        if with_multiple and multiple_amount > 1 and avg_stats is not None:
+        if with_multiple and len(avg_data) > 1:
+            # Converti le liste in array 2D: shape (n_cartelle, n_punti)
+            avg_max_idx_arr = np.array([d[0] for d in avg_data])
+            avg_max_val_arr = np.array([d[1] for d in avg_data])
+            avg_sat_arr     = np.array([d[2] for d in avg_data])
+            
             analysis_results["avg"] = {
-                "max_indexes": [round(v) for v in avg_stats["max_indexes"]],
-                "max_vals": avg_stats["max_vals"],
-                "sat_trans_hz": avg_stats["sat_trans_hz"],
+                "max_indexes": np.round(np.mean(avg_max_idx_arr, axis=0)).tolist(),
+                "max_vals": np.mean(avg_max_val_arr, axis=0).tolist(),
+                "sat_trans_hz": np.mean(avg_sat_arr, axis=0).tolist(),
+                "sd_max_indexes": np.std(avg_max_idx_arr, axis=0, ddof=1).tolist(),
+                "sd_max_vals": np.std(avg_max_val_arr, axis=0, ddof=1).tolist(),
+                "sd_sat_trans_hz": np.std(avg_sat_arr, axis=0, ddof=1).tolist(),
                 "work_offset_hz": avg_work_offset_hz,
-                # TODO: check if uc and bf1 are the same for the multiple expt 
-                "uc": uc,
-                "bf1": bf1
+                "uc": avg_uc,
+                "bf1": avg_bf1
             }
-            # Calculate standard deviations
-            # We need the original data again – we stored them in analysis_results for each folder.
-            # Instead of re-looping, we can loop over analysis_results items as before but now using helpers.
-            # We'll do the squared differences accumulation in a second pass over the folder data.
-            for idx, (k, v) in enumerate(analysis_results.items()):
-                if multiple_amount_ref <= idx < (multiple_amount_ref + multiple_amount):
-                    _accumulate_squared_diffs(
-                        avg_stats,
-                        (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
-                        {"max_indexes": analysis_results["avg"]["max_indexes"],
-                        "max_vals": analysis_results["avg"]["max_vals"],
-                        "sat_trans_hz": analysis_results["avg"]["sat_trans_hz"]}
-                    )
-            _finalize_std_dev(avg_stats, multiple_amount)
-            analysis_results["avg"]["sd_max_indexes"] = avg_stats["sd_max_indexes"]
-            analysis_results["avg"]["sd_max_vals"] = avg_stats["sd_max_vals"]
-            analysis_results["avg"]["sd_sat_trans_hz"] = avg_stats["sd_sat_trans_hz"]
+        elif with_multiple and len(avg_data) == 1:
+            # Un solo esperimento: std = 0, media = unico valore
+            d = avg_data[0]
+            analysis_results["avg"] = {
+                "max_indexes": d[0],
+                "max_vals": d[1],
+                "sat_trans_hz": d[2],
+                "sd_max_indexes": [0.0]*len(d[0]),
+                "sd_max_vals": [0.0]*len(d[1]),
+                "sd_sat_trans_hz": [0.0]*len(d[2]),
+                "work_offset_hz": avg_work_offset_hz,
+                "uc": avg_uc,
+                "bf1": avg_bf1
+            }
 
-        if with_ref and ref_stats is not None:
+        if with_ref and len(ref_data) > 1:
+            ref_max_idx_arr = np.array([d[0] for d in ref_data])
+            ref_max_val_arr = np.array([d[1] for d in ref_data])
+            ref_sat_arr     = np.array([d[2] for d in ref_data])
+            
             analysis_results["reference"] = {
-                "max_indexes": [round(v) for v in ref_stats["max_indexes"]],
-                "max_vals": ref_stats["max_vals"],
-                "sat_trans_hz": ref_stats["sat_trans_hz"],
+                "max_indexes": np.round(np.mean(ref_max_idx_arr, axis=0)).tolist(),
+                "max_vals": np.mean(ref_max_val_arr, axis=0).tolist(),
+                "sat_trans_hz": np.mean(ref_sat_arr, axis=0).tolist(),
+                "sd_max_indexes": np.std(ref_max_idx_arr, axis=0, ddof=1).tolist(),
+                "sd_max_vals": np.std(ref_max_val_arr, axis=0, ddof=1).tolist(),
+                "sd_sat_trans_hz": np.std(ref_sat_arr, axis=0, ddof=1).tolist(),
                 "work_offset_hz": ref_work_offset_hz,
-                # TODO: check if uc and bf1 are the same for the reference expt 
-                "uc": uc,
-                "bf1": bf1
+                "uc": ref_uc,
+                "bf1": ref_bf1
             }
-            for idx, (k, v) in enumerate(analysis_results.items()):
-                if idx < multiple_amount_ref:
-                    _accumulate_squared_diffs(
-                        ref_stats,
-                        (v["max_indexes"], v["max_vals"], v["sat_trans_hz"]),
-                        {"max_indexes": analysis_results["reference"]["max_indexes"],
-                        "max_vals": analysis_results["reference"]["max_vals"],
-                        "sat_trans_hz": analysis_results["reference"]["sat_trans_hz"]}
-                    )
-            _finalize_std_dev(ref_stats, multiple_amount_ref)
-            analysis_results["reference"]["sd_max_indexes"] = ref_stats["sd_max_indexes"]
-            analysis_results["reference"]["sd_max_vals"] = ref_stats["sd_max_vals"]
-            analysis_results["reference"]["sd_sat_trans_hz"] = ref_stats["sd_sat_trans_hz"]
+        elif with_ref and len(ref_data) == 1:
+            d = ref_data[0]
+            analysis_results["reference"] = {
+                "max_indexes": d[0],
+                "max_vals": d[1],
+                "sat_trans_hz": d[2],
+                "sd_max_indexes": [0.0]*len(d[0]),
+                "sd_max_vals": [0.0]*len(d[1]),
+                "sd_sat_trans_hz": [0.0]*len(d[2]),
+                "work_offset_hz": ref_work_offset_hz,
+                "uc": ref_uc,
+                "bf1": ref_bf1
+            }
         
         # ----------------------------------------------------------------------
         # Correct saturation frequencies, fit z-spectra and calculate integrals
