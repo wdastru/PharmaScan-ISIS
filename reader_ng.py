@@ -457,11 +457,11 @@ def plot_data(
 
     # Data points
     if visibility.get("data", True):
-        if title in ("reference", "avg") and y_std_data is not None:
+        if y_std_data is not None:
             plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color='b', label='Data')
         else:
             plt.plot(x, y, 'o', color='b', label='Data')
-    
+                
     # Spline fit
     if visibility.get("spline", True):
         plt.plot(x_fit, y_fit, 'r-', label=fit_label)
@@ -1054,6 +1054,98 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
     plt.show(block=False)
     return fig
 
+def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
+                                folder_names=None,
+                                title=None, ylabel="Integrale",
+                                figsize=(12, 6), visibility=None):
+    """
+    Bar chart per un singolo gruppo: barre affiancate per ogni cartella
+    (con colori e nomi) e barra della media ± SD.
+    """
+    if visibility is None:
+        visibility = get_default_visibility()
+
+    stats = group_stats.get(group_label)
+    folder_vals = per_folder_integrals.get(group_label, {})
+
+    if not stats or not folder_vals:
+        print(f"Dati insufficienti per il gruppo '{group_label}'")
+        return None
+
+    regions = list(stats["mean"].keys())
+    means = [stats["mean"][r] for r in regions]
+    stds  = [stats["std"][r] for r in regions]
+
+    first_region = regions[0]
+    n_folders = len(folder_vals.get(first_region, []))
+    if n_folders == 0:
+        print(f"Nessun integrale per cartella nel gruppo '{group_label}'")
+        return None
+
+    # Usa i nomi passati o genera nomi di default
+    if folder_names is None or len(folder_names) != n_folders:
+        folder_names = [f"Cartella {i+1}" for i in range(n_folders)]
+
+    # Spazio totale e calcolo larghezze (come prima)
+    available_width = 0.8
+    gap_between_bars = 0.02
+    extra_gap_before_avg = 0.05
+    total_bars = n_folders + 1
+    total_gaps = n_folders
+    bar_width = (available_width - n_folders * gap_between_bars - extra_gap_before_avg) / total_bars
+    if bar_width < 0.05:
+        gap_between_bars = 0.01
+        extra_gap_before_avg = 0.02
+        bar_width = (available_width - n_folders * gap_between_bars - extra_gap_before_avg) / total_bars
+        if bar_width < 0.03:
+            bar_width = 0.03
+    avg_bar_width = bar_width  # mantieni stessa larghezza per allineamento esatto
+
+    total_width = (n_folders * bar_width +
+                   n_folders * gap_between_bars +
+                   extra_gap_before_avg +
+                   avg_bar_width)
+
+    x = np.arange(len(regions))
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Colormap per le cartelle
+    cmap = plt.get_cmap('tab10')
+    folder_colors = [cmap(i % 10) for i in range(n_folders)]
+    color_avg = '#2c3e50'  # blu scuro per la media
+
+    for j, reg in enumerate(regions):
+        start_x = x[j] - total_width / 2
+        vals = folder_vals.get(reg, [])
+
+        # Barre delle cartelle
+        for k, val in enumerate(vals):
+            pos = start_x + k * (bar_width + gap_between_bars) + bar_width/2
+            ax.bar(pos, val, bar_width,
+                   color=folder_colors[k], edgecolor='black', linewidth=0.5,
+                   label=folder_names[k] if j == 0 else "")
+
+        # Barra della media
+        pos_avg = start_x + n_folders * (bar_width + gap_between_bars) + extra_gap_before_avg + avg_bar_width/2
+        ax.bar(pos_avg, means[j], avg_bar_width,
+               yerr=stds[j], capsize=4,
+               color=color_avg, edgecolor='black', linewidth=0.8,
+               label='Media ± SD' if j == 0 else "")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(regions, rotation=45, ha='right')
+    ax.set_ylabel(ylabel)
+    if title is None:
+        title = f"Integrali per regione – {group_label}"
+    ax.set_title(title)
+    if visibility["legend"].get("integrals", True):
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.grid(axis='y', alpha=0.3)
+    fig.tight_layout()
+    plt.show(block=False)
+    return fig
+
 # ----------------------------------------------------------------------
 # Main interactive configuration setup
 # ----------------------------------------------------------------------
@@ -1155,6 +1247,17 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
             config_data["metabolite_regions"] = merged_regions
             modified = True
 
+    # ---------- Force save if config was migrated from old format ----------
+    if config_name:  # se è una configurazione salvata
+        config_path = CONFIG_DIR / f"{config_name}.json"
+        if config_path.exists():
+            with open(config_path, "r") as f:
+                disk_config = json.load(f)
+            # Se il file su disco non ha la chiave "groups" ma la nostra in memoria sì,
+            # significa che è stato migrato in questa sessione
+            if "groups" not in disk_config and "groups" in config_data:
+                modified = True
+
     if modified:
         save_config(config_name, config_data)
 
@@ -1232,8 +1335,12 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
             else:
                 if group_meta[grp_idx]["work_offset_hz"] != work_offset_hz:
-                    print(colored(f"Error: different work_offset in group '{label}'", "red"))
-                    return
+                    print(colored(
+                        f"Error: different work_offset in group '{label}'", 
+                        "red", 
+                        attrs=["bold"])
+                    )
+                    #return
 
             dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
             analysis_results[folder_name_short]["uc"] = uc
@@ -1288,6 +1395,24 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "lorentzian_envelope_results": res["lorentzian_envelope_results"],
                 "spline_fit_results": res["spline_fit_results"]
             })
+
+            # After storing the results for the single folder, optionally plot it
+            plot_data(
+                x=res["spline_fit_results"]["x"],
+                y=res["spline_fit_results"]["y"],
+                x_fit=res["spline_fit_results"]["x_fit"],
+                y_fit=res["spline_fit_results"]["y_fit"],
+                title=f"Single folder: {folder_name_short}",
+                invert_x=True,
+                add_lorentz=True,
+                lorentzian_envelope_results=res["lorentzian_envelope_results"],
+                add_sigmoid=True,
+                sigmoidal_envelope_results=res["sigmoidal_envelope_results"],
+                diff_x=res["diff_x"],
+                diff_y=res["diff_y"],
+                diff_label="Lorentzian envelope - Spline fit",
+                visibility=config.get("plot_visibility", get_default_visibility())
+            )
 
         # --- Group average ---
         if group_raw[grp_idx]:
@@ -1349,6 +1474,18 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         group_stats[label] = _compute_group_stats(keys, analysis_results)
     analysis_results["group_stats"] = group_stats
 
+    # ---- Per‑folder integrals dictionary (per i grafici di gruppo) ----
+    per_folder_integrals = {}
+    for grp_idx, grp in enumerate(groups):
+        label = grp["label"]
+        keys = folder_keys_per_group[grp_idx]
+        group_folder_integrals = {}
+        for key in keys:
+            integr = analysis_results.get(key, {}).get("integrals", {})
+            for region, val in integr.items():
+                group_folder_integrals.setdefault(region, []).append(val)
+        per_folder_integrals[label] = group_folder_integrals    
+
     # ---- p‑values (reference vs each sample) ----
     ref_label = None
     ref_keys = []
@@ -1372,6 +1509,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     plot_multigroup_integrals(group_stats, p_values, groups,
                               visibility=config.get("plot_visibility", get_default_visibility()))
 
+    # ---- Plot per gruppo con cartelle singole ----
+    for grp_idx, grp in enumerate(groups):
+        label = grp["label"]
+        plot_group_folder_integrals(
+            group_label=label,
+            group_stats=group_stats,
+            per_folder_integrals=per_folder_integrals,
+            folder_names=folder_keys_per_group[grp_idx],   # <-- lista dei nomi brevi
+            visibility=config.get("plot_visibility", get_default_visibility())
+        )
+        
     print("\nTutti i grafici sono stati creati. Premi Invio per uscire.")
     input()
     plt.close('all')
