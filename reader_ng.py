@@ -5,6 +5,8 @@ Processing of Bruker NMR data for saturation transfer experiments.
 Reads FIDs, applies corrections, displays spectra with interactive checkboxes,
 allows the user to select a ppm range, and calculates maxima to generate
 a saturation transfer curve.
+
+Supports multiple groups (reference + any number of sample groups).
 """
 
 import nmrglue as ng
@@ -39,11 +41,14 @@ DEFAULT_METABOLITE_REGIONS: dict[str, List[float]] = {
     "ALPHA-ATP": [-9, -6]
 }
 METABOLITE_REGIONS = DEFAULT_METABOLITE_REGIONS.copy()
-CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
+CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 N_POINTS_FIT = 200
 
-def merge_config_defaults (defaults: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+# ----------------------------------------------------------------------
+# Utility functions for configuration migration and merging
+# ----------------------------------------------------------------------
+def merge_config_defaults(defaults: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
     """
     Recursively merge `defaults` into `current`.
     For every key in `defaults` that is missing in `current`, add it.
@@ -55,9 +60,12 @@ def merge_config_defaults (defaults: Dict[str, Any], current: Dict[str, Any]) ->
         if key not in merged:
             merged[key] = default_val
         elif isinstance(default_val, dict) and isinstance(merged[key], dict):
-            merged[key] = merge_config_defaults (default_val, merged[key])
+            merged[key] = merge_config_defaults(default_val, merged[key])
     return merged
-    
+
+# ----------------------------------------------------------------------
+# Cache management
+# ----------------------------------------------------------------------
 def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
     if not config_name:
@@ -72,26 +80,24 @@ def _build_cache_key(config: Dict[str, Any]) -> str:
     """
     Crea una chiave univoca basata sui parametri e sulle cartelle (compresa la data di modifica).
     """
-    folders = config.get("folders", [])
-    # Dati delle cartelle: percorso e timestamp
+    groups = config.get("groups", [])
+    # Dati delle cartelle: percorso e timestamp dell'ultima modifica
     folder_info = []
-    for f in folders:
-        try:
-            mtime = os.path.getmtime(f)
-        except OSError:
-            mtime = 0
-        folder_info.append((str(f), mtime))
-    # Parametri determinanti
+    for grp in groups:
+        for f in grp.get("folders", []):
+            try:
+                mtime = os.path.getmtime(f)
+            except OSError:
+                mtime = 0
+            folder_info.append((str(f), mtime))
     key_data = {
-        "with_ref": config.get("with_ref"),
-        "multiple_amount_ref": config.get("multiple_amount_ref"),
-        "multiple_amount": config.get("multiple_amount"),
+        "groups": [{"label": g["label"], "is_reference": g.get("is_reference", False)}
+                   for g in groups],
         "start_ppm": config.get("start_ppm"),
         "end_ppm": config.get("end_ppm"),
-        "folders": folder_info,
+        "folders_info": folder_info,
         "metabolite_regions": METABOLITE_REGIONS,
     }
-    # Serializza in modo stabile (ordinato)
     key_str = json.dumps(key_data, sort_keys=True, default=str)
     return hashlib.sha256(key_str.encode()).hexdigest()
 
@@ -101,16 +107,13 @@ def load_cache(config_name: str, config: Dict[str, Any]) -> Optional[dict]:
         return None
     try:
         payload = load(cache_path)
-        current_key = _build_cache_key(config)
-        if payload.get("key") == current_key:
+        if payload.get("key") == _build_cache_key(config):
             return payload["analysis_results"]
         else:
             print(f"Cache obsoleta per '{config_name}'.")
             return None
     except Exception as e:
-        print(colored(
-            f"Errore cache per '{config_name}': {e}", "red", attrs=["bold"])
-        )
+        print(colored(f"Errore cache per '{config_name}': {e}", "red", attrs=["bold"]))
         return None
 
 def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict) -> None:
@@ -118,7 +121,7 @@ def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict)
     payload = {"key": _build_cache_key(config), "analysis_results": analysis_results}
     dump(payload, cache_path, compress=3)
     print(f"Cache salvata per '{config_name}' in {cache_path.name}")
-    
+
 # ----------------------------------------------------------------------
 # Configuration handling
 # ----------------------------------------------------------------------
@@ -156,9 +159,37 @@ def load_config(name: str) -> Dict[str, Any]:
     try:
         with open(config_path, "r") as f:
             config = json.load(f)
-        # Converti i percorsi delle cartelle da stringhe a Path
-        if "folders" in config:
-            config["folders"] = [Path(p) for p in config["folders"]]
+
+        # --- Migration from old format ---
+        if "groups" not in config:
+            with_ref = config.get("with_ref", False)
+            ref_count = config.get("multiple_amount_ref", 0) if with_ref else 0
+            sample_count = config.get("multiple_amount", 0) if config.get("with_multiple", False) else 0
+            folders = [Path(p) for p in config.get("folders", [])]
+            groups = []
+            idx = 0
+            if with_ref and ref_count > 0:
+                groups.append({
+                    "label": "reference",
+                    "is_reference": True,
+                    "folders": folders[idx:idx+ref_count]
+                })
+                idx += ref_count
+            if sample_count > 0:
+                groups.append({
+                    "label": "sample",
+                    "is_reference": False,
+                    "folders": folders[idx:idx+sample_count]
+                })
+            config["groups"] = groups
+            # Remove old keys
+            for old_key in ("with_ref", "with_multiple", "multiple_amount",
+                            "multiple_amount_ref", "folders"):
+                config.pop(old_key, None)
+        else:
+            # Ensure folders are Path objects
+            for grp in config["groups"]:
+                grp["folders"] = [Path(p) for p in grp["folders"]]
         return config
     except Exception as e:
         print(colored(
@@ -167,13 +198,19 @@ def load_config(name: str) -> Dict[str, Any]:
         return {}
 
 def save_config(name: str, config: Dict[str, Any]) -> None:
-    """Salva una configurazione per nome (senza estensione)."""
     ensure_config_dir()
     config_path = CONFIG_DIR / f"{name}.json"
-    # Crea una copia convertendo i Path in stringhe
     to_save = config.copy()
-    if "folders" in to_save:
-        to_save["folders"] = [str(p) for p in to_save["folders"]]
+    # Convert Paths to strings and ensure groups structure is clean
+    if "groups" in to_save:
+        to_save["groups"] = [
+            {**grp, "folders": [str(p) for p in grp["folders"]]}
+            for grp in to_save["groups"]
+        ]
+    # Remove any leftover old keys (safety)
+    for old in ("with_ref", "with_multiple", "multiple_amount",
+                "multiple_amount_ref", "folders"):
+        to_save.pop(old, None)
     try:
         with open(config_path, "w") as f:
             json.dump(to_save, f, indent=4)
