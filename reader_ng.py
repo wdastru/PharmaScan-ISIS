@@ -1284,7 +1284,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi usarla?", default=True)
     if cached and use_cache:
         analysis_results = cached
-        # Re-plot from cache
+
+        # ------------------------------------------------------------
+        # 1. Re‑plot Z‑spettri per i gruppi (media)
+        # ------------------------------------------------------------
         for grp in groups:
             label = grp["label"]
             z = analysis_results.get(label, {})
@@ -1300,10 +1303,69 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_label="Lorentzian envelope - Spline fit",
                     visibility=config.get("plot_visibility", get_default_visibility())
                 )
+
+        # ------------------------------------------------------------
+        # 2. Re‑plot Z‑spettri per le singole cartelle
+        # ------------------------------------------------------------
+        folder_keys_per_group_cached = analysis_results.get("folder_keys_per_group", [])
+        for grp_idx, keys in enumerate(folder_keys_per_group_cached):
+            for key in keys:
+                res = analysis_results.get(key, {})
+                if "spline_fit_results" in res and res["spline_fit_results"].get("fit_successful"):
+                    plot_data(
+                        x=res["spline_fit_results"]["x"],
+                        y=res["spline_fit_results"]["y"],
+                        x_fit=res["spline_fit_results"]["x_fit"],
+                        y_fit=res["spline_fit_results"]["y_fit"],
+                        title=f"Single folder: {key}",
+                        invert_x=True,
+                        add_lorentz=True,
+                        lorentzian_envelope_results=res.get("lorentzian_envelope_results"),
+                        add_sigmoid=True,
+                        sigmoidal_envelope_results=res.get("sigmoidal_envelope_results"),
+                        diff_x=res.get("diff_x"),
+                        diff_y=res.get("diff_y"),
+                        diff_label="Lorentzian envelope - Spline fit",
+                        visibility=config.get("plot_visibility", get_default_visibility())
+                    )
+
+        # ------------------------------------------------------------
+        # 3. Prepara i dati per i grafici a barre dei singoli gruppi
+        # ------------------------------------------------------------
+        per_folder_integrals = {}
+        for grp_idx, grp in enumerate(groups):
+            label = grp["label"]
+            keys = folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else []
+            group_folder_integrals = {}
+            for key in keys:
+                integr = analysis_results.get(key, {}).get("integrals", {})
+                for region, val in integr.items():
+                    group_folder_integrals.setdefault(region, []).append(val)
+            per_folder_integrals[label] = group_folder_integrals
+
         group_stats = analysis_results.get("group_stats", {})
+
+        # ------------------------------------------------------------
+        # 4. Grafico a barre per gruppo (cartelle + media)
+        # ------------------------------------------------------------
+        for grp_idx, grp in enumerate(groups):
+            label = grp["label"]
+            if label in group_stats and label in per_folder_integrals:
+                plot_group_folder_integrals(
+                    group_label=label,
+                    group_stats=group_stats,
+                    per_folder_integrals=per_folder_integrals,
+                    folder_names=folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else [],
+                    visibility=config.get("plot_visibility", get_default_visibility())
+                )
+
+        # ------------------------------------------------------------
+        # 5. Grafico multi‑gruppo con p‑value (già presente)
+        # ------------------------------------------------------------
         pvals = analysis_results.get("p_values", {})
         plot_multigroup_integrals(group_stats, pvals, groups,
                                   visibility=config.get("plot_visibility", get_default_visibility()))
+
         print("Press Enter to exit...")
         input()
         plt.close('all')
@@ -1504,6 +1566,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             p_values[grp["label"]] = p_vals
     analysis_results["p_values"] = p_values
 
+    # Salvare in analysis_results la lista delle chiavi delle cartelle di ogni gruppo
+    # da usare nel ramo cache
+    analysis_results["folder_keys_per_group"] = folder_keys_per_group
+
     # ---- Save cache and show multigroup bar plot ----
     save_cache(config_name, config, analysis_results)
     plot_multigroup_integrals(group_stats, p_values, groups,
@@ -1519,7 +1585,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             folder_names=folder_keys_per_group[grp_idx],   # <-- lista dei nomi brevi
             visibility=config.get("plot_visibility", get_default_visibility())
         )
-        
+
     print("\nTutti i grafici sono stati creati. Premi Invio per uscire.")
     input()
     plt.close('all')
