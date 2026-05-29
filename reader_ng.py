@@ -30,18 +30,15 @@ from joblib import dump, load
 
 print(f"Using nmrglue version: {ng.__version__}")
 
-METABOLITE_REGIONS: dict[str, List[float]] = {
+DEFAULT_METABOLITE_REGIONS: dict[str, List[float]] = {
     "Glycolytic PMEs": [5.5, 9.0],
-    #"G6P/G3P": [6.7, 7.0],
-    #"3PG/F6P": [5.8, 6.7],
     "Pi": [4.3, 5.3],
-    #"PDE": [3.5, 4.0],
     "PEP 1,3 BPG": [1.0, 4.3],
     "GAMMA-ATP": [-3.5, -1.3],
     "ALPHA,BETA-ADP": [-6, -3],
     "ALPHA-ATP": [-9, -6]
-    
 }
+METABOLITE_REGIONS = DEFAULT_METABOLITE_REGIONS.copy()
 CACHE_DIR = Path(__file__).parent / "cache"          # cartella dedicata
 CACHE_DIR.mkdir(exist_ok=True)
 N_POINTS_FIT = 200
@@ -1149,6 +1146,13 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         config_data["plot_visibility"] = default_vis
         modified = True
     # ======================================================
+
+    # ========== merge / add metabolite_regions ===============
+    default_regions = DEFAULT_METABOLITE_REGIONS
+    if "metabolite_regions" not in config_data:
+        config_data["metabolite_regions"] = default_regions
+        modified = True
+    # =========================================================    
                 
     # Salva solo se ci sono state modifiche
     if modified:
@@ -1527,6 +1531,9 @@ def plot_grouped_comparison(
 
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     """Esegue l'analisi completa. Se i ppm mancano, li chiede usando la prima cartella."""
+
+    METABOLITE_REGIONS.clear()
+    METABOLITE_REGIONS.update(config.get("metabolite_regions", DEFAULT_METABOLITE_REGIONS))
 
     plt.ion()   # <-- interactive mode ON
     folders: List[Path] = config["folders"]
