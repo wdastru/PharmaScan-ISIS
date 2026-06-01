@@ -97,6 +97,7 @@ def _build_cache_key(config: Dict[str, Any]) -> str:
         "end_ppm": config.get("end_ppm"),
         "folders_info": folder_info,
         "metabolite_regions": METABOLITE_REGIONS,
+        "use_extra_lorentzians": config.get("use_extra_lorentzians", False),
     }
     key_str = json.dumps(key_data, sort_keys=True, default=str)
     return hashlib.sha256(key_str.encode()).hexdigest()
@@ -869,7 +870,8 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
 # New helper: process a single z-spectrum to get integrals
 # ----------------------------------------------------------------------
 def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz,
-                                    work_offset_hz, uc, bf1) -> Dict[str, Any]:
+                                    work_offset_hz, uc, bf1,
+                                    use_extra_lorentzians =False) -> Dict[str, Any]:
     """Fit envelopes, spline, compute difference and integrals for one dataset."""
     # 1. Correct frequencies
     zero_corrected_ppm = correct_sat_frequencies(sat_trans_hz.copy(), max_indexes,
@@ -913,15 +915,59 @@ def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz,
     # 7. Spline fit on corrected data
     spline_res = spline_fit(x=zero_corrected_ppm, y=sig_corrected, x_fit=x_common)
     if not spline_res.get("fit_successful", False):
-        return {"integrals": {},
-                "diff_x": None, "diff_y": None,
-                "sigmoidal_envelope_results": sigmoid_env,
-                "lorentzian_envelope_results": lor_env,
-                "spline_fit_results": spline_res}
+        return {
+            "integrals": {},
+            "diff_x": None, "diff_y": None,
+            "sigmoidal_envelope_results": sigmoid_env,
+            "lorentzian_envelope_results": lor_env,
+            "spline_fit_results": spline_res,
+            # extra-lorentzians fitting
+            "x_data": zero_corrected_ppm,
+            "y_data": sig_corrected,
+            "x_common": x_common,
+            "extra_lorentzians_results": None,
+            "integrals_extra": None,
+            "global_fit": None
+        }
 
     # 8. Difference and integrals
     diff_y = lor_env["y"] - spline_res["y_fit"]
     integrals = compute_regions_integrals(x_common, diff_y)
+
+    # --- Blocco per lorentziane extra (sperimentale) ---
+    global_fit = None
+    if use_extra_lorentzians:
+        # Fit globale (centrale + extra)
+        from scipy.interpolate import interp1d
+        y_min_data = np.min(sig_corrected)
+        h_center_init = A - y_min_data   # A = lor_env["A"]
+        gamma_init = gamma               # lor_env["gamma"]
+        
+        global_fit = fit_global_lorentzians(
+            zero_corrected_ppm, sig_corrected,
+            regions=METABOLITE_REGIONS,
+            center_init=(h_center_init, gamma_init),
+            baseline=1.0,
+            fixed_width=0.2
+        )
+        # Gli integrali delle extra sono i veri integrali metabolici
+        integrals = global_fit['integrals_extra']
+        # Per coerenza con i campi di plot, diff_y può essere la somma delle extra
+        interp_extra = interp1d(global_fit['x'], global_fit['y_extra_sum'],
+                                kind='linear', fill_value="extrapolate")
+        diff_y = interp_extra(x_common)
+        extra_lor_results = global_fit['extra']
+        integrals_extra = global_fit['integrals_extra']
+        # La spline non viene più usata
+        spline_res = {"fit_successful": False}
+    else:
+        # vecchio codice con spline e differenza
+        spline_res = spline_fit(x=zero_corrected_ppm, y=sig_corrected, x_fit=x_common)
+        diff_y = lor_env["y"] - spline_res["y_fit"]
+        integrals = compute_regions_integrals(x_common, diff_y)
+        extra_lor_results = None
+        integrals_extra = None
+    # ------------------------------------------------
 
     return {
         "integrals": integrals,
@@ -929,7 +975,14 @@ def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz,
         "diff_y": diff_y,
         "sigmoidal_envelope_results": sigmoid_env,
         "lorentzian_envelope_results": lor_env,
-        "spline_fit_results": spline_res
+        "spline_fit_results": spline_res,
+        # fields for extra lorentzian fitting
+        "x_data": zero_corrected_ppm,
+        "y_data": sig_corrected,
+        "x_common": x_common,
+        "extra_lorentzians_results": extra_lor_results,
+        "integrals_extra": integrals_extra,
+        "global_fit": global_fit
     }
 
 # ----------------------------------------------------------------------
@@ -1247,6 +1300,10 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
             config_data["metabolite_regions"] = merged_regions
             modified = True
 
+    if "use_extra_lorentzians" not in config_data:
+        config_data["use_extra_lorentzians"] = False
+        modified = True
+
     # ---------- Force save if config was migrated from old format ----------
     if config_name:  # se è una configurazione salvata
         config_path = CONFIG_DIR / f"{config_name}.json"
@@ -1262,6 +1319,143 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         save_config(config_name, config_data)
 
     return config_data
+
+# ----------------------------------------------------------------------
+# Multi Lorentzian feature functions
+# ----------------------------------------------------------------------
+
+def lorentzian_peak(x, h, x0, w):
+    """
+    Lorentziana classica: h * w^2 / (w^2 + (x - x0)^2)
+    h : ampiezza (positiva per CEST, negativa per NOE)
+    x0: centro (ppm)
+    w : semi-larghezza a metà altezza (ppm)
+    """
+    return h * w**2 / (w**2 + (x - x0)**2)
+
+def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, fixed_width=0.2):
+    """
+    Fit simultaneo:
+      - saturazione diretta (centro=0) -> (h_center, gamma)
+      - una lorentziana per ogni regione (h, x0, w)
+    
+    Returns dict con 'center', 'extra', 'integrals_extra', 'y_total', 'y_center', etc.
+    """
+    from scipy.optimize import minimize
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+    
+    h0_c, gamma0 = center_init
+    params_init = [h0_c, gamma0]
+    bounds = [(0, None), (0.05, 2.0)]   # h_center>=0, gamma>0
+    
+    region_list = list(regions.items())
+    for reg_name, (start, end) in region_list:
+        x0_init = (start + end) / 2.0
+        params_init += [0.0, x0_init, fixed_width]
+        bounds += [(None, None), (start, end), (0.05, 1.0)]
+    
+    def model(params, x):
+        h_c, gamma = params[0], params[1]
+        result = direct_saturation(x, h_c, gamma, baseline)
+        idx = 2
+        for _ in region_list:
+            h = params[idx]
+            x0 = params[idx+1]
+            w = params[idx+2]
+            result += lorentzian_peak(x, h, x0, w) if w > 0 else 0
+            idx += 3
+        return result
+    
+    def mse(params):
+        y_pred = model(params, x)
+        return np.sum((y - y_pred)**2)
+    
+    res = minimize(mse, params_init, bounds=bounds, method='L-BFGS-B')
+    if not res.success:
+        print(colored("Warning: global lorentzian fit did not converge", "yellow"))
+    
+    h_c_opt, gamma_opt = res.x[0], res.x[1]
+    y_center = direct_saturation(x, h_c_opt, gamma_opt, baseline)
+    
+    extra_results = {}
+    integrals_extra = {}
+    idx = 2
+    for reg_name, (start, end) in region_list:
+        h_opt = res.x[idx]
+        x0_opt = res.x[idx+1]
+        w_opt = res.x[idx+2]
+        integral = np.pi * h_opt * w_opt
+        y_peak = lorentzian_peak(x, h_opt, x0_opt, w_opt)
+        extra_results[reg_name] = {'h': h_opt, 'x0': x0_opt, 'w': w_opt,
+                                   'integral': integral, 'y': y_peak}
+        integrals_extra[reg_name] = integral
+        idx += 3
+    
+    y_extra_sum = np.zeros_like(x)
+    for r in extra_results.values():
+        y_extra_sum += r['y']
+    y_total = y_center + y_extra_sum
+    
+    return {
+        'center': {'h': h_c_opt, 'gamma': gamma_opt, 'baseline': baseline},
+        'extra': extra_results,
+        'integrals_extra': integrals_extra,
+        'y_center': y_center,
+        'y_extra_sum': y_extra_sum,
+        'y_total': y_total,
+        'x': x,
+        'success': res.success
+    }
+
+def plot_lorentzian_decomposition(x_data, y_data, x_common, L_main_y, extra_lor_results, title, invert_x=True):
+    """
+    Plot dei dati, lorentziana principale, lorentziane extra e somma.
+    - x_data, y_data: punti originali (z-spectrum corretto)
+    - x_common: griglia per le curve continue
+    - L_main_y: valore della lorentziana principale su x_common
+    - extra_lor_results: dict da fit_extra_lorentzians
+    - title: titolo del plot
+    """
+    fig, ax = plt.subplots(figsize=(10,6))
+    
+    # Dati sperimentali
+    ax.plot(x_data, y_data, 'o', color='k', label='Data (corrected)')
+    
+    # Lorentziana principale
+    ax.plot(x_common, L_main_y, 'b-', linewidth=2, label='Lorentzian main')
+    
+    # Somma delle lorentziane extra
+    sum_extra = np.zeros_like(x_common)
+    for reg, res in extra_lor_results.items():
+        y_peak = lorentzian_peak(x_common, res['h'], res['x0'], res['w'])
+        sum_extra += y_peak
+        # Plot singole lorentziane (opzionale, potrebbe essere confusionario, meglio usare tratti sottili)
+        ax.plot(x_common, y_peak, '--', alpha=0.5, label=f"{reg} (h={res['h']:.2f})")
+    
+    # Totale
+    total_y = L_main_y + sum_extra
+    ax.plot(x_common, total_y, 'r-', linewidth=2, label='Total (main + extra)')
+    
+    if invert_x:
+        ax.invert_xaxis()
+    
+    ax.set_xlabel('Saturation ppm')
+    ax.set_ylabel('Normalized intensity')
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.show(block=False)
+    return fig
+
+def direct_saturation(x, h_center, gamma, baseline=1.0):
+    """
+    Modella la riduzione del segnale dovuta alla saturazione diretta.
+    baseline: asintoto per |x|→∞ (tipicamente 1 dopo correzione sigmoide)
+    h_center: ampiezza della riduzione (positiva)
+    gamma: larghezza
+    """
+    return baseline - h_center * gamma**2 / (gamma**2 + x**2)
 
 # ----------------------------------------------------------------------
 # Core analysis routine
@@ -1375,6 +1569,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     group_raw = [[] for _ in groups]
     group_meta = [{} for _ in groups]
     folder_keys_per_group = [[] for _ in groups]
+    use_extra_lor = config.get("use_extra_lorentzians", False)
 
     for grp_idx, grp in enumerate(groups):
         label = grp["label"]
@@ -1447,7 +1642,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # --- Calculate integrals for this individual folder ---
             res = process_zspectrum_and_integrals(
                 max_vals, max_indexes, sat_trans_hz,
-                work_offset_hz, uc, bf1
+                work_offset_hz, uc, bf1,
+                use_extra_lorentzians=use_extra_lor
             )
             analysis_results[folder_name_short].update({
                 "integrals": res["integrals"],
@@ -1476,6 +1672,22 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 visibility=config.get("plot_visibility", get_default_visibility())
             )
 
+            # Nuovo plot di decomposizione lorentziana
+            if use_extra_lor and res.get("global_fit") is not None:
+                from scipy.interpolate import interp1d
+                interp_center = interp1d(res["global_fit"]["x"], res["global_fit"]["y_center"],
+                                        kind='linear', fill_value="extrapolate")
+                L_main_y_common = interp_center(res["x_common"])
+                plot_lorentzian_decomposition(
+                    x_data=res["x_data"],
+                    y_data=res["y_data"],
+                    x_common=res["x_common"],
+                    L_main_y=L_main_y_common,
+                    extra_lor_results=res["extra_lorentzians_results"],
+                    title=f"Lorentzian decomposition - {folder_name_short}",
+                    invert_x=True
+                )
+
         # --- Group average ---
         if group_raw[grp_idx]:
             idx_arr = np.array([d[0] for d in group_raw[grp_idx]])
@@ -1501,7 +1713,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 mean_max_vals, mean_max_idx, mean_sat,
                 group_meta[grp_idx]["work_offset_hz"],
                 group_meta[grp_idx]["uc"],
-                group_meta[grp_idx]["bf1"]
+                group_meta[grp_idx]["bf1"],
+                use_extra_lorentzians=use_extra_lor
             )
             analysis_results[label].update({
                 "integrals": res_avg["integrals"],
@@ -1527,6 +1740,21 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 diff_label="Lorentzian envelope - Spline fit",
                 visibility=config.get("plot_visibility", get_default_visibility())
             )
+
+            # Nuovo plot di decomposizione lorentziana per la media del gruppo
+            if use_extra_lor and res_avg.get("global_fit") is not None:
+                interp_center = interp1d(res["global_fit"]["x"], res["global_fit"]["y_center"],
+                                        kind='linear', fill_value="extrapolate")
+                L_main_y_common = interp_center(res["x_common"])
+                plot_lorentzian_decomposition(
+                    x_data=res["x_data"],
+                    y_data=res["y_data"],
+                    x_common=res["x_common"],
+                    L_main_y=L_main_y_common,
+                    extra_lor_results=res["extra_lorentzians_results"],
+                    title=f"Lorentzian decomposition - {folder_name_short}",
+                    invert_x=True
+                )     
 
     # ---- Group statistics (mean ± std of per‑folder integrals) ----
     group_stats = {}
@@ -1583,6 +1811,38 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             group_stats=group_stats,
             per_folder_integrals=per_folder_integrals,
             folder_names=folder_keys_per_group[grp_idx],   # <-- lista dei nomi brevi
+            visibility=config.get("plot_visibility", get_default_visibility())
+        )
+
+    # Plot a seconda della modalità per la media del gruppo
+    if use_extra_lor and res_avg.get("global_fit") is not None:
+        from scipy.interpolate import interp1d
+        interp_center = interp1d(res_avg["global_fit"]["x"], res_avg["global_fit"]["y_center"],
+                                kind='linear', fill_value="extrapolate")
+        L_main_y_common = interp_center(res_avg["x_common"])
+        plot_lorentzian_decomposition(
+            x_data=res_avg["x_data"],
+            y_data=res_avg["y_data"],
+            x_common=res_avg["x_common"],
+            L_main_y=L_main_y_common,
+            extra_lor_results=res_avg["extra_lorentzians_results"],
+            title=f"Lorentzian decomposition - {label} (average)",
+            invert_x=True
+        )
+    else:
+        plot_data(
+            x=res_avg["spline_fit_results"]["x"],
+            y=res_avg["spline_fit_results"]["y"],
+            x_fit=res_avg["spline_fit_results"]["x_fit"],
+            y_fit=res_avg["spline_fit_results"]["y_fit"],
+            y_std_data=analysis_results[label].get("sd_max_vals"),
+            title=label, invert_x=True,
+            add_lorentz=True,
+            lorentzian_envelope_results=res_avg["lorentzian_envelope_results"],
+            add_sigmoid=True,
+            sigmoidal_envelope_results=res_avg["sigmoidal_envelope_results"],
+            diff_x=res_avg["diff_x"], diff_y=res_avg["diff_y"],
+            diff_label="Lorentzian envelope - Spline fit",
             visibility=config.get("plot_visibility", get_default_visibility())
         )
 
