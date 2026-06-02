@@ -1655,22 +1655,23 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             })
 
             # After storing the results for the single folder, optionally plot it
-            plot_data(
-                x=res["spline_fit_results"]["x"],
-                y=res["spline_fit_results"]["y"],
-                x_fit=res["spline_fit_results"]["x_fit"],
-                y_fit=res["spline_fit_results"]["y_fit"],
-                title=f"Single folder: {folder_name_short}",
-                invert_x=True,
-                add_lorentz=True,
-                lorentzian_envelope_results=res["lorentzian_envelope_results"],
-                add_sigmoid=True,
-                sigmoidal_envelope_results=res["sigmoidal_envelope_results"],
-                diff_x=res["diff_x"],
-                diff_y=res["diff_y"],
-                diff_label="Lorentzian envelope - Spline fit",
-                visibility=config.get("plot_visibility", get_default_visibility())
-            )
+            if res["spline_fit_results"].get("fit_successful", False):
+                plot_data(
+                    x=res["spline_fit_results"]["x"],
+                    y=res["spline_fit_results"]["y"],
+                    x_fit=res["spline_fit_results"]["x_fit"],
+                    y_fit=res["spline_fit_results"]["y_fit"],
+                    title=f"Single folder: {folder_name_short}",
+                    invert_x=True,
+                    add_lorentz=True,
+                    lorentzian_envelope_results=res["lorentzian_envelope_results"],
+                    add_sigmoid=True,
+                    sigmoidal_envelope_results=res["sigmoidal_envelope_results"],
+                    diff_x=res["diff_x"],
+                    diff_y=res["diff_y"],
+                    diff_label="Lorentzian envelope - Spline fit",
+                    visibility=config.get("plot_visibility", get_default_visibility())
+                )
 
             # Nuovo plot di decomposizione lorentziana
             if use_extra_lor and res.get("global_fit") is not None:
@@ -1725,21 +1726,22 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "spline_fit_results": res_avg["spline_fit_results"]
             })
             # Plot group average
-            plot_data(
-                x=res_avg["spline_fit_results"]["x"],
-                y=res_avg["spline_fit_results"]["y"],
-                x_fit=res_avg["spline_fit_results"]["x_fit"],
-                y_fit=res_avg["spline_fit_results"]["y_fit"],
-                y_std_data=analysis_results[label].get("sd_max_vals"),
-                title=label, invert_x=True,
-                add_lorentz=True,
-                lorentzian_envelope_results=res_avg["lorentzian_envelope_results"],
-                add_sigmoid=True,
-                sigmoidal_envelope_results=res_avg["sigmoidal_envelope_results"],
-                diff_x=res_avg["diff_x"], diff_y=res_avg["diff_y"],
-                diff_label="Lorentzian envelope - Spline fit",
-                visibility=config.get("plot_visibility", get_default_visibility())
-            )
+            if res_avg["spline_fit_results"].get("fit_successful", False):
+                plot_data(
+                    x=res_avg["spline_fit_results"]["x"],
+                    y=res_avg["spline_fit_results"]["y"],
+                    x_fit=res_avg["spline_fit_results"]["x_fit"],
+                    y_fit=res_avg["spline_fit_results"]["y_fit"],
+                    y_std_data=analysis_results[label].get("sd_max_vals"),
+                    title=label, invert_x=True,
+                    add_lorentz=True,
+                    lorentzian_envelope_results=res_avg["lorentzian_envelope_results"],
+                    add_sigmoid=True,
+                    sigmoidal_envelope_results=res_avg["sigmoidal_envelope_results"],
+                    diff_x=res_avg["diff_x"], diff_y=res_avg["diff_y"],
+                    diff_label="Lorentzian envelope - Spline fit",
+                    visibility=config.get("plot_visibility", get_default_visibility())
+                )
 
             # Nuovo plot di decomposizione lorentziana per la media del gruppo
             if use_extra_lor and res_avg.get("global_fit") is not None:
