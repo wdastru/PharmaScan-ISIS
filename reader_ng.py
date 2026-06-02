@@ -1654,6 +1654,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "spline_fit_results": res["spline_fit_results"]
             })
 
+            # TODO: voglio che il fit con la spline rimanga 
+            # il fit con più lorentziane deve stare in un grafico a parte
+            
             # After storing the results for the single folder, optionally plot it
             if res["spline_fit_results"].get("fit_successful", False):
                 plot_data(
