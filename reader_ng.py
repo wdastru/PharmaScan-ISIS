@@ -611,8 +611,7 @@ def find_max_vals(spectra, start_idx, end_idx):
         max_vals.append(val)
         max_indexes.append(idx)
     
-    normalized_max_vals = normalize_max_vals(max_vals, global_max, global_min)
-    return normalized_max_vals, max_indexes
+    return max_vals, max_indexes, global_max, global_min
 
 def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
     while True:
@@ -1351,7 +1350,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             max_vals: List[float] = []
             max_indexes: List[int] = []
-            max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
+            global_max: float
+            global_min: float
+            max_vals, max_indexes, global_max, global_min = find_max_vals(spectra, start_idx, end_idx)
+            max_vals = normalize_max_vals(max_vals=max_vals, global_max=global_max, global_min=global_min, )
 
             combined = list(zip(sat_trans_hz, max_indexes, max_vals))
             combined.sort()
