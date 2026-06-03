@@ -782,14 +782,11 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
     return L_opt, R_opt, tau_opt
 
 # ----------------------------------------------------------------------
-# New helper: process a single z-spectrum to get integrals
+# Process a single z-spectrum to get integrals
 # ----------------------------------------------------------------------
-def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz,
-                                    work_offset_hz, uc, bf1) -> Dict[str, Any]:
+def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz, zero_corrected_ppm) -> Dict[str, Any]:
     """Fit envelopes, spline, compute difference and integrals for one dataset."""
-    # 1. Correct frequencies
-    zero_corrected_ppm = correct_sat_frequencies(sat_trans_hz.copy(), max_indexes,
-                                                 work_offset_hz, uc, bf1)
+    
     # 2. Sort
     combined = list(zip(zero_corrected_ppm, sat_trans_hz, max_indexes, max_vals))
     combined.sort()
@@ -1355,9 +1352,18 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             max_vals, max_indexes, global_max, global_min = find_max_vals(spectra, start_idx, end_idx)
             max_vals = normalize_max_vals(max_vals=max_vals, global_max=global_max, global_min=global_min, )
 
-            combined = list(zip(sat_trans_hz, max_indexes, max_vals))
+            # Correct saturation frequencies
+            zero_corrected_ppm: List[float] = correct_sat_frequencies(
+                sat_trans_hz, 
+                max_indexes,
+                work_offset_hz, 
+                uc, 
+                bf1
+            )
+
+            combined = list(zip(sat_trans_hz, max_indexes, max_vals, zero_corrected_ppm))
             combined.sort()
-            sat_trans_hz[:], max_indexes[:], max_vals[:] = zip(*combined)
+            sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
             analysis_results[folder_name_short].update({
                 "max_indexes": max_indexes,
@@ -1367,8 +1373,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # --- Calculate integrals for this individual folder ---
             res = process_zspectrum_and_integrals(
-                max_vals, max_indexes, sat_trans_hz,
-                work_offset_hz, uc, bf1
+                max_vals, max_indexes, sat_trans_hz, zero_corrected_ppm
             )
             analysis_results[folder_name_short].update({
                 "integrals": res["integrals"],
@@ -1397,7 +1402,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 visibility=config.get("plot_visibility", get_default_visibility())
             )
 
-        # --- Group average ---
+        # --- Calculate the group average ---
         if group_raw[grp_idx]:
             idx_arr = np.array([d[0] for d in group_raw[grp_idx]])
             val_arr = np.array([d[1] for d in group_raw[grp_idx]])
@@ -1406,6 +1411,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             mean_max_idx = np.round(np.mean(idx_arr, axis=0)).tolist()
             mean_max_vals = np.mean(val_arr, axis=0).tolist()
             mean_sat = np.mean(sat_arr, axis=0).tolist()
+            mean_zero_corrected_ppm: List[float] = [mean_sat[i] / group_meta[grp_idx]["bf1"] for i in range(len(mean_sat))]
+
             analysis_results[label] = {
                 "max_indexes": mean_max_idx,
                 "max_vals": mean_max_vals,
@@ -1417,12 +1424,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "uc": group_meta[grp_idx]["uc"],
                 "bf1": group_meta[grp_idx]["bf1"],
             }
+
             # Fit and integrals for group average
             res_avg = process_zspectrum_and_integrals(
-                mean_max_vals, mean_max_idx, mean_sat,
-                group_meta[grp_idx]["work_offset_hz"],
-                group_meta[grp_idx]["uc"],
-                group_meta[grp_idx]["bf1"]
+                mean_max_vals,
+                mean_max_idx,
+                mean_sat,
+                mean_zero_corrected_ppm
             )
             analysis_results[label].update({
                 "integrals": res_avg["integrals"],
@@ -1449,12 +1457,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 visibility=config.get("plot_visibility", get_default_visibility())
             )
 
-    # ---- Group statistics (mean ± std of per‑folder integrals) ----
+    # ---- Statistics for the groups (mean ± std of per‑folder integrals) ----
     group_stats = {}
     for grp_idx, grp in enumerate(groups):
         label = grp["label"]
         keys = folder_keys_per_group[grp_idx]
         group_stats[label] = _compute_group_stats(keys, analysis_results)
+    
     analysis_results["group_stats"] = group_stats
 
     # ---- Per‑folder integrals dictionary (per i grafici di gruppo) ----

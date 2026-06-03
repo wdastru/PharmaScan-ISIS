@@ -29,15 +29,15 @@ run_analysis(config_name, config)
     │   │
     │   ├── Per ogni cartella (folder):
     │   │   ├── extract_parameters(folder)
-    │   │   │     └── parameter_extract(method, "PVM_SatTransFL")
-    │   │   │     └── parameter_extract(method, "PVM_FrqWorkOffset")
+    │   │   │   └── parameter_extract(method, "PVM_SatTransFL")
+    │   │   │   └── parameter_extract(method, "PVM_FrqWorkOffset")
     │   │   │
     │   │   ├── load_spectra(folder)
-    │   │   │     └── ng.bruker.read, ng.bruker.guess_udic, uc_from_udic
+    │   │   │   └── ng.bruker.read, ng.bruker.guess_udic, uc_from_udic
     │   │   │
     │   │   ├── process_spectra(data, dic, n_exp)
-    │   │   │     └── per ogni esperimento:
-    │   │   │           remove_digital_filter, zf_size, em, fft, autops (acme)
+    │   │   │   └── per ogni esperimento:
+    │   │   │         remove_digital_filter, zf_size, em, fft, autops (acme)
     │   │   │
     │   │   ├── plot_spectra( ... )                       # spettri interattivi (CheckButtons)
     │   │   │     (funzione interna definita due volte, usa la seconda)
@@ -46,22 +46,22 @@ run_analysis(config_name, config)
     │   │   ├── ppm_to_index(uc, end_ppm) / ppm_to_index(uc, start_ppm)
     │   │   │
     │   │   ├── find_max_vals(spectra, start_idx, end_idx)
-    │   │   │   ├── Per ogni spettro
-    │   │   │   │   └── find_maximum(spec, start, end)  per ogni spettro
+    │   │   │   └── Per ogni spettro
+    │   │   │       └── find_maximum(spec, start, end)  per ogni spettro
     │   │   │
     │   │   ├── normalize_max_vals(max_vals, global_max, global_min)
+    │   │   ├── correct_sat_frequencies(sat_trans_hz, max_indexes, work_offset_hz, uc, bf1)
     │   │   │
-    │   │   ├── process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz, work_offset_hz, uc, bf1)
-    │   │   │     ├── correct_sat_frequencies( ... )
-    │   │   │     ├── estimate_constrained_sigmoid( ... )
-    │   │   │     │     └── solve_LR_for_tau (chiama minimize con vincoli)
-    │   │   │     ├── constrained_sigmoid(x_common, L,R,tau)
-    │   │   │     ├── estimate_constrained_lorentzian( ... )
-    │   │   │     │     └── minimize_scalar annidati
-    │   │   │     ├── constrained_lorentzian(x_common, A,gamma, y_min)
-    │   │   │     ├── spline_fit(x, y, x_fit)
-    │   │   │     │     └── PchipInterpolator
-    │   │   │     └── compute_regions_integrals(x_common, diff_y)
+    │   │   ├── process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz, zero_corrected_ppm)
+    │   │   │   ├── estimate_constrained_sigmoid( ... )
+    │   │   │   │     └── solve_LR_for_tau (chiama minimize con vincoli)
+    │   │   │   ├── constrained_sigmoid(x_common, L,R,tau)
+    │   │   │   ├── estimate_constrained_lorentzian( ... )
+    │   │   │   │     └── minimize_scalar annidati
+    │   │   │   ├── constrained_lorentzian(x_common, A,gamma, y_min)
+    │   │   │   ├── spline_fit(x, y, x_fit)
+    │   │   │   │     └── PchipInterpolator
+    │   │   │   └── compute_regions_integrals(x_common, diff_y)
     │   │   │
     │   │   ├── analysis_results[folder_name_short].update({ ... })   # salva i risultati chiave
     │   │   │
@@ -72,7 +72,7 @@ run_analysis(config_name, config)
     │   ├── Calcolo media del gruppo (se ci sono dati):
     │   │   ├── media di max_indexes, max_vals, sat_trans_hz (con np.mean)
     │   │   ├── analysis_results[label] = { statistiche, work_offset, uc, bf1 }
-    │   │   ├── process_zspectrum_and_integrals(media)  (come sopra)
+    │   │   ├── process_zspectrum_and_integrals(mean_max_vals, mean_max_idx, mean_sat, mean_zero_corrected_ppm)  (come sopra)
     │   │   └── plot_data( ... )                           # Z‑spettro medio del gruppo
     │
     ├── (Fine loop gruppi)
