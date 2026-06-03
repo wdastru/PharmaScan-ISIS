@@ -20,7 +20,7 @@ import re
 import tkinter as tk
 from tkinter import filedialog
 from typing import List, Optional, Tuple, Dict, Any
-from scipy.interpolate import PchipInterpolator
+from scipy.interpolate import PchipInterpolator, interp1d 
 from scipy.optimize import minimize_scalar
 from scipy.optimize import minimize
 from scipy import stats
@@ -934,15 +934,28 @@ def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz,
     diff_y = lor_env["y"] - spline_res["y_fit"]
     integrals = compute_regions_integrals(x_common, diff_y)
 
-    # --- Blocco per lorentziane extra (sperimentale) ---
-    global_fit = None
+    # Dizionario base da ritornare
+    result = {
+        "integrals": integrals,
+        "diff_x": x_common,
+        "diff_y": diff_y,
+        "sigmoidal_envelope_results": sigmoid_env,
+        "lorentzian_envelope_results": lor_env,
+        "spline_fit_results": spline_res,
+        # chiavi per la parte sperimentale
+        "extra_lorentzians_results": None,
+        "integrals_extra": None,
+        "global_fit": None,
+        "x_data": zero_corrected_ppm,
+        "y_data": sig_corrected,
+        "x_common": x_common
+    }
+
+    # --- Blocco SPERIMENTALE: solo se richiesto, non modifica i risultati sopra ---
     if use_extra_lorentzians:
-        # Fit globale (centrale + extra)
-        from scipy.interpolate import interp1d
         y_min_data = np.min(sig_corrected)
-        h_center_init = A - y_min_data   # A = lor_env["A"]
-        gamma_init = gamma               # lor_env["gamma"]
-        
+        h_center_init = A - y_min_data
+        gamma_init = gamma
         global_fit = fit_global_lorentzians(
             zero_corrected_ppm, sig_corrected,
             regions=METABOLITE_REGIONS,
@@ -950,40 +963,11 @@ def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz,
             baseline=1.0,
             fixed_width=0.2
         )
-        # Gli integrali delle extra sono i veri integrali metabolici
-        integrals = global_fit['integrals_extra']
-        # Per coerenza con i campi di plot, diff_y può essere la somma delle extra
-        interp_extra = interp1d(global_fit['x'], global_fit['y_extra_sum'],
-                                kind='linear', fill_value="extrapolate")
-        diff_y = interp_extra(x_common)
-        extra_lor_results = global_fit['extra']
-        integrals_extra = global_fit['integrals_extra']
-        # La spline non viene più usata
-        spline_res = {"fit_successful": False}
-    else:
-        # vecchio codice con spline e differenza
-        spline_res = spline_fit(x=zero_corrected_ppm, y=sig_corrected, x_fit=x_common)
-        diff_y = lor_env["y"] - spline_res["y_fit"]
-        integrals = compute_regions_integrals(x_common, diff_y)
-        extra_lor_results = None
-        integrals_extra = None
-    # ------------------------------------------------
+        result["global_fit"] = global_fit
+        result["extra_lorentzians_results"] = global_fit["extra"]
+        result["integrals_extra"] = global_fit["integrals_extra"]
 
-    return {
-        "integrals": integrals,
-        "diff_x": x_common,
-        "diff_y": diff_y,
-        "sigmoidal_envelope_results": sigmoid_env,
-        "lorentzian_envelope_results": lor_env,
-        "spline_fit_results": spline_res,
-        # fields for extra lorentzian fitting
-        "x_data": zero_corrected_ppm,
-        "y_data": sig_corrected,
-        "x_common": x_common,
-        "extra_lorentzians_results": extra_lor_results,
-        "integrals_extra": integrals_extra,
-        "global_fit": global_fit
-    }
+    return result
 
 # ----------------------------------------------------------------------
 # Group statistics and p-values
@@ -1498,6 +1482,27 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     visibility=config.get("plot_visibility", get_default_visibility())
                 )
 
+            # 1b. Plot aggiuntivi di decomposizione per le medie di gruppo
+            use_extra_lor = config.get("use_extra_lorentzians", False)
+            if use_extra_lor:
+                for grp in groups:
+                    label = grp["label"]
+                    z = analysis_results.get(label, {})
+                    global_fit = z.get("global_fit")
+                    if global_fit is not None:
+                        interp_center = interp1d(global_fit["x"], global_fit["y_center"],
+                                                    kind='linear', fill_value="extrapolate")
+                        L_main_y_common = interp_center(z.get("x_common"))
+                        plot_lorentzian_decomposition(
+                            x_data=z.get("x_data"),
+                            y_data=z.get("y_data"),
+                            x_common=z.get("x_common"),
+                            L_main_y=L_main_y_common,
+                            extra_lor_results=global_fit.get("extra"),
+                            title=f"Lorentzian decomposition - {label} (average)",
+                            invert_x=True
+                        )                
+
         # ------------------------------------------------------------
         # 2. Re‑plot Z‑spettri per le singole cartelle
         # ------------------------------------------------------------
@@ -1522,6 +1527,28 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         diff_label="Lorentzian envelope - Spline fit",
                         visibility=config.get("plot_visibility", get_default_visibility())
                     )
+
+                # 2b. Plot aggiuntivi di decomposizione multi‑lorentziana per singole cartelle (se presenti)
+                use_extra_lor = config.get("use_extra_lorentzians", False)
+                if use_extra_lor:
+                    for grp_idx, keys in enumerate(folder_keys_per_group_cached):
+                        for key in keys:
+                            res = analysis_results.get(key, {})
+                            global_fit = res.get("global_fit")
+                            if global_fit is not None:
+                                # Interpola la lorentziana centrale sulla griglia comune
+                                interp_center = interp1d(global_fit["x"], global_fit["y_center"],
+                                                        kind='linear', fill_value="extrapolate")
+                                L_main_y_common = interp_center(res.get("x_common"))
+                                plot_lorentzian_decomposition(
+                                    x_data=res.get("x_data"),
+                                    y_data=res.get("y_data"),
+                                    x_common=res.get("x_common"),
+                                    L_main_y=L_main_y_common,
+                                    extra_lor_results=global_fit.get("extra"),
+                                    title=f"Lorentzian decomposition - {key}",
+                                    invert_x=True
+                                )
 
         # ------------------------------------------------------------
         # 3. Prepara i dati per i grafici a barre dei singoli gruppi
@@ -1645,17 +1672,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 work_offset_hz, uc, bf1,
                 use_extra_lorentzians=use_extra_lor
             )
-            analysis_results[folder_name_short].update({
-                "integrals": res["integrals"],
-                "diff_x": res["diff_x"],
-                "diff_y": res["diff_y"],
-                "sigmoidal_envelope_results": res["sigmoidal_envelope_results"],
-                "lorentzian_envelope_results": res["lorentzian_envelope_results"],
-                "spline_fit_results": res["spline_fit_results"]
-            })
-
-            # TODO: voglio che il fit con la spline rimanga 
-            # il fit con più lorentziane deve stare in un grafico a parte
+            analysis_results[folder_name_short].update(res)
             
             # After storing the results for the single folder, optionally plot it
             if res["spline_fit_results"].get("fit_successful", False):
@@ -1678,7 +1695,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # Nuovo plot di decomposizione lorentziana
             if use_extra_lor and res.get("global_fit") is not None:
-                from scipy.interpolate import interp1d
+                # interpolo la lorentziana centrale sulla griglia comune per il plot
                 interp_center = interp1d(res["global_fit"]["x"], res["global_fit"]["y_center"],
                                         kind='linear', fill_value="extrapolate")
                 L_main_y_common = interp_center(res["x_common"])
@@ -1720,14 +1737,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 group_meta[grp_idx]["bf1"],
                 use_extra_lorentzians=use_extra_lor
             )
-            analysis_results[label].update({
-                "integrals": res_avg["integrals"],
-                "diff_x": res_avg["diff_x"],
-                "diff_y": res_avg["diff_y"],
-                "sigmoidal_envelope_results": res_avg["sigmoidal_envelope_results"],
-                "lorentzian_envelope_results": res_avg["lorentzian_envelope_results"],
-                "spline_fit_results": res_avg["spline_fit_results"]
-            })
+            analysis_results[label].update(res_avg)
+            
             # Plot group average
             if res_avg["spline_fit_results"].get("fit_successful", False):
                 plot_data(
@@ -1748,18 +1759,18 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # Nuovo plot di decomposizione lorentziana per la media del gruppo
             if use_extra_lor and res_avg.get("global_fit") is not None:
-                interp_center = interp1d(res["global_fit"]["x"], res["global_fit"]["y_center"],
+                interp_center = interp1d(res_avg["global_fit"]["x"], res_avg["global_fit"]["y_center"],
                                         kind='linear', fill_value="extrapolate")
-                L_main_y_common = interp_center(res["x_common"])
+                L_main_y_common = interp_center(res_avg["x_common"])
                 plot_lorentzian_decomposition(
-                    x_data=res["x_data"],
-                    y_data=res["y_data"],
-                    x_common=res["x_common"],
+                    x_data=res_avg["x_data"],
+                    y_data=res_avg["y_data"],
+                    x_common=res_avg["x_common"],
                     L_main_y=L_main_y_common,
-                    extra_lor_results=res["extra_lorentzians_results"],
-                    title=f"Lorentzian decomposition - {folder_name_short}",
+                    extra_lor_results=res_avg["extra_lorentzians_results"],
+                    title=f"Lorentzian decomposition - {label} (average)",
                     invert_x=True
-                )     
+                )
 
     # ---- Group statistics (mean ± std of per‑folder integrals) ----
     group_stats = {}
@@ -1821,7 +1832,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
     # Plot a seconda della modalità per la media del gruppo
     if use_extra_lor and res_avg.get("global_fit") is not None:
-        from scipy.interpolate import interp1d
         interp_center = interp1d(res_avg["global_fit"]["x"], res_avg["global_fit"]["y_center"],
                                 kind='linear', fill_value="extrapolate")
         L_main_y_common = interp_center(res_avg["x_common"])
