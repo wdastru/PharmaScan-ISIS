@@ -590,11 +590,18 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None)
     plt.show(block=False)
     return fig
 
+def normalize_max_vals(max_vals, global_max, global_min):
+    for i in range(len(max_vals)):
+        max_vals[i] = (max_vals[i] - global_min) / (global_max - global_min) if global_max > global_min else 0.0
+    return max_vals
+
 def find_max_vals(spectra, start_idx, end_idx):
     max_vals: List[float] = []
     max_indexes: List[int] = []
     global_max: float = float('-inf')
     global_min: float = float('inf')
+    val: float = 0.0
+    idx: int = 0
     for exp_idx, spec in spectra.items():
         val, idx = find_maximum(spec, start=start_idx, end=end_idx)
         if val > global_max:
@@ -603,9 +610,9 @@ def find_max_vals(spectra, start_idx, end_idx):
             global_min = val
         max_vals.append(val)
         max_indexes.append(idx)
-    for i in range(len(max_vals)):
-        max_vals[i] = (max_vals[i] - global_min) / (global_max - global_min) if global_max > global_min else 0.0
-    return max_vals, max_indexes
+    
+    normalized_max_vals = normalize_max_vals(max_vals, global_max, global_min)
+    return normalized_max_vals, max_indexes
 
 def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
     while True:
@@ -1080,7 +1087,7 @@ def load_spectra(folder: Path):
     return dic, data, uc, ppm_axis, n_exp, bf1
 
 def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
-    spectra = {}
+    spectra: dict = {}
     for exp_idx in range(n_exp):
         fid = data[exp_idx, :]
         fid = ng.bruker.remove_digital_filter(dic, data=fid)
@@ -1342,6 +1349,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             start_idx = ppm_to_index(uc, end_ppm)
             end_idx = ppm_to_index(uc, start_ppm)
 
+            max_vals: List[float] = []
+            max_indexes: List[int] = []
             max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
 
             combined = list(zip(sat_trans_hz, max_indexes, max_vals))
