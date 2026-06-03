@@ -546,96 +546,6 @@ def spline_fit(x, y, x_fit=None, n_points=N_POINTS_FIT) -> Dict[str, Any]:
             'fit_successful': fit_successful
         }    
 
-def plot_spectra(
-        title, 
-        spectra, 
-        n_exp, 
-        ppm_axis, 
-        sat_trans_hz,
-        visibility: Optional[Dict[str, bool]] = None
-    ) -> Figure:
-    """
-    Crea un plot interattivo di tutti gli spettri con checkbox per mostrare/nascondere
-    ogni traccia.
-
-    Parameters
-    ----------
-    title : str
-        Titolo del plot.
-    spectra : Dict[int, np.ndarray]
-        Dizionario degli spettri elaborati.
-    n_exp : int
-        Numero di esperimenti.
-    ppm_axis : np.ndarray
-        Asse dei ppm.
-    sat_trans_hz : List[float]
-        Frequenze di saturazione in Hz (usate come etichette).
-    visibility : Optional[Dict[str, bool]]
-        Dizionario per controllare la visibilità nei plot.
-    """
-
-    #TODO: i check boxes non funzionano in multi-exp
-    fig, ax = plt.subplots(figsize=(12, 6))
-    lines = []
-    labels = []
-    for exp_idx in range(n_exp):
-        line, = ax.plot(ppm_axis, np.real(spectra[exp_idx]),
-                        label = f"{exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}",
-                        alpha=0.7, linewidth=1.2)
-        lines.append(line)
-        labels.append(line.get_label())
-
-    # Main plot settings
-    ax.invert_xaxis()
-    ax.set_xlabel("ppm")
-    ax.set_ylabel("Intensity")
-    ax.grid(True, alpha=0.3)
-    ax.set_title(title)
-
-    # ---- CheckButtons panel ----
-    rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])
-    visibility = [l.get_visible() for l in lines]
-    checks = CheckButtons(rax, labels, visibility)
-
-    # ----------------------------------------------------------------------
-    # Callbacks for interactive widgets
-    # to capture lines, labels, fig, checks
-    # ----------------------------------------------------------------------
-    def _on_check(label):
-        idx = labels.index(label)
-        lines[idx].set_visible(not lines[idx].get_visible())
-        fig.canvas.draw_idle()
-
-    def _check_all(event):
-        for i, line in enumerate(lines):
-            if not line.get_visible():
-                line.set_visible(True)
-                checks.lines[i].set_visible(True)
-        fig.canvas.draw_idle()
-
-    def _uncheck_all(event):
-        for i, line in enumerate(lines):
-            if line.get_visible():
-                line.set_visible(False)
-                checks.lines[i].set_visible(False)
-        fig.canvas.draw_idle()
-
-    checks.on_clicked(_on_check)
-
-    # "Check all" button
-    ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
-    btn_all = Button(ax_all, "Check all")
-    btn_all.on_clicked(_check_all)
-    
-    # "Uncheck all" button
-    ax_none = fig.add_axes([0.90, 0.90, 0.09, 0.05])
-    btn_none = Button(ax_none, "Uncheck all")
-    btn_none.on_clicked(_uncheck_all)
-
-    fig.tight_layout(rect=[0, 0, 0.80, 1])
-    plt.show(block=False)
-    return fig
-
 def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None) -> Figure:
     fig, ax = plt.subplots(figsize=(12, 6))
     lines = []
@@ -681,11 +591,18 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None)
     plt.show(block=False)
     return fig
 
+def normalize_max_vals(max_vals, global_max, global_min):
+    for i in range(len(max_vals)):
+        max_vals[i] = (max_vals[i] - global_min) / (global_max - global_min) if global_max > global_min else 0.0
+    return max_vals
+
 def find_max_vals(spectra, start_idx, end_idx):
     max_vals: List[float] = []
     max_indexes: List[int] = []
     global_max: float = float('-inf')
     global_min: float = float('inf')
+    val: float = 0.0
+    idx: int = 0
     for exp_idx, spec in spectra.items():
         val, idx = find_maximum(spec, start=start_idx, end=end_idx)
         if val > global_max:
@@ -694,9 +611,8 @@ def find_max_vals(spectra, start_idx, end_idx):
             global_min = val
         max_vals.append(val)
         max_indexes.append(idx)
-    for i in range(len(max_vals)):
-        max_vals[i] = (max_vals[i] - global_min) / (global_max - global_min) if global_max > global_min else 0.0
-    return max_vals, max_indexes
+    
+    return max_vals, max_indexes, global_max, global_min
 
 def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
     while True:
@@ -867,15 +783,11 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
     return L_opt, R_opt, tau_opt
 
 # ----------------------------------------------------------------------
-# New helper: process a single z-spectrum to get integrals
+# Process a single z-spectrum to get integrals
 # ----------------------------------------------------------------------
-def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz,
-                                    work_offset_hz, uc, bf1,
-                                    use_extra_lorentzians =False) -> Dict[str, Any]:
+def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz, zero_corrected_ppm, use_extra_lorentzians=False) -> Dict[str, Any]:
     """Fit envelopes, spline, compute difference and integrals for one dataset."""
-    # 1. Correct frequencies
-    zero_corrected_ppm = correct_sat_frequencies(sat_trans_hz.copy(), max_indexes,
-                                                 work_offset_hz, uc, bf1)
+    
     # 2. Sort
     combined = list(zip(zero_corrected_ppm, sat_trans_hz, max_indexes, max_vals))
     combined.sort()
@@ -1207,7 +1119,7 @@ def load_spectra(folder: Path):
     return dic, data, uc, ppm_axis, n_exp, bf1
 
 def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
-    spectra = {}
+    spectra: dict = {}
     for exp_idx in range(n_exp):
         fid = data[exp_idx, :]
         fid = ng.bruker.remove_digital_filter(dic, data=fid)
@@ -1654,11 +1566,25 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             start_idx = ppm_to_index(uc, end_ppm)
             end_idx = ppm_to_index(uc, start_ppm)
 
-            max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
+            max_vals: List[float] = []
+            max_indexes: List[int] = []
+            global_max: float
+            global_min: float
+            max_vals, max_indexes, global_max, global_min = find_max_vals(spectra, start_idx, end_idx)
+            max_vals = normalize_max_vals(max_vals=max_vals, global_max=global_max, global_min=global_min, )
 
-            combined = list(zip(sat_trans_hz, max_indexes, max_vals))
+            # Correct saturation frequencies
+            zero_corrected_ppm: List[float] = correct_sat_frequencies(
+                sat_trans_hz, 
+                max_indexes,
+                work_offset_hz, 
+                uc, 
+                bf1
+            )
+
+            combined = list(zip(sat_trans_hz, max_indexes, max_vals, zero_corrected_ppm))
             combined.sort()
-            sat_trans_hz[:], max_indexes[:], max_vals[:] = zip(*combined)
+            sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
             analysis_results[folder_name_short].update({
                 "max_indexes": max_indexes,
@@ -1668,8 +1594,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # --- Calculate integrals for this individual folder ---
             res = process_zspectrum_and_integrals(
-                max_vals, max_indexes, sat_trans_hz,
-                work_offset_hz, uc, bf1,
+                max_vals, max_indexes, sat_trans_hz, zero_corrected_ppm,
                 use_extra_lorentzians=use_extra_lor
             )
             analysis_results[folder_name_short].update(res)
@@ -1709,7 +1634,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     invert_x=True
                 )
 
-        # --- Group average ---
+        # --- Calculate the group average ---
         if group_raw[grp_idx]:
             idx_arr = np.array([d[0] for d in group_raw[grp_idx]])
             val_arr = np.array([d[1] for d in group_raw[grp_idx]])
@@ -1718,6 +1643,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             mean_max_idx = np.round(np.mean(idx_arr, axis=0)).tolist()
             mean_max_vals = np.mean(val_arr, axis=0).tolist()
             mean_sat = np.mean(sat_arr, axis=0).tolist()
+            mean_zero_corrected_ppm: List[float] = [mean_sat[i] / group_meta[grp_idx]["bf1"] for i in range(len(mean_sat))]
+
             analysis_results[label] = {
                 "max_indexes": mean_max_idx,
                 "max_vals": mean_max_vals,
@@ -1729,12 +1656,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "uc": group_meta[grp_idx]["uc"],
                 "bf1": group_meta[grp_idx]["bf1"],
             }
+
             # Fit and integrals for group average
             res_avg = process_zspectrum_and_integrals(
-                mean_max_vals, mean_max_idx, mean_sat,
-                group_meta[grp_idx]["work_offset_hz"],
-                group_meta[grp_idx]["uc"],
-                group_meta[grp_idx]["bf1"],
+                mean_max_vals,
+                mean_max_idx,
+                mean_sat,
+                mean_zero_corrected_ppm,
                 use_extra_lorentzians=use_extra_lor
             )
             analysis_results[label].update(res_avg)
@@ -1772,12 +1700,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     invert_x=True
                 )
 
-    # ---- Group statistics (mean ± std of per‑folder integrals) ----
+    # ---- Statistics for the groups (mean ± std of per‑folder integrals) ----
     group_stats = {}
     for grp_idx, grp in enumerate(groups):
         label = grp["label"]
         keys = folder_keys_per_group[grp_idx]
         group_stats[label] = _compute_group_stats(keys, analysis_results)
+    
     analysis_results["group_stats"] = group_stats
 
     # ---- Per‑folder integrals dictionary (per i grafici di gruppo) ----
