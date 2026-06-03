@@ -1482,26 +1482,26 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     visibility=config.get("plot_visibility", get_default_visibility())
                 )
 
-            # 1b. Plot aggiuntivi di decomposizione per le medie di gruppo
-            use_extra_lor = config.get("use_extra_lorentzians", False)
-            if use_extra_lor:
-                for grp in groups:
-                    label = grp["label"]
-                    z = analysis_results.get(label, {})
-                    global_fit = z.get("global_fit")
-                    if global_fit is not None:
-                        interp_center = interp1d(global_fit["x"], global_fit["y_center"],
-                                                    kind='linear', fill_value="extrapolate")
-                        L_main_y_common = interp_center(z.get("x_common"))
-                        plot_lorentzian_decomposition(
-                            x_data=z.get("x_data"),
-                            y_data=z.get("y_data"),
-                            x_common=z.get("x_common"),
-                            L_main_y=L_main_y_common,
-                            extra_lor_results=global_fit.get("extra"),
-                            title=f"Lorentzian decomposition - {label} (average)",
-                            invert_x=True
-                        )                
+        # 1b. Plot aggiuntivi di decomposizione per le medie di gruppo
+        use_extra_lor = config.get("use_extra_lorentzians", False)
+        if use_extra_lor:
+            for grp in groups:
+                label = grp["label"]
+                z = analysis_results.get(label, {})
+                global_fit = z.get("global_fit")
+                if global_fit is not None:
+                    interp_center = interp1d(global_fit["x"], global_fit["y_center"],
+                                                kind='linear', fill_value="extrapolate")
+                    L_main_y_common = interp_center(z.get("x_common"))
+                    plot_lorentzian_decomposition(
+                        x_data=z.get("x_data"),
+                        y_data=z.get("y_data"),
+                        x_common=z.get("x_common"),
+                        L_main_y=L_main_y_common,
+                        extra_lor_results=global_fit.get("extra"),
+                        title=f"Lorentzian decomposition - {label} (average)",
+                        invert_x=True
+                    )                
 
         # ------------------------------------------------------------
         # 2. Re‑plot Z‑spettri per le singole cartelle
@@ -1528,27 +1528,27 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         visibility=config.get("plot_visibility", get_default_visibility())
                     )
 
-                # 2b. Plot aggiuntivi di decomposizione multi‑lorentziana per singole cartelle (se presenti)
-                use_extra_lor = config.get("use_extra_lorentzians", False)
-                if use_extra_lor:
-                    for grp_idx, keys in enumerate(folder_keys_per_group_cached):
-                        for key in keys:
-                            res = analysis_results.get(key, {})
-                            global_fit = res.get("global_fit")
-                            if global_fit is not None:
-                                # Interpola la lorentziana centrale sulla griglia comune
-                                interp_center = interp1d(global_fit["x"], global_fit["y_center"],
-                                                        kind='linear', fill_value="extrapolate")
-                                L_main_y_common = interp_center(res.get("x_common"))
-                                plot_lorentzian_decomposition(
-                                    x_data=res.get("x_data"),
-                                    y_data=res.get("y_data"),
-                                    x_common=res.get("x_common"),
-                                    L_main_y=L_main_y_common,
-                                    extra_lor_results=global_fit.get("extra"),
-                                    title=f"Lorentzian decomposition - {key}",
-                                    invert_x=True
-                                )
+        # 2b. Plot aggiuntivi di decomposizione multi‑lorentziana per singole cartelle (se presenti)
+        use_extra_lor = config.get("use_extra_lorentzians", False)
+        if use_extra_lor:
+            for grp_idx, keys in enumerate(folder_keys_per_group_cached):
+                for key in keys:
+                    res = analysis_results.get(key, {})
+                    global_fit = res.get("global_fit")
+                    if global_fit is not None:
+                        # Interpola la lorentziana centrale sulla griglia comune
+                        interp_center = interp1d(global_fit["x"], global_fit["y_center"],
+                                                kind='linear', fill_value="extrapolate")
+                        L_main_y_common = interp_center(res.get("x_common"))
+                        plot_lorentzian_decomposition(
+                            x_data=res.get("x_data"),
+                            y_data=res.get("y_data"),
+                            x_common=res.get("x_common"),
+                            L_main_y=L_main_y_common,
+                            extra_lor_results=global_fit.get("extra"),
+                            title=f"Lorentzian decomposition - {key}",
+                            invert_x=True
+                        )
 
         # ------------------------------------------------------------
         # 3. Prepara i dati per i grafici a barre dei singoli gruppi
@@ -1738,7 +1738,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 use_extra_lorentzians=use_extra_lor
             )
             analysis_results[label].update(res_avg)
-            
+
             # Plot group average
             if res_avg["spline_fit_results"].get("fit_successful", False):
                 plot_data(
