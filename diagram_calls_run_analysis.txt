@@ -48,7 +48,8 @@ run_analysis(config_name, config)
     │   │   ├── find_max_vals(spectra, start_idx, end_idx)
     │   │   │   ├── Per ogni spettro
     │   │   │   │   └── find_maximum(spec, start, end)  per ogni spettro
-    │   │   │   └── normalize_max_vals(max_vals, global_max, global_min)
+    │   │   │
+    │   │   ├── normalize_max_vals(max_vals, global_max, global_min)
     │   │   │
     │   │   ├── process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz, work_offset_hz, uc, bf1)
     │   │   │     ├── correct_sat_frequencies( ... )
