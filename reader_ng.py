@@ -784,13 +784,13 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
 # ----------------------------------------------------------------------
 # Process a single z-spectrum to get integrals
 # ----------------------------------------------------------------------
-def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz, zero_corrected_ppm) -> Dict[str, Any]:
+def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, Any]:
     """Fit envelopes, spline, compute difference and integrals for one dataset."""
     
     # 2. Sort
-    combined = list(zip(zero_corrected_ppm, sat_trans_hz, max_indexes, max_vals))
+    combined = list(zip(zero_corrected_ppm, max_vals))
     combined.sort()
-    zero_corrected_ppm, sat_trans_hz_sorted, max_indexes_sorted, max_vals_sorted = zip(*combined)
+    zero_corrected_ppm, max_vals_sorted = zip(*combined)
     zero_corrected_ppm = list(zero_corrected_ppm)
     max_vals_sorted = list(max_vals_sorted)
 
@@ -1373,17 +1373,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # --- Calculate integrals for this individual folder ---
             res = process_zspectrum_and_integrals(
-                max_vals, max_indexes, sat_trans_hz, zero_corrected_ppm
+                max_vals, zero_corrected_ppm
             )
-            analysis_results[folder_name_short].update({
-                "integrals": res["integrals"],
-                "diff_x": res["diff_x"],
-                "diff_y": res["diff_y"],
-                "sigmoidal_envelope_results": res["sigmoidal_envelope_results"],
-                "lorentzian_envelope_results": res["lorentzian_envelope_results"],
-                "spline_fit_results": res["spline_fit_results"]
-            })
-
+            analysis_results[folder_name_short].update(res)
+            
             # After storing the results for the single folder, optionally plot it
             plot_data(
                 x=res["spline_fit_results"]["x"],
@@ -1428,18 +1421,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # Fit and integrals for group average
             res_avg = process_zspectrum_and_integrals(
                 mean_max_vals,
-                mean_max_idx,
-                mean_sat,
                 mean_zero_corrected_ppm
             )
-            analysis_results[label].update({
-                "integrals": res_avg["integrals"],
-                "diff_x": res_avg["diff_x"],
-                "diff_y": res_avg["diff_y"],
-                "sigmoidal_envelope_results": res_avg["sigmoidal_envelope_results"],
-                "lorentzian_envelope_results": res_avg["lorentzian_envelope_results"],
-                "spline_fit_results": res_avg["spline_fit_results"]
-            })
+            analysis_results[label].update(res_avg)
+
             # Plot group average
             plot_data(
                 x=res_avg["spline_fit_results"]["x"],
