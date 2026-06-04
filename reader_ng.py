@@ -187,9 +187,12 @@ def load_config(name: str) -> Dict[str, Any]:
                             "multiple_amount_ref", "folders"):
                 config.pop(old_key, None)
         else:
-            # Ensure folders are Path objects
+            # Ensure folders and files are Path objects
             for grp in config["groups"]:
-                grp["folders"] = [Path(p) for p in grp["folders"]]
+                if "folders" in grp:
+                    grp["folders"] = [Path(p) for p in grp.get("folders", [])]
+                if "files" in grp:
+                    grp["files"] = [Path(p) for p in grp.get("files", [])]
         return config
     except Exception as e:
         print(colored(
@@ -204,7 +207,11 @@ def save_config(name: str, config: Dict[str, Any]) -> None:
     # Convert Paths to strings and ensure groups structure is clean
     if "groups" in to_save:
         to_save["groups"] = [
-            {**grp, "folders": [str(p) for p in grp["folders"]]}
+            {
+                **grp, 
+                "folders": [str(p) for p in grp.get("folders", [])],
+                "files": [str(p) for p in grp.get("files", [])],
+            } 
             for grp in to_save["groups"]
         ]
     # Remove any leftover old keys (safety)
@@ -681,6 +688,21 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
         except ValueError:
             print("Inserire un numero intero.")
 
+def ask_choice(prompt: str, choices: List[str], default: Optional[str] = None) -> str:
+    for i, c in enumerate(choices, 1):
+        print(f"  {i}. {c}")
+    while True:
+        ans = input(f"{prompt} (1-{len(choices)})" + (f" [{choices.index(default)+1}]" if default else "") + ": ").strip()
+        if not ans and default:
+            return default
+        try:
+            idx = int(ans) - 1
+            if 0 <= idx < len(choices):
+                return choices[idx]
+        except ValueError:
+            pass
+        print("Invalid choice.")
+
 # ----------------------------------------------------------------------
 # Envelope fitting functions (unchanged)
 # ----------------------------------------------------------------------
@@ -1095,50 +1117,108 @@ def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
         spectra[exp_idx] = spectrum_phased
     return spectra
 
+def select_text_file(title="Select a text data file (x/y columns)") -> Path:
+    root = tk.Tk()
+    root.withdraw()
+    file_path = filedialog.askopenfilename(
+        title=title,
+        filetypes=[("Text files", "*.txt *.dat"), ("All files", "*.*")]
+    )
+    if not file_path:
+        raise ValueError("No file selected.")
+    return Path(file_path)
+
 def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
     modified = False
 
+    # ---------- Interactive creation of groups (if none exist) ----------
     if not config_data.get("groups"):
         print("No groups defined. Interactive setup.")
         with_ref = ask_yes_no("Include a reference group?", default=False)
         n_sample_groups = ask_int("Number of additional sample groups", min_val=0, default=1)
         groups = []
-        if with_ref:
-            ref_count = ask_int("How many folders in the reference group?", min_val=1, default=1)
-            groups.append({"label": "reference", "is_reference": True, "folders": [None]*ref_count})
-        for i in range(n_sample_groups):
-            label = input(f"Label for sample group {i+1} (default: group{i+1}): ").strip()
-            if not label:
-                label = f"group{i+1}"
-            cnt = ask_int(f"Folders in group '{label}'", min_val=1, default=1)
-            groups.append({"label": label, "is_reference": False, "folders": [None]*cnt})
 
-        all_folders = []
-        for grp in groups:
-            print(f"\n--- Group '{grp['label']}' ({len(grp['folders'])} folders) ---")
-            for _ in range(len(grp['folders'])):
-                all_folders.append(select_experiment_folder())
-        idx = 0
-        for grp in groups:
-            n = len(grp["folders"])
-            grp["folders"] = all_folders[idx:idx+n]
-            idx += n
+        # Helper to build a single group interactively
+        def _create_group_interactively(label, is_ref):
+            print(f"\n--- Group '{label}' ---")
+            data_type = ask_choice(
+                "Data source type",
+                choices=["Bruker folders", "Text (x/y) files"],
+                default="Bruker folders"
+            )
+            if data_type == "Bruker folders":
+                cnt = ask_int("Number of folders", min_val=1, default=1)
+                folders = []
+                for _ in range(cnt):
+                    folders.append(select_experiment_folder())
+                return {"label": label, "is_reference": is_ref, "folders": folders, "files": []}
+            else:  # Text files
+                cnt = ask_int("Number of text files", min_val=1, default=1)
+                files = []
+                for _ in range(cnt):
+                    files.append(select_text_file())
+                return {"label": label, "is_reference": is_ref, "folders": [], "files": files}
+
+        if with_ref:
+            ref_label = input("Label for reference group (default: reference): ").strip() or "reference"
+            groups.append(_create_group_interactively(ref_label, True))
+
+        for i in range(n_sample_groups):
+            label = input(f"Label for sample group {i+1} (default: group{i+1}): ").strip() or f"group{i+1}"
+            groups.append(_create_group_interactively(label, False))
 
         config_data["groups"] = groups
         modified = True
+
     else:
-        # Ensure each group has 'label' and 'is_reference'
+        # ---------- Ensure existing groups have required keys ----------
         for grp in config_data["groups"]:
             if "label" not in grp:
                 grp["label"] = "group"
             if "is_reference" not in grp:
                 grp["is_reference"] = False
+            # Introduce the new key if missing
+            if "files" not in grp:
+                grp["files"] = []
+                modified = True
 
+    # ---------- Fill missing data paths for any group ----------
+    for grp in config_data["groups"]:
+        if not grp.get("folders") and not grp.get("files"):
+            # This group has no paths at all – prompt interactively
+            print(f"\nGroup '{grp['label']}' has no data paths defined.")
+            data_type = ask_choice(
+                f"Data source type for '{grp['label']}'",
+                choices=["Bruker folders", "Text (x/y) files"],
+                default="Bruker folders"
+            )
+            if data_type == "Bruker folders":
+                cnt = ask_int("Number of folders", min_val=1, default=1)
+                for _ in range(cnt):
+                    grp.setdefault("folders", []).append(select_experiment_folder())
+            else:
+                cnt = ask_int("Number of text files", min_val=1, default=1)
+                for _ in range(cnt):
+                    grp.setdefault("files", []).append(select_text_file())
+            modified = True
+        elif grp.get("folders") and grp.get("files"):
+            # Both provided – warn but keep; the analysis will decide
+            print(colored(
+                f"Warning: Group '{grp['label']}' has both folders and files. "
+                "Only folders will be used for analysis.",
+                "yellow"
+            ))
+
+    # ---------- ppm range handling ----------
     if config_data.get("start_ppm") is None or config_data.get("end_ppm") is None:
         config_data["ppm_missing"] = True
     else:
         config_data["ppm_missing"] = False
 
+    # (If ppm_missing, the actual prompting occurs later during analysis,
+    #  because we may need a spectrum to show. The flag is set here.)
+
+    # ---------- Plot visibility defaults ----------
     default_vis = get_default_visibility()
     if "plot_visibility" in config_data:
         current_vis = config_data["plot_visibility"]
@@ -1150,6 +1230,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         config_data["plot_visibility"] = default_vis
         modified = True
 
+    # ---------- Metabolite regions defaults ----------
     if "metabolite_regions" not in config_data:
         config_data["metabolite_regions"] = DEFAULT_METABOLITE_REGIONS
         modified = True
@@ -1160,18 +1241,8 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
             config_data["metabolite_regions"] = merged_regions
             modified = True
 
-    # ---------- Force save if config was migrated from old format ----------
-    if config_name:  # se è una configurazione salvata
-        config_path = CONFIG_DIR / f"{config_name}.json"
-        if config_path.exists():
-            with open(config_path, "r") as f:
-                disk_config = json.load(f)
-            # Se il file su disco non ha la chiave "groups" ma la nostra in memoria sì,
-            # significa che è stato migrato in questa sessione
-            if "groups" not in disk_config and "groups" in config_data:
-                modified = True
-
-    if modified:
+    # ---------- Save if modified ----------
+    if modified and config_name:
         save_config(config_name, config_data)
 
     return config_data
