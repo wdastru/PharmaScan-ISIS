@@ -785,13 +785,13 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
 # ----------------------------------------------------------------------
 # Process a single z-spectrum to get integrals
 # ----------------------------------------------------------------------
-def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz, zero_corrected_ppm, use_extra_lorentzians=False) -> Dict[str, Any]:
+def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lorentzians=False) -> Dict[str, Any]:
     """Fit envelopes, spline, compute difference and integrals for one dataset."""
     
     # 2. Sort
-    combined = list(zip(zero_corrected_ppm, sat_trans_hz, max_indexes, max_vals))
+    combined = list(zip(zero_corrected_ppm, max_vals))
     combined.sort()
-    zero_corrected_ppm, sat_trans_hz_sorted, max_indexes_sorted, max_vals_sorted = zip(*combined)
+    zero_corrected_ppm, max_vals_sorted = zip(*combined)
     zero_corrected_ppm = list(zero_corrected_ppm)
     max_vals_sorted = list(max_vals_sorted)
 
@@ -1594,7 +1594,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # --- Calculate integrals for this individual folder ---
             res = process_zspectrum_and_integrals(
-                max_vals, max_indexes, sat_trans_hz, zero_corrected_ppm,
+                max_vals, zero_corrected_ppm,
                 use_extra_lorentzians=use_extra_lor
             )
             analysis_results[folder_name_short].update(res)
@@ -1660,8 +1660,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             # Fit and integrals for group average
             res_avg = process_zspectrum_and_integrals(
                 mean_max_vals,
-                mean_max_idx,
-                mean_sat,
                 mean_zero_corrected_ppm,
                 use_extra_lorentzians=use_extra_lor
             )
