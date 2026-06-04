@@ -1444,24 +1444,23 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
     # ---- Statistics for the groups (mean ± std of per‑folder integrals) ----
     group_stats = {}
+    per_folder_integrals = {}
+
     for grp_idx, grp in enumerate(groups):
         label = grp["label"]
         keys = folder_keys_per_group[grp_idx]
         group_stats[label] = _compute_group_stats(keys, analysis_results)
     
-    analysis_results["group_stats"] = group_stats
-
-    # ---- Per‑folder integrals dictionary (per i grafici di gruppo) ----
-    per_folder_integrals = {}
-    for grp_idx, grp in enumerate(groups):
-        label = grp["label"]
-        keys = folder_keys_per_group[grp_idx]
+        # ---- Per‑folder integrals dictionary (per i grafici di gruppo) ----
         group_folder_integrals = {}
         for key in keys:
             integr = analysis_results.get(key, {}).get("integrals", {})
             for region, val in integr.items():
                 group_folder_integrals.setdefault(region, []).append(val)
+
         per_folder_integrals[label] = group_folder_integrals    
+
+    analysis_results["group_stats"] = group_stats
 
     # ---- p‑values (reference vs each sample) ----
     ref_label = None

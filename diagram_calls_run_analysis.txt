@@ -67,17 +67,18 @@ run_analysis(config_name, config)
     │   │   │
     │   │   └── plot_data( ... )                           # Z‑spettro della singola cartella
     │   │
-    │   └── (Fine loop cartelle)
+    │   │   (Fine loop cartelle)
+    │   │
+    │   └── Calcolo media del gruppo (se ci sono dati):
+    │       ├── media di max_indexes, max_vals, sat_trans_hz (con np.mean)
+    │       ├── analysis_results[label] = { statistiche, work_offset, uc, bf1 }
+    │       ├── process_zspectrum_and_integrals(mean_max_vals, mean_zero_corrected_ppm)  (come sopra)
+    │       └── plot_data( ... )                           # Z‑spettro medio del gruppo
     │
-    │   ├── Calcolo media del gruppo (se ci sono dati):
-    │   │   ├── media di max_indexes, max_vals, sat_trans_hz (con np.mean)
-    │   │   ├── analysis_results[label] = { statistiche, work_offset, uc, bf1 }
-    │   │   ├── process_zspectrum_and_integrals(mean_max_vals, mean_zero_corrected_ppm)  (come sopra)
-    │   │   └── plot_data( ... )                           # Z‑spettro medio del gruppo
+    │   (Fine loop gruppi)
     │
-    ├── (Fine loop gruppi)
-    │
-    ├── _compute_group_stats(keys, analysis_results)   per ogni gruppo
+    ├── Per ogni gruppo (grp_idx, grp):
+    │   └── _compute_group_stats(keys, analysis_results)   per ogni gruppo
     │
     ├── _compute_pvalues(ref_keys, sample_keys, analysis_results)  se c'è riferimento
     │     └── stats.ttest_ind  (o mannwhitneyu)
