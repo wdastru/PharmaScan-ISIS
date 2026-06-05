@@ -1,114 +1,114 @@
 run_analysis(config_name, config)
 │
-├── [1] Carica configurazione e prepara ambiente
+├── Carica configurazione e prepara ambiente
 │       - METABOLITE_REGIONS.clear() / .update(...)
 │       - plt.ion()
 │
-├── [2] CACHE
-│       │
-│       ├── load_cache(config_name, config)  →  _build_cache_key, _cache_path
-│       │
-│       ├── SE CACHE E' VALIDA E USATA:
-│       │   ├── Per ogni gruppo:
-│       │   │   └── plot_data( ... )                     	# Z‑spettro medio del gruppo
-│       │   │
-│       │   ├── Per ogni gruppo:
-│       │   │   └── plot_lorentzian_decomposition( ... ) 	# Z‑spettro medio del gruppo con lorentziane
-│       │   │
-│       │   ├── Per ogni cartella (dalle chiavi salvate):
-│       │   │   └── plot_data( ... )                     	# Z‑spettro singola cartella
-│       │   │
-│       │   ├── Per ogni cartella (dalle chiavi salvate):
-│       │   │   └── plot_lorentzian_decomposition( ... )	# Z‑spettro singola cartella con lorentziane
-│       │   │
-│       │   ├── Per ogni gruppo:
-│       │   │   └── plot_group_folder_integrals( ... )	# barre singoli exp + media di gruppo
-│       │   │
-│       │   ├── plot_multigroup_integrals( ... )        # barre confronto gruppi con p‑value
-│       │   │  
-│       │   └── save_analysis_results(...)	# salva i risultati in CSV and JSON format
-│       │
-│       └── FINE (return)
+├── CACHE
+│   │
+│   ├── load_cache(config_name, config)  →  _build_cache_key, _cache_path
+│   │
+│   ├── SE CACHE E' VALIDA E USATA:
+│   │   ├── Per ogni gruppo:
+│   │   │   └── plot_data( ... )                     	# Z‑spettro medio del gruppo
+│   │   │
+│   │   ├── Per ogni gruppo:
+│   │   │   └── plot_lorentzian_decomposition( ... ) 	# Z‑spettro medio del gruppo con lorentziane
+│   │   │
+│   │   ├── Per ogni cartella (dalle chiavi salvate):
+│   │   │   └── plot_data( ... )                     	# Z‑spettro singola cartella
+│   │   │
+│   │   ├── Per ogni cartella (dalle chiavi salvate):
+│   │   │   └── plot_lorentzian_decomposition( ... )	# Z‑spettro singola cartella con lorentziane
+│   │   │
+│   │   ├── Per ogni gruppo:
+│   │   │   └── plot_group_folder_integrals( ... )	# barre singoli exp + media di gruppo
+│   │   │
+│   │   ├── plot_multigroup_integrals( ... )        # barre confronto gruppi con p‑value
+│   │   │  
+│   │   └── save_analysis_results(...)	# salva i risultati in CSV and JSON format
+│   │
+│   └── FINE (return)
 │
-├── [3] RAMO LIVE (cache non usata o assente)
-│    │
-│    └── Per ogni gruppo (grp_idx, grp):
-│        │
-│        ├── Check type for group
-│        │
-│        ├── is_folder ? 
-│        │   │
-│        │   ├─ Sì ─ Per ogni cartella (folder):
-│        │   │       │
-│        │   │       ├── extract_parameters(folder)
-│        │   │       │   └── parameter_extract(method, "PVM_SatTransFL")
-│        │   │       │   └── parameter_extract(method, "PVM_FrqWorkOffset")
-│        │   │       │
-│        │   │       ├── load_spectra(folder)
-│        │   │       │   └── ng.bruker.read, ng.bruker.guess_udic, uc_from_udic
-│        │   │       │
-│        │   │       ├── process_spectra(data, dic, n_exp)
-│        │   │       │   └── per ogni esperimento:
-│        │   │       │       ├── remove_digital_filter(dic, data=fid) 
-│        │   │       │       ├── zf_size(fid, size=2048)
-│        │   │       │       ├── em(fid_zf, lb=0.005)
-│        │   │       │       ├── fft
-│        │   │       │       └── autops (acme)
-│        │   │       │
-│        │   │       ├── plot_spectra( ... )	# spettri interattivi (con CheckButtons)
-│        │   │       │
-│        │   │       ├── (se ppm mancanti) ask_user_for_ppm_range()
-│        │   │       │    	
-│        │   │       ├── ppm_to_index(uc, end_ppm) / ppm_to_index(uc, start_ppm)
-│        │   │       │
-│        │   │       ├── find_max_vals(spectra, start_idx, end_idx)
-│        │   │       │   └── Per ogni spettro
-│        │   │       │       └── find_maximum(spec, start, end)  per ogni spettro
-│        │   │       │
-│        │   │       ├── normalize_max_vals(max_vals, global_max, global_min)
-│        │   │       ├── correct_sat_frequencies(sat_trans_hz, max_indexes, work_offset_hz, uc, bf1)
-│        │   │       │
-│        │   │       ├── process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
-│        │   │       │   ├── estimate_constrained_sigmoid( ... )
-│        │   │       │   │     └── solve_LR_for_tau (chiama minimize con vincoli)
-│        │   │       │   ├── constrained_sigmoid(x_common, L,R,tau)
-│        │   │       │   ├── estimate_constrained_lorentzian( ... )
-│        │   │       │   │     └── minimize_scalar annidati
-│        │   │       │   ├── constrained_lorentzian(x_common, A,gamma, y_min)
-│        │   │       │   ├── spline_fit(x, y, x_fit)
-│        │   │       │   │     └── PchipInterpolator
-│        │   │       │   └── compute_regions_integrals(x_common, diff_y)
-│        │   │       │
-│        │   │       ├── analysis_results[folder_name_short].update({ ... })   # salva i risultati chiave
-│        │   │       ├── plot_data( ... )	# Z‑spettro della singola cartella
-│        │   │       └── plot_lorentzian_decomposition(...)
-│        │   │		
-│        │   │       (Fine loop cartelle)
-│        │   │		
-│        │   └─ No ─	Per ogni file:
-│        │           │
-│        │           ├── np.loadtxt(file, comments='#')
-│        │           ├── normalize_max_vals(max_vals, max(max_vals), min(max_vals))
-│        │           ├── analysis_results[key].update(res)
-│        │           └── plot_data(...)
-│        │
-│        │           (Fine loop file)
-│        │           
-│        └── Calcolo media del gruppo (se ci sono dati):
-│            ├── calcolo (con np.mean) di 
-│            │                         ├── mean_max_indexes
-│            │                         ├── mean_max_vals
-│            │                         ├── mean_sat
-│            │                         └── mean_zero_corrected_ppm 
-│            │
-│            ├── analysis_results[label]
-│            ├── process_zspectrum_and_integrals(mean_max_vals, mean_zero_corrected_ppm)  (come sopra)
-│            ├── plot_data( ... )	# Z‑spettro medio del gruppo
-│            └── plot_lorentzian_decomposition( ... )
-│     
-│        (Fine loop gruppi)
+├── RAMO LIVE (cache non usata o assente)
+│   │
+│   └── Per ogni gruppo (grp_idx, grp):
+│       │
+│       ├── Check type for group
+│       │
+│       ├── is_folder ? 
+│       │   │
+│       │   ├─ Sì ─ Per ogni cartella (folder):
+│       │   │       │
+│       │   │       ├── extract_parameters(folder)
+│       │   │       │   └── parameter_extract(method, "PVM_SatTransFL")
+│       │   │       │   └── parameter_extract(method, "PVM_FrqWorkOffset")
+│       │   │       │
+│       │   │       ├── load_spectra(folder)
+│       │   │       │   └── ng.bruker.read, ng.bruker.guess_udic, uc_from_udic
+│       │   │       │
+│       │   │       ├── process_spectra(data, dic, n_exp)
+│       │   │       │   └── per ogni esperimento:
+│       │   │       │       ├── remove_digital_filter(dic, data=fid) 
+│       │   │       │       ├── zf_size(fid, size=2048)
+│       │   │       │       ├── em(fid_zf, lb=0.005)
+│       │   │       │       ├── fft
+│       │   │       │       └── autops (acme)
+│       │   │       │
+│       │   │       ├── plot_spectra( ... )	# spettri interattivi (con CheckButtons)
+│       │   │       │
+│       │   │       ├── (se ppm mancanti) ask_user_for_ppm_range()
+│       │   │       │    	
+│       │   │       ├── ppm_to_index(uc, end_ppm) / ppm_to_index(uc, start_ppm)
+│       │   │       │
+│       │   │       ├── find_max_vals(spectra, start_idx, end_idx)
+│       │   │       │   └── Per ogni spettro
+│       │   │       │       └── find_maximum(spec, start, end)  per ogni spettro
+│       │   │       │
+│       │   │       ├── normalize_max_vals(max_vals, global_max, global_min)
+│       │   │       ├── correct_sat_frequencies(sat_trans_hz, max_indexes, work_offset_hz, uc, bf1)
+│       │   │       │
+│       │   │       ├── process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
+│       │   │       │   ├── estimate_constrained_sigmoid( ... )
+│       │   │       │   │     └── solve_LR_for_tau (chiama minimize con vincoli)
+│       │   │       │   ├── constrained_sigmoid(x_common, L,R,tau)
+│       │   │       │   ├── estimate_constrained_lorentzian( ... )
+│       │   │       │   │     └── minimize_scalar annidati
+│       │   │       │   ├── constrained_lorentzian(x_common, A,gamma, y_min)
+│       │   │       │   ├── spline_fit(x, y, x_fit)
+│       │   │       │   │     └── PchipInterpolator
+│       │   │       │   └── compute_regions_integrals(x_common, diff_y)
+│       │   │       │
+│       │   │       ├── analysis_results[folder_name_short].update({ ... })   # salva i risultati chiave
+│       │   │       ├── plot_data( ... )	# Z‑spettro della singola cartella
+│       │   │       └── plot_lorentzian_decomposition(...)
+│       │   │		
+│       │   │       (Fine loop cartelle)
+│       │   │		
+│       │   └─ No ─	Per ogni file:
+│       │           │
+│       │           ├── np.loadtxt(file, comments='#')
+│       │           ├── normalize_max_vals(max_vals, max(max_vals), min(max_vals))
+│       │           ├── analysis_results[key].update(res)
+│       │           └── plot_data(...)
+│       │
+│       │           (Fine loop file)
+│       │           
+│       └── Calcolo media del gruppo (se ci sono dati):
+│           ├── calcolo (con np.mean) di 
+│           │                         ├── mean_max_indexes
+│           │                         ├── mean_max_vals
+│           │                         ├── mean_sat
+│           │                         └── mean_zero_corrected_ppm 
+│           │
+│           ├── analysis_results[label]
+│           ├── process_zspectrum_and_integrals(mean_max_vals, mean_zero_corrected_ppm)  (come sopra)
+│           ├── plot_data( ... )	# Z‑spettro medio del gruppo
+│           └── plot_lorentzian_decomposition( ... )
 │    
-├──[4] STATISTICS
+│       (Fine loop gruppi)
+│    
+├── STATISTICS
 │   │
 │   └── Per ogni gruppo (grp_idx, grp):
 │       │   └── _compute_group_stats(keys, analysis_results)   per ogni gruppo

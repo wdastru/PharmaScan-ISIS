@@ -909,7 +909,7 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
 # ----------------------------------------------------------------------
 def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lorentzians=False) -> Dict[str, Any]:
 
-    """Fit envelopes, spline, compute difference and integrals for one dataset."""
+    """Fit envelopes, spline, lorentzians, compute difference and integrals for one dataset."""
     
     # 2. Sort
     combined = list(zip(zero_corrected_ppm, max_vals))
@@ -992,7 +992,8 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
         h_center_init = A - y_min_data
         gamma_init = gamma
         global_fit = fit_global_lorentzians(
-            zero_corrected_ppm, sig_corrected,
+            zero_corrected_ppm, 
+            sig_corrected,
             regions=METABOLITE_REGIONS,
             center_init=(h_center_init, gamma_init),
             baseline=1.0,
