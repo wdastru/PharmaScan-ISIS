@@ -29,6 +29,8 @@ from termcolor import colored
 import os
 import hashlib
 from joblib import dump, load
+import csv
+import types
 
 print(f"Using nmrglue version: {ng.__version__}")
 
@@ -126,10 +128,15 @@ def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict)
 # Configuration handling
 # ----------------------------------------------------------------------
 CONFIG_DIR = Path(__file__).parent / "configs"
+OUTPUT_DIR = Path(__file__).parent / "output"
 
 def ensure_config_dir() -> None:
     """Crea la cartella delle configurazioni se non esiste."""
     CONFIG_DIR.mkdir(exist_ok=True)
+
+def ensure_output_dir() -> None:
+    """Crea la cartella degli output se non esiste."""
+    OUTPUT_DIR.mkdir(exist_ok=True)
 
 def get_default_visibility() -> Dict[str, bool]:
     return {
@@ -263,6 +270,99 @@ def select_or_create_config() -> Tuple[str, Dict[str, Any]]:
 # ----------------------------------------------------------------------
 # Utility functions
 # ----------------------------------------------------------------------
+
+class SafeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        # Handle methods / functions
+        if callable(obj):
+            return repr(obj)               # or str(obj)
+        # Handle numpy arrays & scalars
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        # For any other object with a __dict__, try that
+        if hasattr(obj, '__dict__'):
+            return obj.__dict__
+        # Last resort
+        try:
+            return str(obj)
+        except Exception:
+            return f"<{type(obj).__name__}>"
+        
+def _safe_get_attr(obj, attr, default=None):
+    """Return attribute value. If it's a callable (method), call it first."""
+    val = getattr(obj, attr, default)
+    if callable(val):
+        try:
+            return val()
+        except TypeError:
+            # Fallback if call fails
+            return str(val) if default is None else default
+    return val
+
+def replace_uc_objects(obj):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if key == "uc" and value.__class__.__name__ == "unit_conversion":
+                uc = value
+                obj[key] = {
+                    "size": uc._size,
+                    "complex": uc._cplx,
+                    "sw": uc._sw,
+                    "obs_freq": uc._obs,
+                    "carrier": uc._car,
+                    "delta": uc._delta,
+                    "first_ppm": uc._first,
+                    # Use the safe getter for unit – it may be a method
+                    "unit": _safe_get_attr(uc, "unit", "unknown"),
+                    "ppm": list(uc.ppm) if hasattr(uc.ppm, '__iter__') else uc.ppm,
+                    "hz": list(uc.hz) if hasattr(uc.hz, '__iter__') else uc.hz,
+                }
+            else:
+                replace_uc_objects(value)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            if isinstance(item, dict):
+                replace_uc_objects(item)
+    return obj
+
+def save_analysis_results(config_name: str, analysis_results: dict) -> None:
+
+    ensure_output_dir()
+
+    with open(Path(OUTPUT_DIR / f"{config_name}.csv"), "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([f"Output values for {config_name}"])          # header
+            for key, value in analysis_results.items():
+                writer.writerow([key, value])          # csv module converts to string automatically
+
+    analysis_results = replace_uc_objects(analysis_results)  # Convert uc objects to dicts for JSON serialization
+
+    with open(Path(OUTPUT_DIR / f"{config_name}.json"), "w", encoding="utf-8") as f:
+        json.dump(analysis_results, f, indent=2, cls=SafeEncoder, ensure_ascii=False)   # indent for human readability
+
+def find_methods(obj, path=""):
+    """Return list of (path, object_repr) for any method or function found."""
+    issues = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            current = f"{path}.{k}" if path else k
+            if callable(v) and not isinstance(v, (type, type(None))):
+                # Catch user-defined methods, built-in methods, functions, lambdas
+                issues.append((current, repr(v)))
+            else:
+                issues.extend(find_methods(v, current))
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            current = f"{path}[{i}]"
+            if callable(v) and not isinstance(v, type):
+                issues.append((current, repr(v)))
+            else:
+                issues.extend(find_methods(v, current))
+    return issues
 
 def find_maximum(arr: np.ndarray,
                start: Optional[int] = None,
@@ -1350,6 +1450,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         plot_multigroup_integrals(group_stats, pvals, groups,
                                   visibility=config.get("plot_visibility", get_default_visibility()))
 
+        # --- Saving ---
+        save_analysis_results(analysis_results=analysis_results, config_name=config_name)
+    
         print("Press Enter to exit...")
         input()
         plt.close('all')
@@ -1668,6 +1771,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             visibility=config.get("plot_visibility", get_default_visibility())
         )
 
+    # --- Saving ---
+    save_analysis_results(analysis_results=analysis_results, config_name=config_name)
+    
     print("\nTutti i grafici sono stati creati. Premi Invio per uscire.")
     input()
     plt.close('all')
