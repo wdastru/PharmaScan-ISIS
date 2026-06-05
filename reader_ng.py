@@ -1792,61 +1792,62 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 combined.sort()
                 sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
-            # --- Calculate integrals for this individual folder ---
-            res = process_zspectrum_and_integrals(
-                max_vals, zero_corrected_ppm,
-                use_extra_lorentzians=use_extra_lor
-            )
-            analysis_results[folder_name_short].update(res)
-            
-            # After storing the results for the single folder, optionally plot it
-            if res["spline_fit_results"].get("fit_successful", False):
-                analysis_results[folder_name_short].update({
-                    "max_indexes": max_indexes,
-                    "max_vals": max_vals
-                })
-                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
-
                 # --- Calculate integrals for this individual folder ---
                 res = process_zspectrum_and_integrals(
-                    max_vals, 
-                    zero_corrected_ppm
+                    max_vals, zero_corrected_ppm,
+                    use_extra_lorentzians=use_extra_lor
                 )
                 analysis_results[folder_name_short].update(res)
-                
+            
                 # After storing the results for the single folder, optionally plot it
-                plot_data(
-                    x=res["spline_fit_results"]["x"],
-                    y=res["spline_fit_results"]["y"],
-                    x_fit=res["spline_fit_results"]["x_fit"],
-                    y_fit=res["spline_fit_results"]["y_fit"],
-                    title=f"Single folder: {folder_name_short}",
-                    invert_x=True,
-                    add_lorentz=True,
-                    lorentzian_envelope_results=res["lorentzian_envelope_results"],
-                    add_sigmoid=True,
-                    sigmoidal_envelope_results=res["sigmoidal_envelope_results"],
-                    diff_x=res["diff_x"],
-                    diff_y=res["diff_y"],
-                    diff_label="Lorentzian envelope - Spline fit",
-                    visibility=config.get("plot_visibility", get_default_visibility())
-                )
+                if res["spline_fit_results"].get("fit_successful", False):
+                    analysis_results[folder_name_short].update({
+                        "max_indexes": max_indexes,
+                        "max_vals": max_vals
+                    })
+                    group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
 
-            # Nuovo plot di decomposizione lorentziana
-            if use_extra_lor and res.get("global_fit") is not None:
-                # interpolo la lorentziana centrale sulla griglia comune per il plot
-                interp_center = interp1d(res["global_fit"]["x"], res["global_fit"]["y_center"],
-                                        kind='linear', fill_value="extrapolate")
-                L_main_y_common = interp_center(res["x_common"])
-                plot_lorentzian_decomposition(
-                    x_data=res["x_data"],
-                    y_data=res["y_data"],
-                    x_common=res["x_common"],
-                    L_main_y=L_main_y_common,
-                    extra_lor_results=res["extra_lorentzians_results"],
-                    title=f"Lorentzian decomposition - {folder_name_short}",
-                    invert_x=True
-                )
+                    # --- Calculate integrals for this individual folder ---
+                    res = process_zspectrum_and_integrals(
+                        max_vals, 
+                        zero_corrected_ppm,
+                        use_extra_lorentzians=use_extra_lor
+                    )
+                    analysis_results[folder_name_short].update(res)
+                    
+                    # After storing the results for the single folder, optionally plot it
+                    plot_data(
+                        x=res["spline_fit_results"]["x"],
+                        y=res["spline_fit_results"]["y"],
+                        x_fit=res["spline_fit_results"]["x_fit"],
+                        y_fit=res["spline_fit_results"]["y_fit"],
+                        title=f"Single folder: {folder_name_short}",
+                        invert_x=True,
+                        add_lorentz=True,
+                        lorentzian_envelope_results=res["lorentzian_envelope_results"],
+                        add_sigmoid=True,
+                        sigmoidal_envelope_results=res["sigmoidal_envelope_results"],
+                        diff_x=res["diff_x"],
+                        diff_y=res["diff_y"],
+                        diff_label="Lorentzian envelope - Spline fit",
+                        visibility=config.get("plot_visibility", get_default_visibility())
+                    )
+
+                # Nuovo plot di decomposizione lorentziana
+                if use_extra_lor and res.get("global_fit") is not None:
+                    # interpolo la lorentziana centrale sulla griglia comune per il plot
+                    interp_center = interp1d(res["global_fit"]["x"], res["global_fit"]["y_center"],
+                                            kind='linear', fill_value="extrapolate")
+                    L_main_y_common = interp_center(res["x_common"])
+                    plot_lorentzian_decomposition(
+                        x_data=res["x_data"],
+                        y_data=res["y_data"],
+                        x_common=res["x_common"],
+                        L_main_y=L_main_y_common,
+                        extra_lor_results=res["extra_lorentzians_results"],
+                        title=f"Lorentzian decomposition - {folder_name_short}",
+                        invert_x=True
+                    )
         else:
             files = entries
             for file_idx, file in enumerate(files):
@@ -1891,7 +1892,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 # --- Fit, integrate, and plot (common pipeline) ---
                 res = process_zspectrum_and_integrals(
                     max_vals, 
-                    zero_corrected_ppm
+                    zero_corrected_ppm,
+                    use_extra_lorentzians=use_extra_lor
                 )
                 analysis_results[key].update(res)
 
@@ -2018,10 +2020,16 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # da usare nel ramo cache
     analysis_results["folder_keys_per_group"] = folder_keys_per_group
 
-    # ---- Save cache and show multigroup bar plot ----
+    # ---- Save cache ----
     save_cache(config_name, config, analysis_results)
-    plot_multigroup_integrals(group_stats, p_values, groups,
-                              visibility=config.get("plot_visibility", get_default_visibility()))
+    
+    # ---- Show multigroup bar plot ----
+    plot_multigroup_integrals(
+        group_stats, 
+        p_values, 
+        groups,
+        visibility=config.get("plot_visibility", get_default_visibility())
+    )
 
     # ---- Plot per gruppo con cartelle singole ----
     for grp_idx, grp in enumerate(groups):
