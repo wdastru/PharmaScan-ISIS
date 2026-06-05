@@ -1452,6 +1452,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     bf1
                 )
 
+                # --- Sort by ppm ---
                 combined = list(zip(sat_trans_hz, max_indexes, max_vals, zero_corrected_ppm))
                 combined.sort()
                 sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
@@ -1464,7 +1465,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
                 # --- Calculate integrals for this individual folder ---
                 res = process_zspectrum_and_integrals(
-                    max_vals, zero_corrected_ppm
+                    max_vals, 
+                    zero_corrected_ppm
                 )
                 analysis_results[folder_name_short].update(res)
                 
@@ -1512,16 +1514,16 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     print(colored(f"Error reading file {file}: {e}", "red", attrs=["bold"]))
                     continue
 
-                # --- Handle ppm_missing (no spectrum to show) ---
-                if ppm_missing and grp_idx == 0 and file_idx == 0:
-                    print("ppm range missing - please enter the range used for normalisation.")
-                    start_ppm, end_ppm = ask_user_for_ppm_range()
-                    config["start_ppm"] = start_ppm
-                    config["end_ppm"]   = end_ppm
-                    config["ppm_missing"] = False
-                    ppm_missing = False
-                    if config_name:
-                        save_config(config_name, config)
+                ## --- Handle ppm_missing (no spectrum to show) ---
+                #if ppm_missing and grp_idx == 0 and file_idx == 0:
+                #    print("ppm range missing - please enter the range used for normalisation.")
+                #    start_ppm, end_ppm = ask_user_for_ppm_range()
+                #    config["start_ppm"] = start_ppm
+                #    config["end_ppm"]   = end_ppm
+                #    config["ppm_missing"] = False
+                #    ppm_missing = False
+                #    if config_name:
+                #        save_config(config_name, config)
 
                 # --- Sort by ppm ---
                 combined = list(zip(zero_corrected_ppm, max_vals))
@@ -1538,7 +1540,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 })
 
                 # --- Fit, integrate, and plot (common pipeline) ---
-                res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
+                res = process_zspectrum_and_integrals(
+                    max_vals, 
+                    zero_corrected_ppm
+                )
                 analysis_results[key].update(res)
 
                 plot_data(
