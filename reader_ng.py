@@ -1484,7 +1484,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         else:
             pass
                     
-        if is_folder:
+        if is_folder:   # BRUKER data
             folders = entries
             for file in folders:
                 base_name = f"{file.parent.name[:12]}…{file.parent.name[-12:]}-{file.stem}"
@@ -1590,7 +1590,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_label="Lorentzian envelope - Spline fit",
                     visibility=config.get("plot_visibility", get_default_visibility())
                 )
-        else:
+        else:   # txt data files (sat_trans_hz vs max_vals) 
             files = entries
             for file_idx, file in enumerate(files):
                 base_name = file.stem
@@ -1610,31 +1610,24 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     data = np.loadtxt(file, comments='#')
                     if data.ndim != 2 or data.shape[1] < 2:
                         raise ValueError("File must contain at least two columns.")
-                    zero_corrected_ppm = data[:, 0].tolist()
-                    max_vals           = data[:, 1].tolist()
+                    sat_trans_hz = data[:, 0].tolist()
+                    max_vals     = data[:, 1].tolist()
                     max_vals = normalize_max_vals(max_vals=max_vals, global_max=max(max_vals), global_min=min(max_vals))
+                    group_meta[grp_idx]["bf1"] = 51.7
+                    zero_corrected_ppm = [sat_trans_hz[i] / group_meta[grp_idx]["bf1"] for i in range(len(sat_trans_hz))]
                 except Exception as e:
                     print(colored(f"Error reading file {file}: {e}", "red", attrs=["bold"]))
                     continue
 
-                ## --- Handle ppm_missing (no spectrum to show) ---
-                #if ppm_missing and grp_idx == 0 and file_idx == 0:
-                #    print("ppm range missing - please enter the range used for normalisation.")
-                #    start_ppm, end_ppm = ask_user_for_ppm_range()
-                #    config["start_ppm"] = start_ppm
-                #    config["end_ppm"]   = end_ppm
-                #    config["ppm_missing"] = False
-                #    ppm_missing = False
-                #    if config_name:
-                #        save_config(config_name, config)
+                max_indexes = [0] * len(max_vals)
 
                 # --- Sort by ppm ---
-                combined = list(zip(zero_corrected_ppm, max_vals))
+                combined = list(zip(zero_corrected_ppm, max_vals, sat_trans_hz))
                 combined.sort()
-                zero_corrected_ppm[:], max_vals[:] = zip(*combined)
+                zero_corrected_ppm[:], max_vals[:], sat_trans_hz[:] = zip(*combined)
 
                 # --- Store raw data for later group averaging ---
-                file_data_raw[grp_idx].append( (max_vals, zero_corrected_ppm) )
+                group_raw[grp_idx].append( (max_indexes, max_vals, sat_trans_hz) )
 
                 # No max_indexes or sat_trans_hz needed; store what we have
                 analysis_results[key].update({
@@ -1684,8 +1677,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "sd_max_indexes": np.std(idx_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(idx_arr[0]),
                 "sd_max_vals": np.std(val_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(val_arr[0]),
                 "sd_sat_trans_hz": np.std(sat_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(sat_arr[0]),
-                "work_offset_hz": group_meta[grp_idx]["work_offset_hz"],
-                "uc": group_meta[grp_idx]["uc"],
                 "bf1": group_meta[grp_idx]["bf1"],
             }
 
