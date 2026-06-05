@@ -52,7 +52,7 @@ run_analysis(config_name, config)
     │   │   ├── normalize_max_vals(max_vals, global_max, global_min)
     │   │   ├── correct_sat_frequencies(sat_trans_hz, max_indexes, work_offset_hz, uc, bf1)
     │   │   │
-    │   │   ├── process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz, zero_corrected_ppm)
+    │   │   ├── process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
     │   │   │   ├── estimate_constrained_sigmoid( ... )
     │   │   │   │     └── solve_LR_for_tau (chiama minimize con vincoli)
     │   │   │   ├── constrained_sigmoid(x_common, L,R,tau)
@@ -67,17 +67,18 @@ run_analysis(config_name, config)
     │   │   │
     │   │   └── plot_data( ... )                           # Z‑spettro della singola cartella
     │   │
-    │   └── (Fine loop cartelle)
+    │   │   (Fine loop cartelle)
+    │   │
+    │   └── Calcolo media del gruppo (se ci sono dati):
+    │       ├── media di max_indexes, max_vals, sat_trans_hz (con np.mean)
+    │       ├── analysis_results[label] = { statistiche, work_offset, uc, bf1 }
+    │       ├── process_zspectrum_and_integrals(mean_max_vals, mean_zero_corrected_ppm)  (come sopra)
+    │       └── plot_data( ... )                           # Z‑spettro medio del gruppo
     │
-    │   ├── Calcolo media del gruppo (se ci sono dati):
-    │   │   ├── media di max_indexes, max_vals, sat_trans_hz (con np.mean)
-    │   │   ├── analysis_results[label] = { statistiche, work_offset, uc, bf1 }
-    │   │   ├── process_zspectrum_and_integrals(mean_max_vals, mean_max_idx, mean_sat, mean_zero_corrected_ppm)  (come sopra)
-    │   │   └── plot_data( ... )                           # Z‑spettro medio del gruppo
+    │   (Fine loop gruppi)
     │
-    ├── (Fine loop gruppi)
-    │
-    ├── _compute_group_stats(keys, analysis_results)   per ogni gruppo
+    ├── Per ogni gruppo (grp_idx, grp):
+    │   └── _compute_group_stats(keys, analysis_results)   per ogni gruppo
     │
     ├── _compute_pvalues(ref_keys, sample_keys, analysis_results)  se c'è riferimento
     │     └── stats.ttest_ind  (o mannwhitneyu)

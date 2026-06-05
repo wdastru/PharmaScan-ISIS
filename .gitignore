@@ -9,3 +9,4 @@ analysis_cache.joblib
 cache/
 tests/__init__.py
 datiannagrezzi/
+output/
