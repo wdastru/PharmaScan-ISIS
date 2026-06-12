@@ -1255,9 +1255,11 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
             else:  # Text files
                 cnt = ask_int("Number of text files", min_val=1, default=1)
                 files = []
+                BF1_values = []
                 for _ in range(cnt):
                     files.append(select_text_file())
-                return {"label": label, "is_reference": is_ref, "folders": [], "files": files}
+                    BF1_values.append(float(input("Enter BF1 value for this file (MHz): ")))
+                return {"label": label, "is_reference": is_ref, "folders": [], "files": files, "BF1": BF1_values}
 
         if with_ref:
             ref_label = input("Label for reference group (default: reference): ").strip() or "reference"
@@ -1281,6 +1283,10 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
             if "files" not in grp:
                 grp["files"] = []
                 modified = True
+            if "BF1" not in grp:
+                grp["BF1"] = []
+                modified = True
+            
 
     # ---------- Fill missing data paths for any group ----------
     for grp in config_data["groups"]:
@@ -1300,14 +1306,23 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                 cnt = ask_int("Number of text files", min_val=1, default=1)
                 for _ in range(cnt):
                     grp.setdefault("files", []).append(select_text_file())
+                    grp.setdefault("BF1", []). append(float(input("Enter BF1 value for this file (MHz): ")))
             modified = True
         elif grp.get("folders") and grp.get("files"):
             # Both provided – warn but keep; the analysis will decide
             print(colored(
                 f"Warning: Group '{grp['label']}' has both folders and files. "
-                "Only folders will be used for analysis.",
+                "Folders will be used for analysis.",
                 "yellow"
             ))
+        elif grp.get("files") and not grp.get("folders"):
+            if "BF1" not in grp or len(grp["BF1"]) != len(grp["files"]):
+                print(f"Group '{grp['label']}' has text files but missing or mismatched BF1 values.")
+                bf1_values = []
+                for f in grp["files"]:
+                    bf1_values.append(float(input(f"Enter BF1 value for file '{f}' (MHz): ")))
+                grp["BF1"] = bf1_values
+                modified = True
 
     # ---------- ppm range handling ----------
     if config_data.get("start_ppm") is None or config_data.get("end_ppm") is None:
@@ -1359,7 +1374,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     cached = load_cache(config_name, config)
     use_cache = False
     if cached:
-        use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi usarla?", default=True)
+        use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi evitare il ricalcolo?", default=True)
     if cached and use_cache:
         analysis_results = cached
 
@@ -1599,7 +1614,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
                 # --- Read x/y data from file ---
                 try:
-                    # Assume two columns: corrected ppm, normalised intensity.
+                    # Assume two columns: sat_trans_hz vs max_vals.
                     # Skip comments (lines starting with '#') and handle possible header.
                     data = np.loadtxt(file, comments='#')
                     if data.ndim != 2 or data.shape[1] < 2:
@@ -1607,7 +1622,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     sat_trans_hz = data[:, 0].tolist()
                     max_vals     = data[:, 1].tolist()
                     max_vals = normalize_max_vals(max_vals=max_vals, global_max=max(max_vals), global_min=min(max_vals))
-                    group_meta[grp_idx]["bf1"] = 51.7
+                    
+                    try:
+                        value = config["groups"][grp_idx]["BF1"][file_idx]
+                        group_meta[grp_idx]["bf1"] = value
+                    except KeyError as e:
+                        print(colored(f"Missing key {e} for {file}", "red", attrs=["bold"]))
+                        continue
+                    except (TypeError, IndexError) as e:
+                        print(colored(f"Invalid structure (expected dict/list) for {file}: {e}", "red", attrs=["bold"]))
+                        continue
+                                        
                     zero_corrected_ppm = [sat_trans_hz[i] / group_meta[grp_idx]["bf1"] for i in range(len(sat_trans_hz))]
                 except Exception as e:
                     print(colored(f"Error reading file {file}: {e}", "red", attrs=["bold"]))
