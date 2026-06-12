@@ -555,13 +555,14 @@ def plot_data(
     diff_x=None, 
     diff_y=None, 
     diff_label="Difference (Envelope - Spline)",
-    visibility: Optional[Dict[str, bool]] = None
+    visibility: Optional[Dict[str, bool]] = None,
+    window_title: Optional[str] = None
 ) -> Figure:
     # Se non fornito, usa i default globali
     if visibility is None:
         visibility = get_default_visibility()
     
-    fig = plt.figure(figsize=(8, 5))
+    fig = plt.figure(num=window_title, figsize=(8, 5))
 
     # Data points
     if visibility.get("data", True):
@@ -653,8 +654,8 @@ def spline_fit(x, y, x_fit=None, n_points=N_POINTS_FIT) -> Dict[str, Any]:
             'fit_successful': fit_successful
         }    
 
-def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None) -> Figure:
-    fig, ax = plt.subplots(figsize=(12, 6))
+def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None, window_title=None) -> Figure:
+    fig, ax = plt.subplots(num=window_title, figsize=(12, 6))
     lines = []
     labels = []
     for exp_idx in range(n_exp):
@@ -1070,7 +1071,8 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
                               title="Integrals by region",
                               ylabel="Integral (mean ± SD)",
                               figsize=(12, 6),
-                              visibility=None) -> Figure:
+                              visibility=None,
+                              window_title=None) -> Figure:
     if visibility is None:
         visibility = get_default_visibility()
     if not group_stats:
@@ -1081,7 +1083,7 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
     n_groups = len(groups)
     x = np.arange(n_regions)
     bar_width = 0.8 / n_groups
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, ax = plt.subplots(num=window_title, figsize=figsize)
     cmap = plt.get_cmap('tab10')
     colors = [cmap(i % 10) for i in range(n_groups)]
     for i, grp in enumerate(groups):
@@ -1130,7 +1132,8 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
 def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
                                 folder_names=None,
                                 title=None, ylabel="Integrale",
-                                figsize=(12, 6), visibility=None):
+                                figsize=(12, 6), visibility=None,
+                                window_title=None) -> Figure:
     """
     Bar chart per un singolo gruppo: barre affiancate per ogni cartella
     (con colori e nomi) e barra della media ± SD.
@@ -1181,7 +1184,7 @@ def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
 
     x = np.arange(len(regions))
 
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, ax = plt.subplots(num=window_title, figsize=figsize)
 
     # Colormap per le cartelle
     cmap = plt.get_cmap('tab10')
@@ -1573,7 +1576,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     add_sigmoid=True, sigmoidal_envelope_results=z.get("sigmoidal_envelope_results"),
                     diff_x=z.get("diff_x"), diff_y=z.get("diff_y"),
                     diff_label="Lorentzian envelope - Spline fit",
-                    visibility=config.get("plot_visibility", get_default_visibility())
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f"Group {label} spline fit (da cache)"
                 )
 
         # 1b. Plot aggiuntivi di decomposizione per le medie di gruppo
@@ -1610,7 +1614,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         y=res["spline_fit_results"]["y"],
                         x_fit=res["spline_fit_results"]["x_fit"],
                         y_fit=res["spline_fit_results"]["y_fit"],
-                        title=f"Single folder: {key}",
+                        title=f"Spline: {key}",
                         invert_x=True,
                         add_lorentz=True,
                         lorentzian_envelope_results=res.get("lorentzian_envelope_results"),
@@ -1619,7 +1623,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         diff_x=res.get("diff_x"),
                         diff_y=res.get("diff_y"),
                         diff_label="Lorentzian envelope - Spline fit",
-                        visibility=config.get("plot_visibility", get_default_visibility())
+                        visibility=config.get("plot_visibility", get_default_visibility()),
+                        window_title=f"Spline fit: {key} (da cache)"
                     )
 
         # 2b. Plot aggiuntivi di decomposizione multi‑lorentziana per singole cartelle (se presenti)
@@ -1671,7 +1676,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     group_stats=group_stats,
                     per_folder_integrals=per_folder_integrals,
                     folder_names=folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else [],
-                    visibility=config.get("plot_visibility", get_default_visibility())
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    title=f"Integrali per regione - {label} (da cache)",
+                    window_title=f"Integrali per regione - {label} (da cache)"
                 )
 
         # ------------------------------------------------------------
@@ -1679,7 +1686,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # ------------------------------------------------------------
         pvals = analysis_results.get("p_values", {})
         plot_multigroup_integrals(group_stats, pvals, groups,
-                                  visibility=config.get("plot_visibility", get_default_visibility()))
+                                  visibility=config.get("plot_visibility", get_default_visibility()),
+                                  title="Integrali per regione (da cache)",
+                                  window_title="Integrali per regione (da cache)")
 
         # --- Saving ---
         save_analysis_results(analysis_results=analysis_results, config_name=config_name)
@@ -1752,10 +1761,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
                 spectra = process_spectra(data, dic, n_exp)
                 fig = plot_spectra(
-                    title=f"Spectra - {folder_name_short}",
+                    title=f"{label} - {folder_name_short}",
                     spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
                     sat_trans_hz=sat_trans_hz,
-                    visibility=config.get("plot_visibility", get_default_visibility())
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f"{label}: Spectra  for {folder_name_short}"
                 )
 
                 if ppm_missing and grp_idx == 0 and file == folders[0]:
@@ -1821,7 +1831,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         y=res["spline_fit_results"]["y"],
                         x_fit=res["spline_fit_results"]["x_fit"],
                         y_fit=res["spline_fit_results"]["y_fit"],
-                        title=f"Single folder: {folder_name_short}",
+                        title=f" {label}: {folder_name_short}",
                         invert_x=True,
                         add_lorentz=True,
                         lorentzian_envelope_results=res["lorentzian_envelope_results"],
@@ -1830,7 +1840,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         diff_x=res["diff_x"],
                         diff_y=res["diff_y"],
                         diff_label="Lorentzian envelope - Spline fit",
-                        visibility=config.get("plot_visibility", get_default_visibility())
+                        visibility=config.get("plot_visibility", get_default_visibility()),
+                        window_title=f" {label}: spline fit for {folder_name_short}"
                     )
 
                 # Nuovo plot di decomposizione lorentziana
@@ -1916,7 +1927,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     y=res["spline_fit_results"]["y"],
                     x_fit=res["spline_fit_results"]["x_fit"],
                     y_fit=res["spline_fit_results"]["y_fit"],
-                    title=f"Single file: {key}",
+                    title=f"{label}: {key}",
                     invert_x=True,
                     add_lorentz=True,
                     lorentzian_envelope_results=res["lorentzian_envelope_results"],
@@ -1925,7 +1936,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_x=res["diff_x"],
                     diff_y=res["diff_y"],
                     diff_label="Lorentzian envelope - Spline fit",
-                    visibility=config.get("plot_visibility", get_default_visibility())
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f"{label}: spline fit for file {key}"
                 )
 
         # --- Calculate the group average ---
@@ -1974,7 +1986,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_label="Lorentzian envelope - Spline fit",
                     visibility=config.get("plot_visibility", get_default_visibility())
                 )
-
+                
             # Nuovo plot di decomposizione lorentziana per la media del gruppo
             if use_extra_lor and res_avg.get("global_fit") is not None:
                 interp_center = interp1d(res_avg["global_fit"]["x"], res_avg["global_fit"]["y_center"],
@@ -2040,7 +2052,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         group_stats, 
         p_values, 
         groups,
-        visibility=config.get("plot_visibility", get_default_visibility())
+        visibility=config.get("plot_visibility", get_default_visibility()),
+        title="Integrali per regione (ricalcolati)",
+        window_title="Integrali per regione (ricalcolati)"
     )
 
     # ---- Plot per gruppo con cartelle singole ----
@@ -2051,7 +2065,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             group_stats=group_stats,
             per_folder_integrals=per_folder_integrals,
             folder_names=folder_keys_per_group[grp_idx],   # <-- lista dei nomi brevi
-            visibility=config.get("plot_visibility", get_default_visibility())
+            visibility=config.get("plot_visibility", get_default_visibility()),
+            title=f"Integrali per regione - {label} (ricalcolati)",
+            window_title=f"Integrali per regione - {label} (ricalcolati)"
         )
 
     # Plot a seconda della modalità per la media del gruppo
