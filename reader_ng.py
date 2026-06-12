@@ -1334,13 +1334,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
     if "metabolite_regions" not in config_data:
         config_data["metabolite_regions"] = DEFAULT_METABOLITE_REGIONS
         modified = True
-    else:
-        merged_regions = merge_config_defaults(DEFAULT_METABOLITE_REGIONS,
-                                               config_data["metabolite_regions"])
-        if merged_regions != config_data["metabolite_regions"]:
-            config_data["metabolite_regions"] = merged_regions
-            modified = True
-
+    
     # ---------- Save if modified ----------
     if modified and config_name:
         save_config(config_name, config_data)
