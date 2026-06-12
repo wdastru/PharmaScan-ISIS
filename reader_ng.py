@@ -39,7 +39,7 @@ DEFAULT_METABOLITE_REGIONS: dict[str, List[float]] = {
     "Pi": [4.3, 5.3],
     "PEP 1,3 BPG": [1.0, 4.3],
     "GAMMA-ATP": [-3.5, -1.3],
-    "ALPHA,BETA-ADP": [-6, -3],
+    #"ALPHA,BETA-ADP": [-6, -3],
     "ALPHA-ATP": [-9, -6]
 }
 METABOLITE_REGIONS = DEFAULT_METABOLITE_REGIONS.copy()
