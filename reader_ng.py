@@ -1504,6 +1504,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 try:
                     # Assume two columns: corrected ppm, normalised intensity.
                     # Skip comments (lines starting with '#') and handle possible header.
+                    group_meta[grp_idx]["bf1"] = parameter_extract(file, "BF1")
                     data = np.loadtxt(file, comments='#')
                     if data.ndim != 2 or data.shape[1] < 2:
                         raise ValueError("File must contain at least two columns.")
