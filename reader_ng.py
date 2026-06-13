@@ -1422,7 +1422,6 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
     
     Returns dict con 'center', 'extra', 'integrals_extra', 'y_total', 'y_center', etc.
     """
-    from scipy.optimize import minimize
     x = np.asarray(x_data)
     y = np.asarray(y_data)
     
