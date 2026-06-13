@@ -928,7 +928,6 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
     """
     def model(params, x):
         h_c, gamma = params[0], params[1]
-        #result = direct_saturation(x, h_c, gamma, baseline)
         result = baseline - lorentzian_peak(x, h_c, 0, gamma)
         idx = 2
         for _ in region_list:
@@ -961,7 +960,6 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
         print(colored("Warning: global lorentzian fit did not converge", "yellow"))
     
     h_c_opt, gamma_opt = res.x[0], res.x[1]
-    #y_center = direct_saturation(x, h_c_opt, gamma_opt, baseline)
     y_center = baseline - lorentzian_peak(x, h_c_opt, 0, gamma_opt)
     
     extra_results = {}
