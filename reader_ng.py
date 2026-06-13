@@ -906,6 +906,151 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
     return L_opt, R_opt, tau_opt
 
 # ----------------------------------------------------------------------
+# Multi Lorentzian feature functions
+# ----------------------------------------------------------------------
+
+def lorentzian_peak(x, h, x0, w):
+    """
+    Lorentziana classica: h * w^2 / (w^2 + (x - x0)^2)
+    h : ampiezza (positiva per CEST, negativa per NOE)
+    x0: centro (ppm)
+    w : semi-larghezza a metà altezza (ppm)
+    """
+    return h * w**2 / (w**2 + (x - x0)**2)
+
+def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, fixed_width=0.2):
+    """
+    Fit simultaneo:
+      - saturazione diretta (centro=0) -> (h_center, gamma)
+      - una lorentziana per ogni regione (h, x0, w)
+    
+    Returns dict con 'center', 'extra', 'integrals_extra', 'y_total', 'y_center', etc.
+    """
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+    
+    h0_c, gamma0 = center_init
+    params_init = [h0_c, gamma0]
+    bounds = [(0, None), (0.05, 2.0)]   # h_center>=0, gamma>0
+    
+    region_list = list(regions.items())
+    for reg_name, (start, end) in region_list:
+        x0_init = (start + end) / 2.0
+        params_init += [0.0, x0_init, fixed_width]
+        bounds += [(None, None), (start, end), (0.05, 1.0)]
+    
+    def model(params, x):
+        h_c, gamma = params[0], params[1]
+        result = direct_saturation(x, h_c, gamma, baseline)
+        idx = 2
+        for _ in region_list:
+            h = params[idx]
+            x0 = params[idx+1]
+            w = params[idx+2]
+            result += lorentzian_peak(x, h, x0, w) if w > 0 else 0
+            idx += 3
+        return result
+    
+    def mse(params):
+        y_pred = model(params, x)
+        return np.sum((y - y_pred)**2)
+    
+    res = minimize(mse, params_init, bounds=bounds, method='L-BFGS-B')
+    if not res.success:
+        print(colored("Warning: global lorentzian fit did not converge", "yellow"))
+    
+    h_c_opt, gamma_opt = res.x[0], res.x[1]
+    y_center = direct_saturation(x, h_c_opt, gamma_opt, baseline)
+    
+    extra_results = {}
+    integrals_extra = {}
+    idx = 2
+    for reg_name, (start, end) in region_list:
+        h_opt = res.x[idx]
+        x0_opt = res.x[idx+1]
+        w_opt = res.x[idx+2]
+        integral = np.pi * h_opt * w_opt
+        y_peak = lorentzian_peak(x, h_opt, x0_opt, w_opt)
+        extra_results[reg_name] = {'h': h_opt, 'x0': x0_opt, 'w': w_opt,
+                                   'integral': integral, 'y': y_peak}
+        integrals_extra[reg_name] = integral
+        idx += 3
+    
+    y_extra_sum = np.zeros_like(x)
+    for r in extra_results.values():
+        y_extra_sum += r['y']
+    y_total = y_center + y_extra_sum
+    
+    return {
+        'center': {'h': h_c_opt, 'gamma': gamma_opt, 'baseline': baseline},
+        'extra': extra_results,
+        'integrals_extra': integrals_extra,
+        'y_center': y_center,
+        'y_extra_sum': y_extra_sum,
+        'y_total': y_total,
+        'x': x,
+        'success': res.success
+    }
+
+def plot_lorentzian_decomposition(
+        x_data, 
+        y_data, 
+        x_common, 
+        L_main_y, 
+        extra_lor_results, 
+        title, 
+        invert_x=True,
+        window_title=None
+    ):
+    """
+    Plot dei dati, lorentziana principale, lorentziane extra e somma.
+    - x_data, y_data: punti originali (z-spectrum corretto)
+    - x_common: griglia per le curve continue
+    - L_main_y: valore della lorentziana principale su x_common
+    - extra_lor_results: dict da fit_extra_lorentzians
+    - title: titolo del plot
+    """
+    fig, ax = plt.subplots(num=window_title, figsize=(10,6))
+    
+    # Dati sperimentali
+    ax.plot(x_data, y_data, 'o', color='k', label='Data (corrected)')
+    
+    # Lorentziana principale
+    ax.plot(x_common, L_main_y, 'b-', linewidth=2, label='Lorentzian main')
+    
+    # Somma delle lorentziane extra
+    sum_extra = np.zeros_like(x_common)
+    for reg, res in extra_lor_results.items():
+        y_peak = lorentzian_peak(x_common, res['h'], res['x0'], res['w'])
+        sum_extra += y_peak
+        # Plot singole lorentziane (opzionale, potrebbe essere confusionario, meglio usare tratti sottili)
+        ax.plot(x_common, y_peak, '--', alpha=0.5, label=f"{reg} (h={res['h']:.2f})")
+    
+    # Totale
+    total_y = L_main_y + sum_extra
+    ax.plot(x_common, total_y, 'r-', linewidth=2, label='Total (main + extra)')
+    
+    if invert_x:
+        ax.invert_xaxis()
+    
+    ax.set_xlabel('Saturation ppm')
+    ax.set_ylabel('Normalized intensity')
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.show(block=False)
+    return fig
+
+def direct_saturation(x, h_center, gamma, baseline=1.0):
+    """
+    Modella la riduzione del segnale dovuta alla saturazione diretta.
+    baseline: asintoto per |x|→∞ (tipicamente 1 dopo correzione sigmoide)
+    h_center: ampiezza della riduzione (positiva)
+    gamma: larghezza
+    """
+    return baseline - h_center * gamma**2 / (gamma**2 + x**2)
+
+# ----------------------------------------------------------------------
 # Process a single z-spectrum to get integrals
 # ----------------------------------------------------------------------
 def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lorentzians=False) -> Dict[str, Any]:
@@ -1400,151 +1545,6 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         save_config(config_name, config_data)
 
     return config_data
-
-# ----------------------------------------------------------------------
-# Multi Lorentzian feature functions
-# ----------------------------------------------------------------------
-
-def lorentzian_peak(x, h, x0, w):
-    """
-    Lorentziana classica: h * w^2 / (w^2 + (x - x0)^2)
-    h : ampiezza (positiva per CEST, negativa per NOE)
-    x0: centro (ppm)
-    w : semi-larghezza a metà altezza (ppm)
-    """
-    return h * w**2 / (w**2 + (x - x0)**2)
-
-def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, fixed_width=0.2):
-    """
-    Fit simultaneo:
-      - saturazione diretta (centro=0) -> (h_center, gamma)
-      - una lorentziana per ogni regione (h, x0, w)
-    
-    Returns dict con 'center', 'extra', 'integrals_extra', 'y_total', 'y_center', etc.
-    """
-    x = np.asarray(x_data)
-    y = np.asarray(y_data)
-    
-    h0_c, gamma0 = center_init
-    params_init = [h0_c, gamma0]
-    bounds = [(0, None), (0.05, 2.0)]   # h_center>=0, gamma>0
-    
-    region_list = list(regions.items())
-    for reg_name, (start, end) in region_list:
-        x0_init = (start + end) / 2.0
-        params_init += [0.0, x0_init, fixed_width]
-        bounds += [(None, None), (start, end), (0.05, 1.0)]
-    
-    def model(params, x):
-        h_c, gamma = params[0], params[1]
-        result = direct_saturation(x, h_c, gamma, baseline)
-        idx = 2
-        for _ in region_list:
-            h = params[idx]
-            x0 = params[idx+1]
-            w = params[idx+2]
-            result += lorentzian_peak(x, h, x0, w) if w > 0 else 0
-            idx += 3
-        return result
-    
-    def mse(params):
-        y_pred = model(params, x)
-        return np.sum((y - y_pred)**2)
-    
-    res = minimize(mse, params_init, bounds=bounds, method='L-BFGS-B')
-    if not res.success:
-        print(colored("Warning: global lorentzian fit did not converge", "yellow"))
-    
-    h_c_opt, gamma_opt = res.x[0], res.x[1]
-    y_center = direct_saturation(x, h_c_opt, gamma_opt, baseline)
-    
-    extra_results = {}
-    integrals_extra = {}
-    idx = 2
-    for reg_name, (start, end) in region_list:
-        h_opt = res.x[idx]
-        x0_opt = res.x[idx+1]
-        w_opt = res.x[idx+2]
-        integral = np.pi * h_opt * w_opt
-        y_peak = lorentzian_peak(x, h_opt, x0_opt, w_opt)
-        extra_results[reg_name] = {'h': h_opt, 'x0': x0_opt, 'w': w_opt,
-                                   'integral': integral, 'y': y_peak}
-        integrals_extra[reg_name] = integral
-        idx += 3
-    
-    y_extra_sum = np.zeros_like(x)
-    for r in extra_results.values():
-        y_extra_sum += r['y']
-    y_total = y_center + y_extra_sum
-    
-    return {
-        'center': {'h': h_c_opt, 'gamma': gamma_opt, 'baseline': baseline},
-        'extra': extra_results,
-        'integrals_extra': integrals_extra,
-        'y_center': y_center,
-        'y_extra_sum': y_extra_sum,
-        'y_total': y_total,
-        'x': x,
-        'success': res.success
-    }
-
-def plot_lorentzian_decomposition(
-        x_data, 
-        y_data, 
-        x_common, 
-        L_main_y, 
-        extra_lor_results, 
-        title, 
-        invert_x=True,
-        window_title=None
-    ):
-    """
-    Plot dei dati, lorentziana principale, lorentziane extra e somma.
-    - x_data, y_data: punti originali (z-spectrum corretto)
-    - x_common: griglia per le curve continue
-    - L_main_y: valore della lorentziana principale su x_common
-    - extra_lor_results: dict da fit_extra_lorentzians
-    - title: titolo del plot
-    """
-    fig, ax = plt.subplots(num=window_title, figsize=(10,6))
-    
-    # Dati sperimentali
-    ax.plot(x_data, y_data, 'o', color='k', label='Data (corrected)')
-    
-    # Lorentziana principale
-    ax.plot(x_common, L_main_y, 'b-', linewidth=2, label='Lorentzian main')
-    
-    # Somma delle lorentziane extra
-    sum_extra = np.zeros_like(x_common)
-    for reg, res in extra_lor_results.items():
-        y_peak = lorentzian_peak(x_common, res['h'], res['x0'], res['w'])
-        sum_extra += y_peak
-        # Plot singole lorentziane (opzionale, potrebbe essere confusionario, meglio usare tratti sottili)
-        ax.plot(x_common, y_peak, '--', alpha=0.5, label=f"{reg} (h={res['h']:.2f})")
-    
-    # Totale
-    total_y = L_main_y + sum_extra
-    ax.plot(x_common, total_y, 'r-', linewidth=2, label='Total (main + extra)')
-    
-    if invert_x:
-        ax.invert_xaxis()
-    
-    ax.set_xlabel('Saturation ppm')
-    ax.set_ylabel('Normalized intensity')
-    ax.set_title(title)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    plt.show(block=False)
-    return fig
-
-def direct_saturation(x, h_center, gamma, baseline=1.0):
-    """
-    Modella la riduzione del segnale dovuta alla saturazione diretta.
-    baseline: asintoto per |x|→∞ (tipicamente 1 dopo correzione sigmoide)
-    h_center: ampiezza della riduzione (positiva)
-    gamma: larghezza
-    """
-    return baseline - h_center * gamma**2 / (gamma**2 + x**2)
 
 # ----------------------------------------------------------------------
 # Core analysis routine
