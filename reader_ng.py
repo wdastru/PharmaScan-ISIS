@@ -963,7 +963,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
             "x_common": x_common,
             "extra_lorentzians_results": None,
             "integrals_extra": None,
-            "global_fit": None
+            "lorentzian_fit": None
         }
 
     # 8. Difference and integrals
@@ -981,7 +981,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
         # chiavi per la parte sperimentale
         "extra_lorentzians_results": None,
         "integrals_extra": None,
-        "global_fit": None,
+        "lorentzian_fit": None,
         "x_data": zero_corrected_ppm,
         "y_data": sig_corrected,
         "x_common": x_common
@@ -992,7 +992,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
         y_min_data = np.min(sig_corrected)
         h_center_init = A - y_min_data
         gamma_init = gamma
-        global_fit = fit_global_lorentzians(
+        lorentzian_fit = fit_global_lorentzians(
             zero_corrected_ppm, 
             sig_corrected,
             regions=METABOLITE_REGIONS,
@@ -1000,9 +1000,9 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
             baseline=1.0,
             fixed_width=0.2
         )
-        result["global_fit"] = global_fit
-        result["extra_lorentzians_results"] = global_fit["extra"]
-        result["integrals_extra"] = global_fit["integrals_extra"]
+        result["lorentzian_fit"] = lorentzian_fit
+        result["extra_lorentzians_results"] = lorentzian_fit["extra"]
+        result["integrals_extra"] = lorentzian_fit["integrals_extra"]
 
     return result
 
@@ -1489,7 +1489,16 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
         'success': res.success
     }
 
-def plot_lorentzian_decomposition(x_data, y_data, x_common, L_main_y, extra_lor_results, title, invert_x=True):
+def plot_lorentzian_decomposition(
+        x_data, 
+        y_data, 
+        x_common, 
+        L_main_y, 
+        extra_lor_results, 
+        title, 
+        invert_x=True,
+        window_title=None
+    ):
     """
     Plot dei dati, lorentziana principale, lorentziane extra e somma.
     - x_data, y_data: punti originali (z-spectrum corretto)
@@ -1498,7 +1507,7 @@ def plot_lorentzian_decomposition(x_data, y_data, x_common, L_main_y, extra_lor_
     - extra_lor_results: dict da fit_extra_lorentzians
     - title: titolo del plot
     """
-    fig, ax = plt.subplots(figsize=(10,6))
+    fig, ax = plt.subplots(num=window_title, figsize=(10,6))
     
     # Dati sperimentali
     ax.plot(x_data, y_data, 'o', color='k', label='Data (corrected)')
@@ -1586,9 +1595,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             for grp in groups:
                 label = grp["label"]
                 z = analysis_results.get(label, {})
-                global_fit = z.get("global_fit")
-                if global_fit is not None:
-                    interp_center = interp1d(global_fit["x"], global_fit["y_center"],
+                lorentzian_fit = z.get("lorentzian_fit")
+                if lorentzian_fit is not None:
+                    interp_center = interp1d(lorentzian_fit["x"], lorentzian_fit["y_center"],
                                                 kind='linear', fill_value="extrapolate")
                     L_main_y_common = interp_center(z.get("x_common"))
                     plot_lorentzian_decomposition(
@@ -1596,9 +1605,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         y_data=z.get("y_data"),
                         x_common=z.get("x_common"),
                         L_main_y=L_main_y_common,
-                        extra_lor_results=global_fit.get("extra"),
+                        extra_lor_results=lorentzian_fit.get("extra"),
                         title=f"Lorentzian decomposition - {label} (average)",
-                        invert_x=True
+                        invert_x=True,
+                        window_title=f"Lorentzian decomposition - {label} (average)"
                     )                
 
         # ------------------------------------------------------------
@@ -1633,10 +1643,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             for grp_idx, keys in enumerate(folder_keys_per_group_cached):
                 for key in keys:
                     res = analysis_results.get(key, {})
-                    global_fit = res.get("global_fit")
-                    if global_fit is not None:
+                    lorentzian_fit = res.get("lorentzian_fit")
+                    if lorentzian_fit is not None:
                         # Interpola la lorentziana centrale sulla griglia comune
-                        interp_center = interp1d(global_fit["x"], global_fit["y_center"],
+                        interp_center = interp1d(lorentzian_fit["x"], lorentzian_fit["y_center"],
                                                 kind='linear', fill_value="extrapolate")
                         L_main_y_common = interp_center(res.get("x_common"))
                         plot_lorentzian_decomposition(
@@ -1644,9 +1654,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                             y_data=res.get("y_data"),
                             x_common=res.get("x_common"),
                             L_main_y=L_main_y_common,
-                            extra_lor_results=global_fit.get("extra"),
+                            extra_lor_results=lorentzian_fit.get("extra"),
                             title=f"Lorentzian decomposition - {key}",
-                            invert_x=True
+                            invert_x=True,
+                            window_title=f"Lorentzian decomposition - {key} (da cache)"
                         )
 
         # ------------------------------------------------------------
@@ -1845,9 +1856,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     )
 
                 # Nuovo plot di decomposizione lorentziana
-                if use_extra_lor and res.get("global_fit") is not None:
+                if use_extra_lor and res.get("lorentzian_fit") is not None:
                     # interpolo la lorentziana centrale sulla griglia comune per il plot
-                    interp_center = interp1d(res["global_fit"]["x"], res["global_fit"]["y_center"],
+                    interp_center = interp1d(res["lorentzian_fit"]["x"], res["lorentzian_fit"]["y_center"],
                                             kind='linear', fill_value="extrapolate")
                     L_main_y_common = interp_center(res["x_common"])
                     plot_lorentzian_decomposition(
@@ -1857,7 +1868,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         L_main_y=L_main_y_common,
                         extra_lor_results=res["extra_lorentzians_results"],
                         title=f"Lorentzian decomposition - {folder_name_short}",
-                        invert_x=True
+                        invert_x=True,
+                        window_title=f"Lorentzian decomposition - {folder_name_short}"
                     )
         else:
             files = entries
@@ -1984,12 +1996,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     sigmoidal_envelope_results=res_avg["sigmoidal_envelope_results"],
                     diff_x=res_avg["diff_x"], diff_y=res_avg["diff_y"],
                     diff_label="Lorentzian envelope - Spline fit",
-                    visibility=config.get("plot_visibility", get_default_visibility())
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f"Group {label} spline fit (average)"
                 )
                 
             # Nuovo plot di decomposizione lorentziana per la media del gruppo
-            if use_extra_lor and res_avg.get("global_fit") is not None:
-                interp_center = interp1d(res_avg["global_fit"]["x"], res_avg["global_fit"]["y_center"],
+            if use_extra_lor and res_avg.get("lorentzian_fit") is not None:
+                interp_center = interp1d(res_avg["lorentzian_fit"]["x"], res_avg["lorentzian_fit"]["y_center"],
                                         kind='linear', fill_value="extrapolate")
                 L_main_y_common = interp_center(res_avg["x_common"])
                 plot_lorentzian_decomposition(
@@ -1999,7 +2012,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     L_main_y=L_main_y_common,
                     extra_lor_results=res_avg["extra_lorentzians_results"],
                     title=f"Lorentzian decomposition - {label} (average)",
-                    invert_x=True
+                    invert_x=True,
+                    window_title=f"Lorentzian decomposition - {label} (average)"
                 )
 
     # ---- Statistics for the groups (mean ± std of per‑folder integrals) ----
@@ -2071,8 +2085,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         )
 
     # Plot a seconda della modalità per la media del gruppo
-    if use_extra_lor and res_avg.get("global_fit") is not None:
-        interp_center = interp1d(res_avg["global_fit"]["x"], res_avg["global_fit"]["y_center"],
+    if use_extra_lor and res_avg.get("lorentzian_fit") is not None:
+        interp_center = interp1d(res_avg["lorentzian_fit"]["x"], res_avg["lorentzian_fit"]["y_center"],
                                 kind='linear', fill_value="extrapolate")
         L_main_y_common = interp_center(res_avg["x_common"])
         plot_lorentzian_decomposition(
@@ -2082,7 +2096,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             L_main_y=L_main_y_common,
             extra_lor_results=res_avg["extra_lorentzians_results"],
             title=f"Lorentzian decomposition - {label} (average)",
-            invert_x=True
+            invert_x=True,
+            window_title=f"Lorentzian decomposition - {label} (average)"
         )
     else:
         plot_data(
