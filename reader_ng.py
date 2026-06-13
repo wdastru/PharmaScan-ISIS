@@ -926,22 +926,10 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
     
     Returns dict con 'center', 'extra', 'integrals_extra', 'y_total', 'y_center', etc.
     """
-    x = np.asarray(x_data)
-    y = np.asarray(y_data)
-    
-    h0_c, gamma0 = center_init
-    params_init = [h0_c, gamma0]
-    bounds = [(0, None), (0.05, 2.0)]   # h_center>=0, gamma>0
-    
-    region_list = list(regions.items())
-    for reg_name, (start, end) in region_list:
-        x0_init = (start + end) / 2.0
-        params_init += [0.0, x0_init, fixed_width]
-        bounds += [(None, None), (start, end), (0.05, 1.0)]
-    
     def model(params, x):
         h_c, gamma = params[0], params[1]
-        result = direct_saturation(x, h_c, gamma, baseline)
+        #result = direct_saturation(x, h_c, gamma, baseline)
+        result = baseline - lorentzian_peak(x, h_c, 0, gamma)
         idx = 2
         for _ in region_list:
             h = params[idx]
@@ -955,12 +943,26 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
         y_pred = model(params, x)
         return np.sum((y - y_pred)**2)
     
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+    
+    h0_c, gamma0 = center_init
+    params_init = [h0_c, gamma0]
+    bounds = [(0, None), (0.05, 2.0)]   # h_center>=0, gamma>0
+    
+    region_list = list(regions.items())
+    for reg_name, (start, end) in region_list:
+        x0_init = (start + end) / 2.0
+        params_init += [0.0, x0_init, fixed_width]
+        bounds += [(None, None), (start, end), (0.05, 1.0)]
+    
     res = minimize(mse, params_init, bounds=bounds, method='L-BFGS-B')
     if not res.success:
         print(colored("Warning: global lorentzian fit did not converge", "yellow"))
     
     h_c_opt, gamma_opt = res.x[0], res.x[1]
-    y_center = direct_saturation(x, h_c_opt, gamma_opt, baseline)
+    #y_center = direct_saturation(x, h_c_opt, gamma_opt, baseline)
+    y_center = baseline - lorentzian_peak(x, h_c_opt, 0, gamma_opt)
     
     extra_results = {}
     integrals_extra = {}
@@ -1041,15 +1043,6 @@ def plot_lorentzian_decomposition(
     plt.show(block=False)
     return fig
 
-def direct_saturation(x, h_center, gamma, baseline=1.0):
-    """
-    Modella la riduzione del segnale dovuta alla saturazione diretta.
-    baseline: asintoto per |x|→∞ (tipicamente 1 dopo correzione sigmoide)
-    h_center: ampiezza della riduzione (positiva)
-    gamma: larghezza
-    """
-    return baseline - h_center * gamma**2 / (gamma**2 + x**2)
-
 # ----------------------------------------------------------------------
 # Process a single z-spectrum to get integrals
 # ----------------------------------------------------------------------
@@ -1057,17 +1050,17 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
 
     """Fit envelopes, spline, lorentzians, compute difference and integrals for one dataset."""
     
-    # 2. Sort
+    # Sort
     combined = list(zip(zero_corrected_ppm, max_vals))
     combined.sort()
     zero_corrected_ppm, max_vals_sorted = zip(*combined)
     zero_corrected_ppm = list(zero_corrected_ppm)
     max_vals_sorted = list(max_vals_sorted)
 
-    # 3. Common grid
+    # Common grid
     x_common = np.linspace(min(zero_corrected_ppm), max(zero_corrected_ppm), N_POINTS_FIT)
 
-    # 4. Sigmoid envelope
+    # Sigmoid envelope
     L, R, tau = estimate_constrained_sigmoid(zero_corrected_ppm, max_vals_sorted,
                                              fix_center=True, x0_fixed=0.0)
     y_sig = constrained_sigmoid(x_common, L, R, tau)
@@ -1075,7 +1068,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
                    "fit_label": f'Sigmoid (L={L:.3f}, R={R:.3f}, τ={tau:.3f})',
                    "fit_successful": True}
 
-    # 5. Correct with sigmoid
+    # Correct with sigmoid
     linspace_indices = [np.argmin(np.abs(x_common - v)) for v in zero_corrected_ppm]
     sig_corrected = []
     for i, idx in enumerate(linspace_indices):
@@ -1085,7 +1078,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
         else:
             sig_corrected.append(max_vals_sorted[i] / env_val)
 
-    # 6. Lorentzian envelope on corrected data
+    # Lorentzian envelope on corrected data
     A, gamma = estimate_constrained_lorentzian(zero_corrected_ppm, sig_corrected)
     y_min = np.min(sig_corrected)
     y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
@@ -1093,7 +1086,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
                "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
                "fit_successful": True}
 
-    # 7. Spline fit on corrected data
+    # Spline fit on corrected data
     spline_res = spline_fit(x=zero_corrected_ppm, y=sig_corrected, x_fit=x_common)
     if not spline_res.get("fit_successful", False):
         return {
@@ -1111,7 +1104,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
             "lorentzian_fit": None
         }
 
-    # 8. Difference and integrals
+    # Difference and integrals
     diff_y = lor_env["y"] - spline_res["y_fit"]
     integrals = compute_regions_integrals(x_common, diff_y)
 
