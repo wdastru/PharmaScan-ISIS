@@ -15,7 +15,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons, Button
 from matplotlib.figure import Figure
-from matplotlib.axes import Axes
 import re
 import tkinter as tk
 from tkinter import filedialog
@@ -30,7 +29,6 @@ import os
 import hashlib
 from joblib import dump, load
 import csv
-import types
 
 print(f"Using nmrglue version: {ng.__version__}")
 
@@ -942,18 +940,49 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
         y_pred = model(params, x)
         return np.sum((y - y_pred)**2)
     
+    def average_separation(values):
+        """
+        Returns the average difference between successive elements
+        after sorting the input list in ascending order.
+
+        Uses the fact that:
+            sum of consecutive gaps = max - min
+        so average gap = (max - min) / (n - 1)
+
+        Parameters
+        ----------
+        values : list of numbers
+            Input list (will be sorted internally).
+
+        Returns
+        -------
+        float
+            Average separation between successive sorted elements.
+
+        Raises
+        ------
+        ValueError
+            If the list contains fewer than 2 elements.
+        """
+        if len(values) < 2:
+            raise ValueError("At least two values are required to calculate separation.")
+        
+        sorted_vals = sorted(values)
+        total_range = sorted_vals[-1] - sorted_vals[0]
+        return total_range / (len(sorted_vals) - 1)
+
     x = np.asarray(x_data)
     y = np.asarray(y_data)
     
     h0_c, gamma0 = center_init
-    params_init = [h0_c, gamma0]
-    bounds = [(0, None), (0.05, 2.0)]   # h_center>=0, gamma>0
+    params_init = [h0_c, gamma0]        # altezza, larghezza della lorentziana centrale
+    bounds = [(0, None), (0.05, 2.0)]   # altezza >= 0, larghezza > 0
     
     region_list = list(regions.items())
     for reg_name, (start, end) in region_list:
         x0_init = (start + end) / 2.0
-        params_init += [0.0, x0_init, fixed_width]
-        bounds += [(None, None), (start, end), (0.05, 1.0)]
+        params_init += [0.0, x0_init, fixed_width]  # altezza, posizione e larghezza della lorentziana
+        bounds += [(None, 0.0), (start, end), (average_separation(x), None)]    # altezza, posizione e larghezza della lorentziana (la minima larghezza è la separazione media tra i punti x)
     
     res = minimize(mse, params_init, bounds=bounds, method='L-BFGS-B')
     if not res.success:
@@ -1594,7 +1623,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         x_data=z.get("x_data"),
                         y_data=z.get("y_data"),
                         x_common=z.get("x_common"),
-                        L_main_y=L_main_y_common,
+                        L_main_y=1+lorentzian_peak(z["x_common"], -z["lorentzian_fit"]["center"]["h"], 0, z["lorentzian_fit"]["center"]["gamma"]),
                         extra_lor_results=lorentzian_fit.get("extra"),
                         title=f"Lorentzian decomposition - {label} (average)",
                         invert_x=True,
@@ -1643,7 +1672,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                             x_data=res.get("x_data"),
                             y_data=res.get("y_data"),
                             x_common=res.get("x_common"),
-                            L_main_y=L_main_y_common,
+                            L_main_y=1+lorentzian_peak(res["x_common"], -res["lorentzian_fit"]["center"]["h"], 0, res["lorentzian_fit"]["center"]["gamma"]),
                             extra_lor_results=lorentzian_fit.get("extra"),
                             title=f"Lorentzian decomposition - {key}",
                             invert_x=True,
@@ -1847,15 +1876,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
                 # Nuovo plot di decomposizione lorentziana
                 if use_extra_lor and res.get("lorentzian_fit") is not None:
-                    # interpolo la lorentziana centrale sulla griglia comune per il plot
-                    interp_center = interp1d(res["lorentzian_fit"]["x"], res["lorentzian_fit"]["y_center"],
-                                            kind='linear', fill_value="extrapolate")
-                    L_main_y_common = interp_center(res["x_common"])
                     plot_lorentzian_decomposition(
                         x_data=res["x_data"],
                         y_data=res["y_data"],
                         x_common=res["x_common"],
-                        L_main_y=L_main_y_common,
+                        L_main_y=1+lorentzian_peak(res["x_common"], -res["lorentzian_fit"]["center"]["h"], 0, res["lorentzian_fit"]["center"]["gamma"]),
                         extra_lor_results=res["extra_lorentzians_results"],
                         title=f"Lorentzian decomposition - {folder_name_short}",
                         invert_x=True,
@@ -1999,7 +2024,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     x_data=res_avg["x_data"],
                     y_data=res_avg["y_data"],
                     x_common=res_avg["x_common"],
-                    L_main_y=L_main_y_common,
+                    L_main_y=1+lorentzian_peak(res_avg["x_common"], -res_avg["lorentzian_fit"]["center"]["h"], 0, res_avg["lorentzian_fit"]["center"]["gamma"]),
                     extra_lor_results=res_avg["extra_lorentzians_results"],
                     title=f"Lorentzian decomposition - {label} (average)",
                     invert_x=True,
@@ -2083,7 +2108,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             x_data=res_avg["x_data"],
             y_data=res_avg["y_data"],
             x_common=res_avg["x_common"],
-            L_main_y=L_main_y_common,
+            L_main_y=1+lorentzian_peak(res_avg["x_common"], -res_avg["lorentzian_fit"]["center"]["h"], 0, res_avg["lorentzian_fit"]["center"]["gamma"]),
             extra_lor_results=res_avg["extra_lorentzians_results"],
             title=f"Lorentzian decomposition - {label} (average)",
             invert_x=True,
