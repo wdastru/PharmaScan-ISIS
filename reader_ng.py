@@ -1177,7 +1177,7 @@ def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
     ax.set_xticklabels(regions, rotation=45, ha='right')
     ax.set_ylabel(ylabel)
     if title is None:
-        title = f"Integrali per regione – {group_label}"
+        title = f"Integrali per regione - {group_label}"
     ax.set_title(title)
     if visibility["legend"].get("integrals", True):
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -1692,7 +1692,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     window_title=f"{label}: spline fit for file {key}"
                 )
 
-        # --- Calculate the group average ---
+        # --- Calculate the group average z-spectrum ---
         if group_raw[grp_idx]:
             idx_arr = np.array([d[0] for d in group_raw[grp_idx]])
             val_arr = np.array([d[1] for d in group_raw[grp_idx]])
@@ -1713,7 +1713,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "bf1": group_meta[grp_idx]["bf1"],
             }
 
-            # Fit and integrals for group average
+            # Calculate regions integrals from average z-spectrum
             res_avg = process_zspectrum_and_integrals(
                 mean_max_vals,
                 mean_zero_corrected_ppm
