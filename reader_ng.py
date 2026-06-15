@@ -1175,30 +1175,42 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
 # Group statistics and p-values
 # ----------------------------------------------------------------------
 def _compute_group_stats(folder_keys: List[str], analysis_results: Dict[str, Any]) -> Dict[str, Any]:
-    integrals_list = []
+    # Collect all integrals keys that appear in any entry (at least "integrals" is guaranteed)
+    possible_keys = set()
     for key in folder_keys:
         entry = analysis_results.get(key, {})
-        integrals = entry.get("integrals", {})
-        if integrals:
-            integrals_list.append(integrals)
-    if not integrals_list:
-        return {"mean": {}, "std": {}}
-    regions = list(integrals_list[0].keys())
-    mean_dict = {}
-    std_dict = {}
-    for reg in regions:
-        vals = [d[reg] for d in integrals_list if reg in d]
-        n = len(vals)
-        if n > 1:
-            mean_dict[reg] = float(np.mean(vals))
-            std_dict[reg] = float(np.std(vals, ddof=1))
-        elif n == 1:
-            mean_dict[reg] = float(vals[0])
-            std_dict[reg] = 0.0
-        else:
-            mean_dict[reg] = 0.0
-            std_dict[reg] = 0.0
-    return {"mean": mean_dict, "std": std_dict}
+        for k in ("integrals", "integrals_extra"):
+            if k in entry:
+                possible_keys.add(k)
+
+    stats = {}
+    for integrals_key in possible_keys:
+        integrals_list = []
+        for key in folder_keys:
+            entry = analysis_results.get(key, {})
+            integrals = entry.get(integrals_key)
+            if integrals:
+                integrals_list.append(integrals)
+        if not integrals_list:
+            stats[integrals_key] = {"mean": {}, "std": {}}
+            continue
+        regions = list(integrals_list[0].keys())
+        mean_dict = {}
+        std_dict = {}
+        for reg in regions:
+            vals = [d[reg] for d in integrals_list if reg in d]
+            n = len(vals)
+            if n > 1:
+                mean_dict[reg] = float(np.mean(vals))
+                std_dict[reg] = float(np.std(vals, ddof=1))
+            elif n == 1:
+                mean_dict[reg] = float(vals[0])
+                std_dict[reg] = 0.0
+            else:
+                mean_dict[reg] = 0.0
+                std_dict[reg] = 0.0
+        stats[integrals_key] = {"mean": mean_dict, "std": std_dict}
+    return stats
 
 def _compute_pvalues(ref_keys: List[str], sample_keys: List[str],
                      analysis_results: Dict[str, Any], test='t-test') -> Dict[str, Optional[float]]:
@@ -1233,17 +1245,40 @@ def _compute_pvalues(ref_keys: List[str], sample_keys: List[str],
     return pvalues
 
 def plot_multigroup_integrals(group_stats, p_values, groups,
+                              integrals_key,
                               title="Integrals by region",
                               ylabel="Integral (mean ± SD)",
                               figsize=(12, 6),
                               visibility=None,
                               window_title=None) -> Figure:
+    """
+    Bar chart of per-group mean integrals with error bars and significance stars.
+
+    Parameters
+    ----------
+    group_stats : dict
+        If integrals_key is None (default), expects:
+            {group_label: {"mean": {region: val}, "std": {region: val}}}
+        If integrals_key is a string (e.g. "integrals" or "integrals_extra"),
+        expects:
+            {group_label: {integrals_key: {"mean": ...}, "std": ...}}
+    p_values : dict
+        {sample_group_label: {region: p_value}}
+    groups : list of dict
+        Each dict must contain "label" and optionally "is_reference".
+    integrals_key : str or None
+        Key to select the sub-dictionary from each group's stats.
+        If None, stats are taken directly from the group dictionary.
+    """
+
     if visibility is None:
         visibility = get_default_visibility()
     if not group_stats:
         return None
+
+    # Find the set of regions from the first group
     first_label = groups[0]["label"]
-    regions = list(group_stats[first_label]["mean"].keys())
+    regions = list(group_stats[first_label][integrals_key]["mean"].keys())
     n_regions = len(regions)
     n_groups = len(groups)
     x = np.arange(n_regions)
@@ -1253,8 +1288,8 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
     colors = [cmap(i % 10) for i in range(n_groups)]
     for i, grp in enumerate(groups):
         label = grp["label"]
-        means = [group_stats[label]["mean"][reg] for reg in regions]
-        stds  = [group_stats[label]["std"][reg] for reg in regions]
+        means = [group_stats[label][integrals_key]["mean"][reg] for reg in regions]
+        stds  = [group_stats[label][integrals_key]["std"][reg] for reg in regions]
         offset = (i - n_groups/2 + 0.5) * bar_width
         ax.bar(x + offset, means, bar_width, yerr=stds, capsize=4,
                label=label, color=colors[i], edgecolor='black')
@@ -1279,8 +1314,8 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
                     #txt = f"p={p:.3f}"
                     pass
                 ref_idx = next(k for k, g in enumerate(groups) if g["label"] == ref_label)
-                y_ref = group_stats[ref_label]["mean"][reg] + group_stats[ref_label]["std"][reg]
-                y_this = group_stats[grp["label"]]["mean"][reg] + group_stats[grp["label"]]["std"][reg]
+                y_ref = group_stats[ref_label][integrals_key]["mean"][reg] + group_stats[ref_label][integrals_key]["std"][reg]
+                y_this = group_stats[grp["label"]][integrals_key]["mean"][reg] + group_stats[grp["label"]][integrals_key]["std"][reg]
                 y_max = max(y_ref, y_this) * 1.05
                 x_pos = x[j] + (i - n_groups/2 + 0.5) * bar_width
                 ax.text(x_pos, y_max, txt, ha='center', va='bottom',
@@ -1297,6 +1332,7 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
     return fig
 
 def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
+                                integrals_key,
                                 folder_names=None,
                                 title=None, ylabel="Integrale",
                                 figsize=(12, 6), visibility=None,
@@ -1304,20 +1340,30 @@ def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
     """
     Bar chart per un singolo gruppo: barre affiancate per ogni cartella
     (con colori e nomi) e barra della media ± SD.
+    
+    Parameters
+    ----------
+    group_stats : dict
+        If integrals_key is None, expects {group_label: {"mean": {...}, "std": {...}}}
+        If integrals_key is a string, expects {group_label: {integrals_key: {"mean": ..., "std": ...}}}
+    per_folder_integrals : dict
+        {group_label: {region: [val_folder1, val_folder2, ...]}}
+    integrals_key : str or None
+        Key to select the sub-dictionary from the group's stats.
     """
     if visibility is None:
         visibility = get_default_visibility()
 
-    stats = group_stats.get(group_label)
+    stats = group_stats.get(group_label, {}).get(integrals_key, {"mean": {}, "std": {}})
+    
     folder_vals = per_folder_integrals.get(group_label, {})
-
     if not stats or not folder_vals:
         print(f"Dati insufficienti per il gruppo '{group_label}'")
         return None
 
     regions = list(stats["mean"].keys())
-    means = [stats["mean"][r] for r in regions]
-    stds  = [stats["std"][r] for r in regions]
+    means = [stats["mean"].get(r, 0.0) for r in regions]
+    stds  = [stats["std"].get(r, 0.0) for r in regions]
 
     first_region = regions[0]
     n_folders = len(folder_vals.get(first_region, []))
@@ -1325,11 +1371,11 @@ def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
         print(f"Nessun integrale per cartella nel gruppo '{group_label}'")
         return None
 
-    # Usa i nomi passati o genera nomi di default
+    # Folder names
     if folder_names is None or len(folder_names) != n_folders:
         folder_names = [f"Cartella {i+1}" for i in range(n_folders)]
 
-    # Spazio totale e calcolo larghezze (come prima)
+    # Bar layout (unchanged from original)
     available_width = 0.8
     gap_between_bars = 0.02
     extra_gap_before_avg = 0.05
@@ -1342,7 +1388,7 @@ def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
         bar_width = (available_width - n_folders * gap_between_bars - extra_gap_before_avg) / total_bars
         if bar_width < 0.03:
             bar_width = 0.03
-    avg_bar_width = bar_width  # mantieni stessa larghezza per allineamento esatto
+    avg_bar_width = bar_width
 
     total_width = (n_folders * bar_width +
                    n_folders * gap_between_bars +
@@ -1350,26 +1396,24 @@ def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
                    avg_bar_width)
 
     x = np.arange(len(regions))
-
     fig, ax = plt.subplots(num=window_title, figsize=figsize)
 
-    # Colormap per le cartelle
     cmap = plt.get_cmap('tab10')
     folder_colors = [cmap(i % 10) for i in range(n_folders)]
-    color_avg = '#2c3e50'  # blu scuro per la media
+    color_avg = '#2c3e50'
 
     for j, reg in enumerate(regions):
         start_x = x[j] - total_width / 2
         vals = folder_vals.get(reg, [])
 
-        # Barre delle cartelle
+        # Folder bars
         for k, val in enumerate(vals):
             pos = start_x + k * (bar_width + gap_between_bars) + bar_width/2
             ax.bar(pos, val, bar_width,
                    color=folder_colors[k], edgecolor='black', linewidth=0.5,
                    label=folder_names[k] if j == 0 else "")
 
-        # Barra della media
+        # Average bar
         pos_avg = start_x + n_folders * (bar_width + gap_between_bars) + extra_gap_before_avg + avg_bar_width/2
         ax.bar(pos_avg, means[j], avg_bar_width,
                yerr=stds[j], capsize=4,
@@ -1666,10 +1710,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     res = analysis_results.get(key, {})
                     lorentzian_fit = res.get("lorentzian_fit")
                     if lorentzian_fit is not None:
-                        # Interpola la lorentziana centrale sulla griglia comune
-                        interp_center = interp1d(lorentzian_fit["x"], lorentzian_fit["y_center"],
-                                                kind='linear', fill_value="extrapolate")
-                        L_main_y_common = interp_center(res.get("x_common"))
                         plot_lorentzian_decomposition(
                             x_data=res.get("x_data"),
                             y_data=res.get("y_data"),
@@ -1709,18 +1749,38 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     per_folder_integrals=per_folder_integrals,
                     folder_names=folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else [],
                     visibility=config.get("plot_visibility", get_default_visibility()),
-                    title=f"Integrali per regione - {label} (da cache)",
-                    window_title=f"Integrali per regione - {label} (da cache)"
+                    title=f"Spline - integrali per regione - {label} (da cache)",
+                    window_title=f"Spline - integrali per regione - {label} (da cache)",
+                    integrals_key="integrals"
                 )
+                if use_extra_lor:
+                    plot_group_folder_integrals(
+                        group_label=label,
+                        group_stats=group_stats,
+                        per_folder_integrals=per_folder_integrals,
+                        folder_names=folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else [],
+                        visibility=config.get("plot_visibility", get_default_visibility()),
+                        title=f"Lorentzian - integrali per regione - {label} (da cache)",
+                        window_title=f"Lorentzian - integrali per regione - {label} (da cache)",
+                        integrals_key="integrals_extra"
+                    )
 
         # ------------------------------------------------------------
-        # 5. Grafico multi‑gruppo con p‑value (già presente)
+        # 5. Grafici multi‑gruppo con p‑value (già presente)
         # ------------------------------------------------------------
         pvals = analysis_results.get("p_values", {})
         plot_multigroup_integrals(group_stats, pvals, groups,
                                   visibility=config.get("plot_visibility", get_default_visibility()),
-                                  title="Integrali per regione (da cache)",
-                                  window_title="Integrali per regione (da cache)")
+                                  title="Spline - integrali per regione (da cache)",
+                                  window_title="Spline - integrali per regione (da cache)",
+                                  integrals_key="integrals")
+        if use_extra_lor:
+            plot_multigroup_integrals(group_stats, pvals, groups,
+                visibility=config.get("plot_visibility", get_default_visibility()),
+                title="Lorentzian - integrali per regione (da cache)",
+                window_title="Lorentzian - integrali per regione (da cache)",
+                integrals_key="integrals_extra"
+            )
 
         # --- Saving ---
         save_analysis_results(analysis_results=analysis_results, config_name=config_name)
@@ -2084,9 +2144,20 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         p_values, 
         groups,
         visibility=config.get("plot_visibility", get_default_visibility()),
-        title="Integrali per regione (ricalcolati)",
-        window_title="Integrali per regione (ricalcolati)"
+        title="Spline - integrali per regione (ricalcolati)",
+        window_title="Spline - integrali per regione (ricalcolati)",
+        integrals_key="integrals"
     )
+    if use_extra_lor:
+        plot_multigroup_integrals(
+            group_stats, 
+            p_values, 
+            groups,
+            visibility=config.get("plot_visibility", get_default_visibility()),
+            title="Lorentzian - integrali per regione (ricalcolati)",
+            window_title="Lorentzian - integrali per regione (ricalcolati)",
+            integrals_key="integrals_extra"
+        )
 
     # ---- Plot per gruppo con cartelle singole ----
     for grp_idx, grp in enumerate(groups):
@@ -2097,9 +2168,21 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             per_folder_integrals=per_folder_integrals,
             folder_names=folder_keys_per_group[grp_idx],   # <-- lista dei nomi brevi
             visibility=config.get("plot_visibility", get_default_visibility()),
-            title=f"Integrali per regione - {label} (ricalcolati)",
-            window_title=f"Integrali per regione - {label} (ricalcolati)"
+            title=f"Spline - integrali per regione - {label} (ricalcolati)",
+            window_title=f"Spline - integrali per regione - {label} (ricalcolati)",
+            integrals_key="integrals"
         )
+        if use_extra_lor:
+            plot_group_folder_integrals(
+                group_label=label,
+                group_stats=group_stats,
+                per_folder_integrals=per_folder_integrals,
+                folder_names=folder_keys_per_group[grp_idx],   # <-- lista dei nomi brevi
+                visibility=config.get("plot_visibility", get_default_visibility()),
+                title=f"Lorentzian - integrali per regione - {label} (ricalcolati)",
+                window_title=f"Lorentzian - integrali per regione - {label} (ricalcolati)",
+                integrals_key="integrals_extra"
+            )
 
     # Plot a seconda della modalità per la media del gruppo
     if use_extra_lor and res_avg.get("lorentzian_fit") is not None:
