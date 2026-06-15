@@ -1,0 +1,91 @@
+run_analysis(config_name, config)
+│
+├── [1] Carica configurazione e prepara ambiente
+│       - METABOLITE_REGIONS.clear() / .update(...)
+│       - plt.ion()
+│
+├── [2] Gestione cache
+│       ├── load_cache(config_name, config)  →  _build_cache_key, _cache_path
+│       │
+│       ├── SE CACHE E' VALIDA E USATA:
+│       │   ├── Per ogni gruppo:
+│       │   │   └── plot_data( ... )                     # Z‑spettro medio del gruppo
+│       │   │
+│       │   ├── Per ogni cartella (dalle chiavi salvate):
+│       │   │   └── plot_data( ... )                     # Z‑spettro singola cartella
+│       │   │
+│       │   ├── _compute_group_stats(keys, analysis_results)  (era già salvata, ma qui non serve; usa group_stats pre‑calcolate)
+│       │   │
+│       │   ├── Per ogni gruppo:
+│       │   │   └── plot_group_folder_integrals( ... )   # barre cartelle + media
+│       │   │
+│       │   └── plot_multigroup_integrals( ... )        # barre multi‑gruppo con p‑value
+│       │
+│       └── FINE (return)
+│
+└── [3] RAMO LIVE (cache non usata o assente)
+    │
+    ├── Per ogni gruppo (grp_idx, grp):
+    │   │
+    │   ├── Per ogni cartella (folder):
+    │   │   ├── extract_parameters(folder)
+    │   │   │   └── parameter_extract(method, "PVM_SatTransFL")
+    │   │   │   └── parameter_extract(method, "PVM_FrqWorkOffset")
+    │   │   │
+    │   │   ├── load_spectra(folder)
+    │   │   │   └── ng.bruker.read, ng.bruker.guess_udic, uc_from_udic
+    │   │   │
+    │   │   ├── process_spectra(data, dic, n_exp)
+    │   │   │   └── per ogni esperimento:
+    │   │   │         remove_digital_filter, zf_size, em, fft, autops (acme)
+    │   │   │
+    │   │   ├── plot_spectra( ... )                       # spettri interattivi (CheckButtons)
+    │   │   │     (funzione interna definita due volte, usa la seconda)
+    │   │   │
+    │   │   ├── (se ppm mancanti) ask_user_for_ppm_range()
+    │   │   ├── ppm_to_index(uc, end_ppm) / ppm_to_index(uc, start_ppm)
+    │   │   │
+    │   │   ├── find_max_vals(spectra, start_idx, end_idx)
+    │   │   │   └── Per ogni spettro
+    │   │   │       └── find_maximum(spec, start, end)  per ogni spettro
+    │   │   │
+    │   │   ├── normalize_max_vals(max_vals, global_max, global_min)
+    │   │   ├── correct_sat_frequencies(sat_trans_hz, max_indexes, work_offset_hz, uc, bf1)
+    │   │   │
+    │   │   ├── process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
+    │   │   │   ├── estimate_constrained_sigmoid( ... )
+    │   │   │   │     └── solve_LR_for_tau (chiama minimize con vincoli)
+    │   │   │   ├── constrained_sigmoid(x_common, L,R,tau)
+    │   │   │   ├── estimate_constrained_lorentzian( ... )
+    │   │   │   │     └── minimize_scalar annidati
+    │   │   │   ├── constrained_lorentzian(x_common, A,gamma, y_min)
+    │   │   │   ├── spline_fit(x, y, x_fit)
+    │   │   │   │     └── PchipInterpolator
+    │   │   │   └── compute_regions_integrals(x_common, diff_y)
+    │   │   │
+    │   │   ├── analysis_results[folder_name_short].update({ ... })   # salva i risultati chiave
+    │   │   │
+    │   │   └── plot_data( ... )                           # Z‑spettro della singola cartella
+    │   │
+    │   │   (Fine loop cartelle)
+    │   │
+    │   └── Calcolo media del gruppo (se ci sono dati):
+    │       ├── media di max_indexes, max_vals, sat_trans_hz (con np.mean)
+    │       ├── analysis_results[label] = { statistiche, work_offset, uc, bf1 }
+    │       ├── process_zspectrum_and_integrals(mean_max_vals, mean_zero_corrected_ppm)  (come sopra)
+    │       └── plot_data( ... )                           # Z‑spettro medio del gruppo
+    │
+    │   (Fine loop gruppi)
+    │
+    ├── Per ogni gruppo (grp_idx, grp):
+    │   └── _compute_group_stats(keys, analysis_results)   per ogni gruppo
+    │
+    ├── _compute_pvalues(ref_keys, sample_keys, analysis_results)  se c'è riferimento
+    │     └── stats.ttest_ind  (o mannwhitneyu)
+    │
+    ├── save_cache(config_name, config, analysis_results)
+    │     └── _build_cache_key, _cache_path, dump
+    │
+    ├── plot_multigroup_integrals(group_stats, p_values, groups)
+    │
+    └── plot_group_folder_integrals(...)  per ogni gruppo

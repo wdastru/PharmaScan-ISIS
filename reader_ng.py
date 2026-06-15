@@ -29,6 +29,8 @@ from termcolor import colored
 import os
 import hashlib
 from joblib import dump, load
+import csv
+import types
 
 print(f"Using nmrglue version: {ng.__version__}")
 
@@ -126,10 +128,15 @@ def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict)
 # Configuration handling
 # ----------------------------------------------------------------------
 CONFIG_DIR = Path(__file__).parent / "configs"
+OUTPUT_DIR = Path(__file__).parent / "output"
 
 def ensure_config_dir() -> None:
     """Crea la cartella delle configurazioni se non esiste."""
     CONFIG_DIR.mkdir(exist_ok=True)
+
+def ensure_output_dir() -> None:
+    """Crea la cartella degli output se non esiste."""
+    OUTPUT_DIR.mkdir(exist_ok=True)
 
 def get_default_visibility() -> Dict[str, bool]:
     return {
@@ -187,9 +194,12 @@ def load_config(name: str) -> Dict[str, Any]:
                             "multiple_amount_ref", "folders"):
                 config.pop(old_key, None)
         else:
-            # Ensure folders are Path objects
+            # Ensure folders and files are Path objects
             for grp in config["groups"]:
-                grp["folders"] = [Path(p) for p in grp["folders"]]
+                if "folders" in grp:
+                    grp["folders"] = [Path(p) for p in grp.get("folders", [])]
+                if "files" in grp:
+                    grp["files"] = [Path(p) for p in grp.get("files", [])]
         return config
     except Exception as e:
         print(colored(
@@ -204,7 +214,11 @@ def save_config(name: str, config: Dict[str, Any]) -> None:
     # Convert Paths to strings and ensure groups structure is clean
     if "groups" in to_save:
         to_save["groups"] = [
-            {**grp, "folders": [str(p) for p in grp["folders"]]}
+            {
+                **grp, 
+                "folders": [str(p) for p in grp.get("folders", [])],
+                "files": [str(p) for p in grp.get("files", [])],
+            } 
             for grp in to_save["groups"]
         ]
     # Remove any leftover old keys (safety)
@@ -256,6 +270,99 @@ def select_or_create_config() -> Tuple[str, Dict[str, Any]]:
 # ----------------------------------------------------------------------
 # Utility functions
 # ----------------------------------------------------------------------
+
+class SafeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        # Handle methods / functions
+        if callable(obj):
+            return repr(obj)               # or str(obj)
+        # Handle numpy arrays & scalars
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        # For any other object with a __dict__, try that
+        if hasattr(obj, '__dict__'):
+            return obj.__dict__
+        # Last resort
+        try:
+            return str(obj)
+        except Exception:
+            return f"<{type(obj).__name__}>"
+        
+def _safe_get_attr(obj, attr, default=None):
+    """Return attribute value. If it's a callable (method), call it first."""
+    val = getattr(obj, attr, default)
+    if callable(val):
+        try:
+            return val()
+        except TypeError:
+            # Fallback if call fails
+            return str(val) if default is None else default
+    return val
+
+def replace_uc_objects(obj):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if key == "uc" and value.__class__.__name__ == "unit_conversion":
+                uc = value
+                obj[key] = {
+                    "size": uc._size,
+                    "complex": uc._cplx,
+                    "sw": uc._sw,
+                    "obs_freq": uc._obs,
+                    "carrier": uc._car,
+                    "delta": uc._delta,
+                    "first_ppm": uc._first,
+                    # Use the safe getter for unit – it may be a method
+                    "unit": _safe_get_attr(uc, "unit", "unknown"),
+                    "ppm": list(uc.ppm) if hasattr(uc.ppm, '__iter__') else uc.ppm,
+                    "hz": list(uc.hz) if hasattr(uc.hz, '__iter__') else uc.hz,
+                }
+            else:
+                replace_uc_objects(value)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            if isinstance(item, dict):
+                replace_uc_objects(item)
+    return obj
+
+def save_analysis_results(config_name: str, analysis_results: dict) -> None:
+
+    ensure_output_dir()
+
+    with open(Path(OUTPUT_DIR / f"{config_name}.csv"), "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([f"Output values for {config_name}"])          # header
+            for key, value in analysis_results.items():
+                writer.writerow([key, value])          # csv module converts to string automatically
+
+    analysis_results = replace_uc_objects(analysis_results)  # Convert uc objects to dicts for JSON serialization
+
+    with open(Path(OUTPUT_DIR / f"{config_name}.json"), "w", encoding="utf-8") as f:
+        json.dump(analysis_results, f, indent=2, cls=SafeEncoder, ensure_ascii=False)   # indent for human readability
+
+def find_methods(obj, path=""):
+    """Return list of (path, object_repr) for any method or function found."""
+    issues = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            current = f"{path}.{k}" if path else k
+            if callable(v) and not isinstance(v, (type, type(None))):
+                # Catch user-defined methods, built-in methods, functions, lambdas
+                issues.append((current, repr(v)))
+            else:
+                issues.extend(find_methods(v, current))
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            current = f"{path}[{i}]"
+            if callable(v) and not isinstance(v, type):
+                issues.append((current, repr(v)))
+            else:
+                issues.extend(find_methods(v, current))
+    return issues
 
 def find_maximum(arr: np.ndarray,
                start: Optional[int] = None,
@@ -447,13 +554,14 @@ def plot_data(
     diff_x=None, 
     diff_y=None, 
     diff_label="Difference (Envelope - Spline)",
-    visibility: Optional[Dict[str, bool]] = None
+    visibility: Optional[Dict[str, bool]] = None,
+    window_title: Optional[str] = None
 ) -> Figure:
     # Se non fornito, usa i default globali
     if visibility is None:
         visibility = get_default_visibility()
     
-    fig = plt.figure(figsize=(8, 5))
+    fig = plt.figure(num=window_title, figsize=(8, 5))
 
     # Data points
     if visibility.get("data", True):
@@ -545,98 +653,8 @@ def spline_fit(x, y, x_fit=None, n_points=N_POINTS_FIT) -> Dict[str, Any]:
             'fit_successful': fit_successful
         }    
 
-def plot_spectra(
-        title, 
-        spectra, 
-        n_exp, 
-        ppm_axis, 
-        sat_trans_hz,
-        visibility: Optional[Dict[str, bool]] = None
-    ) -> Figure:
-    """
-    Crea un plot interattivo di tutti gli spettri con checkbox per mostrare/nascondere
-    ogni traccia.
-
-    Parameters
-    ----------
-    title : str
-        Titolo del plot.
-    spectra : Dict[int, np.ndarray]
-        Dizionario degli spettri elaborati.
-    n_exp : int
-        Numero di esperimenti.
-    ppm_axis : np.ndarray
-        Asse dei ppm.
-    sat_trans_hz : List[float]
-        Frequenze di saturazione in Hz (usate come etichette).
-    visibility : Optional[Dict[str, bool]]
-        Dizionario per controllare la visibilità nei plot.
-    """
-
-    #TODO: i check boxes non funzionano in multi-exp
-    fig, ax = plt.subplots(figsize=(12, 6))
-    lines = []
-    labels = []
-    for exp_idx in range(n_exp):
-        line, = ax.plot(ppm_axis, np.real(spectra[exp_idx]),
-                        label = f"{exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}",
-                        alpha=0.7, linewidth=1.2)
-        lines.append(line)
-        labels.append(line.get_label())
-
-    # Main plot settings
-    ax.invert_xaxis()
-    ax.set_xlabel("ppm")
-    ax.set_ylabel("Intensity")
-    ax.grid(True, alpha=0.3)
-    ax.set_title(title)
-
-    # ---- CheckButtons panel ----
-    rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])
-    visibility = [l.get_visible() for l in lines]
-    checks = CheckButtons(rax, labels, visibility)
-
-    # ----------------------------------------------------------------------
-    # Callbacks for interactive widgets
-    # to capture lines, labels, fig, checks
-    # ----------------------------------------------------------------------
-    def _on_check(label):
-        idx = labels.index(label)
-        lines[idx].set_visible(not lines[idx].get_visible())
-        fig.canvas.draw_idle()
-
-    def _check_all(event):
-        for i, line in enumerate(lines):
-            if not line.get_visible():
-                line.set_visible(True)
-                checks.lines[i].set_visible(True)
-        fig.canvas.draw_idle()
-
-    def _uncheck_all(event):
-        for i, line in enumerate(lines):
-            if line.get_visible():
-                line.set_visible(False)
-                checks.lines[i].set_visible(False)
-        fig.canvas.draw_idle()
-
-    checks.on_clicked(_on_check)
-
-    # "Check all" button
-    ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
-    btn_all = Button(ax_all, "Check all")
-    btn_all.on_clicked(_check_all)
-    
-    # "Uncheck all" button
-    ax_none = fig.add_axes([0.90, 0.90, 0.09, 0.05])
-    btn_none = Button(ax_none, "Uncheck all")
-    btn_none.on_clicked(_uncheck_all)
-
-    fig.tight_layout(rect=[0, 0, 0.80, 1])
-    plt.show(block=False)
-    return fig
-
-def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None) -> Figure:
-    fig, ax = plt.subplots(figsize=(12, 6))
+def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None, window_title=None) -> Figure:
+    fig, ax = plt.subplots(num=window_title, figsize=(12, 6))
     lines = []
     labels = []
     for exp_idx in range(n_exp):
@@ -680,11 +698,18 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None)
     plt.show(block=False)
     return fig
 
+def normalize_max_vals(max_vals, global_max, global_min):
+    for i in range(len(max_vals)):
+        max_vals[i] = (max_vals[i] - global_min) / (global_max - global_min) if global_max > global_min else 0.0
+    return max_vals
+
 def find_max_vals(spectra, start_idx, end_idx):
     max_vals: List[float] = []
     max_indexes: List[int] = []
     global_max: float = float('-inf')
     global_min: float = float('inf')
+    val: float = 0.0
+    idx: int = 0
     for exp_idx, spec in spectra.items():
         val, idx = find_maximum(spec, start=start_idx, end=end_idx)
         if val > global_max:
@@ -693,9 +718,8 @@ def find_max_vals(spectra, start_idx, end_idx):
             global_min = val
         max_vals.append(val)
         max_indexes.append(idx)
-    for i in range(len(max_vals)):
-        max_vals[i] = (max_vals[i] - global_min) / (global_max - global_min) if global_max > global_min else 0.0
-    return max_vals, max_indexes
+    
+    return max_vals, max_indexes, global_max, global_min
 
 def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
     while True:
@@ -764,6 +788,21 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
             return value
         except ValueError:
             print("Inserire un numero intero.")
+
+def ask_choice(prompt: str, choices: List[str], default: Optional[str] = None) -> str:
+    for i, c in enumerate(choices, 1):
+        print(f"  {i}. {c}")
+    while True:
+        ans = input(f"{prompt} (1-{len(choices)})" + (f" [{choices.index(default)+1}]" if default else "") + ": ").strip()
+        if not ans and default:
+            return default
+        try:
+            idx = int(ans) - 1
+            if 0 <= idx < len(choices):
+                return choices[idx]
+        except ValueError:
+            pass
+        print("Invalid choice.")
 
 # ----------------------------------------------------------------------
 # Envelope fitting functions (unchanged)
@@ -866,18 +905,15 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
     return L_opt, R_opt, tau_opt
 
 # ----------------------------------------------------------------------
-# New helper: process a single z-spectrum to get integrals
+# Process a single z-spectrum to get integrals
 # ----------------------------------------------------------------------
-def process_zspectrum_and_integrals(max_vals, max_indexes, sat_trans_hz,
-                                    work_offset_hz, uc, bf1) -> Dict[str, Any]:
+def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, Any]:
     """Fit envelopes, spline, compute difference and integrals for one dataset."""
-    # 1. Correct frequencies
-    zero_corrected_ppm = correct_sat_frequencies(sat_trans_hz.copy(), max_indexes,
-                                                 work_offset_hz, uc, bf1)
+    
     # 2. Sort
-    combined = list(zip(zero_corrected_ppm, sat_trans_hz, max_indexes, max_vals))
+    combined = list(zip(zero_corrected_ppm, max_vals))
     combined.sort()
-    zero_corrected_ppm, sat_trans_hz_sorted, max_indexes_sorted, max_vals_sorted = zip(*combined)
+    zero_corrected_ppm, max_vals_sorted = zip(*combined)
     zero_corrected_ppm = list(zero_corrected_ppm)
     max_vals_sorted = list(max_vals_sorted)
 
@@ -997,7 +1033,8 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
                               title="Integrals by region",
                               ylabel="Integral (mean ± SD)",
                               figsize=(12, 6),
-                              visibility=None) -> Figure:
+                              visibility=None,
+                              window_title=None) -> Figure:
     if visibility is None:
         visibility = get_default_visibility()
     if not group_stats:
@@ -1008,7 +1045,7 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
     n_groups = len(groups)
     x = np.arange(n_regions)
     bar_width = 0.8 / n_groups
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, ax = plt.subplots(num=window_title, figsize=figsize)
     cmap = plt.get_cmap('tab10')
     colors = [cmap(i % 10) for i in range(n_groups)]
     for i, grp in enumerate(groups):
@@ -1035,7 +1072,9 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
                         txt = significance[thr]
                         break
                 if txt is None:
-                    txt = f"p={p:.3f}"
+                    # TODO: improve visibility of p values
+                    #txt = f"p={p:.3f}"
+                    pass
                 ref_idx = next(k for k, g in enumerate(groups) if g["label"] == ref_label)
                 y_ref = group_stats[ref_label]["mean"][reg] + group_stats[ref_label]["std"][reg]
                 y_this = group_stats[grp["label"]]["mean"][reg] + group_stats[grp["label"]]["std"][reg]
@@ -1057,7 +1096,8 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
 def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
                                 folder_names=None,
                                 title=None, ylabel="Integrale",
-                                figsize=(12, 6), visibility=None):
+                                figsize=(12, 6), visibility=None,
+                                window_title=None) -> Figure:
     """
     Bar chart per un singolo gruppo: barre affiancate per ogni cartella
     (con colori e nomi) e barra della media ± SD.
@@ -1108,7 +1148,7 @@ def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
 
     x = np.arange(len(regions))
 
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, ax = plt.subplots(num=window_title, figsize=figsize)
 
     # Colormap per le cartelle
     cmap = plt.get_cmap('tab10')
@@ -1170,7 +1210,7 @@ def load_spectra(folder: Path):
     return dic, data, uc, ppm_axis, n_exp, bf1
 
 def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
-    spectra = {}
+    spectra: dict = {}
     for exp_idx in range(n_exp):
         fid = data[exp_idx, :]
         fid = ng.bruker.remove_digital_filter(dic, data=fid)
@@ -1182,50 +1222,123 @@ def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
         spectra[exp_idx] = spectrum_phased
     return spectra
 
+def select_text_file(title="Select a text data file (x/y columns)") -> Path:
+    root = tk.Tk()
+    root.withdraw()
+    file_path = filedialog.askopenfilename(
+        title=title,
+        filetypes=[("Text files", "*.txt *.dat"), ("All files", "*.*")]
+    )
+    if not file_path:
+        raise ValueError("No file selected.")
+    return Path(file_path)
+
 def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
     modified = False
 
+    # ---------- Interactive creation of groups (if none exist) ----------
     if not config_data.get("groups"):
         print("No groups defined. Interactive setup.")
         with_ref = ask_yes_no("Include a reference group?", default=False)
         n_sample_groups = ask_int("Number of additional sample groups", min_val=0, default=1)
         groups = []
-        if with_ref:
-            ref_count = ask_int("How many folders in the reference group?", min_val=1, default=1)
-            groups.append({"label": "reference", "is_reference": True, "folders": [None]*ref_count})
-        for i in range(n_sample_groups):
-            label = input(f"Label for sample group {i+1} (default: group{i+1}): ").strip()
-            if not label:
-                label = f"group{i+1}"
-            cnt = ask_int(f"Folders in group '{label}'", min_val=1, default=1)
-            groups.append({"label": label, "is_reference": False, "folders": [None]*cnt})
 
-        all_folders = []
-        for grp in groups:
-            print(f"\n--- Group '{grp['label']}' ({len(grp['folders'])} folders) ---")
-            for _ in range(len(grp['folders'])):
-                all_folders.append(select_experiment_folder())
-        idx = 0
-        for grp in groups:
-            n = len(grp["folders"])
-            grp["folders"] = all_folders[idx:idx+n]
-            idx += n
+        # Helper to build a single group interactively
+        def _create_group_interactively(label, is_ref):
+            print(f"\n--- Group '{label}' ---")
+            data_type = ask_choice(
+                "Data source type",
+                choices=["Bruker folders", "Text (x/y) files"],
+                default="Bruker folders"
+            )
+            if data_type == "Bruker folders":
+                cnt = ask_int("Number of folders", min_val=1, default=1)
+                folders = []
+                for _ in range(cnt):
+                    folders.append(select_experiment_folder())
+                return {"label": label, "is_reference": is_ref, "folders": folders, "files": []}
+            else:  # Text files
+                cnt = ask_int("Number of text files", min_val=1, default=1)
+                files = []
+                BF1_values = []
+                for _ in range(cnt):
+                    files.append(select_text_file())
+                    BF1_values.append(float(input("Enter BF1 value for this file (MHz): ")))
+                return {"label": label, "is_reference": is_ref, "folders": [], "files": files, "BF1": BF1_values}
+
+        if with_ref:
+            ref_label = input("Label for reference group (default: reference): ").strip() or "reference"
+            groups.append(_create_group_interactively(ref_label, True))
+
+        for i in range(n_sample_groups):
+            label = input(f"Label for sample group {i+1} (default: group{i+1}): ").strip() or f"group{i+1}"
+            groups.append(_create_group_interactively(label, False))
 
         config_data["groups"] = groups
         modified = True
+
     else:
-        # Ensure each group has 'label' and 'is_reference'
+        # ---------- Ensure existing groups have required keys ----------
         for grp in config_data["groups"]:
             if "label" not in grp:
                 grp["label"] = "group"
             if "is_reference" not in grp:
                 grp["is_reference"] = False
+            # Introduce the new key if missing
+            if "files" not in grp:
+                grp["files"] = []
+                modified = True
+            if "BF1" not in grp:
+                grp["BF1"] = []
+                modified = True
+            
 
+    # ---------- Fill missing data paths for any group ----------
+    for grp in config_data["groups"]:
+        if not grp.get("folders") and not grp.get("files"):
+            # This group has no paths at all – prompt interactively
+            print(f"\nGroup '{grp['label']}' has no data paths defined.")
+            data_type = ask_choice(
+                f"Data source type for '{grp['label']}'",
+                choices=["Bruker folders", "Text (x/y) files"],
+                default="Bruker folders"
+            )
+            if data_type == "Bruker folders":
+                cnt = ask_int("Number of folders", min_val=1, default=1)
+                for _ in range(cnt):
+                    grp.setdefault("folders", []).append(select_experiment_folder())
+            else:
+                cnt = ask_int("Number of text files", min_val=1, default=1)
+                for _ in range(cnt):
+                    grp.setdefault("files", []).append(select_text_file())
+                    grp.setdefault("BF1", []). append(float(input("Enter BF1 value for this file (MHz): ")))
+            modified = True
+        elif grp.get("folders") and grp.get("files"):
+            # Both provided – warn but keep; the analysis will decide
+            print(colored(
+                f"Warning: Group '{grp['label']}' has both folders and files. "
+                "Folders will be used for analysis.",
+                "yellow"
+            ))
+        elif grp.get("files") and not grp.get("folders"):
+            if "BF1" not in grp or len(grp["BF1"]) != len(grp["files"]):
+                print(f"Group '{grp['label']}' has text files but missing or mismatched BF1 values.")
+                bf1_values = []
+                for f in grp["files"]:
+                    bf1_values.append(float(input(f"Enter BF1 value for file '{f}' (MHz): ")))
+                grp["BF1"] = bf1_values
+                modified = True
+
+    # ---------- ppm range handling ----------
     if config_data.get("start_ppm") is None or config_data.get("end_ppm") is None:
         config_data["ppm_missing"] = True
     else:
         config_data["ppm_missing"] = False
 
+    # (If ppm_missing, the actual prompting occurs later during analysis,
+    #  because we may need a spectrum to show. The flag is set here.)
+
+    # ---------- Plot visibility defaults ----------
     default_vis = get_default_visibility()
     if "plot_visibility" in config_data:
         current_vis = config_data["plot_visibility"]
@@ -1237,28 +1350,13 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         config_data["plot_visibility"] = default_vis
         modified = True
 
+    # ---------- Metabolite regions defaults ----------
     if "metabolite_regions" not in config_data:
         config_data["metabolite_regions"] = DEFAULT_METABOLITE_REGIONS
         modified = True
-    else:
-        merged_regions = merge_config_defaults(DEFAULT_METABOLITE_REGIONS,
-                                               config_data["metabolite_regions"])
-        if merged_regions != config_data["metabolite_regions"]:
-            config_data["metabolite_regions"] = merged_regions
-            modified = True
-
-    # ---------- Force save if config was migrated from old format ----------
-    if config_name:  # se è una configurazione salvata
-        config_path = CONFIG_DIR / f"{config_name}.json"
-        if config_path.exists():
-            with open(config_path, "r") as f:
-                disk_config = json.load(f)
-            # Se il file su disco non ha la chiave "groups" ma la nostra in memoria sì,
-            # significa che è stato migrato in questa sessione
-            if "groups" not in disk_config and "groups" in config_data:
-                modified = True
-
-    if modified:
+    
+    # ---------- Save if modified ----------
+    if modified and config_name:
         save_config(config_name, config_data)
 
     return config_data
@@ -1281,7 +1379,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     cached = load_cache(config_name, config)
     use_cache = False
     if cached:
-        use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi usarla?", default=True)
+        use_cache = ask_yes_no(f"Cache valida trovata per '{config_name}'. Vuoi evitare il ricalcolo?", default=True)
     if cached and use_cache:
         analysis_results = cached
 
@@ -1301,7 +1399,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     add_sigmoid=True, sigmoidal_envelope_results=z.get("sigmoidal_envelope_results"),
                     diff_x=z.get("diff_x"), diff_y=z.get("diff_y"),
                     diff_label="Lorentzian envelope - Spline fit",
-                    visibility=config.get("plot_visibility", get_default_visibility())
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f"Group {label} spline fit (da cache)"
                 )
 
         # ------------------------------------------------------------
@@ -1317,7 +1416,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         y=res["spline_fit_results"]["y"],
                         x_fit=res["spline_fit_results"]["x_fit"],
                         y_fit=res["spline_fit_results"]["y_fit"],
-                        title=f"Single folder: {key}",
+                        title=f"Spline: {key}",
                         invert_x=True,
                         add_lorentz=True,
                         lorentzian_envelope_results=res.get("lorentzian_envelope_results"),
@@ -1326,7 +1425,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         diff_x=res.get("diff_x"),
                         diff_y=res.get("diff_y"),
                         diff_label="Lorentzian envelope - Spline fit",
-                        visibility=config.get("plot_visibility", get_default_visibility())
+                        visibility=config.get("plot_visibility", get_default_visibility()),
+                        window_title=f"Spline fit: {key} (da cache)"
                     )
 
         # ------------------------------------------------------------
@@ -1356,7 +1456,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     group_stats=group_stats,
                     per_folder_integrals=per_folder_integrals,
                     folder_names=folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else [],
-                    visibility=config.get("plot_visibility", get_default_visibility())
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    title=f"Integrali per regione - {label} (da cache)",
+                    window_title=f"Integrali per regione - {label} (da cache)"
                 )
 
         # ------------------------------------------------------------
@@ -1364,8 +1466,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # ------------------------------------------------------------
         pvals = analysis_results.get("p_values", {})
         plot_multigroup_integrals(group_stats, pvals, groups,
-                                  visibility=config.get("plot_visibility", get_default_visibility()))
+                                  visibility=config.get("plot_visibility", get_default_visibility()),
+                                  title="Integrali per regione (da cache)",
+                                  window_title="Integrali per regione (da cache)")
 
+        # --- Saving ---
+        save_analysis_results(analysis_results=analysis_results, config_name=config_name)
+    
         print("Press Enter to exit...")
         input()
         plt.close('all')
@@ -1375,108 +1482,217 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     group_raw = [[] for _ in groups]
     group_meta = [{} for _ in groups]
     folder_keys_per_group = [[] for _ in groups]
+    file_data_raw = [ [] for _ in groups ]
 
     for grp_idx, grp in enumerate(groups):
         label = grp["label"]
-        folders = grp["folders"]
-        for folder in folders:
-            base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
-            folder_name_short = base_name
-            counter = 1
-            while folder_name_short in analysis_results:
-                folder_name_short = f"{base_name}_{counter}"
-                counter += 1
-            analysis_results[folder_name_short] = {}
-            folder_keys_per_group[grp_idx].append(folder_name_short)
 
-            sat_trans_hz, work_offset_hz = extract_parameters(folder)
-            analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
-            analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
+        # Determine entry type for this group
+        is_folder = bool(grp.get("folders"))
+        is_file   = bool(grp.get("files"))
+        if is_folder and is_file:
+            print(colored(
+                f"Warning: Group '{label}' has both folders and files. Only folders will be used.",
+                "yellow"
+            ))
+            is_file = False
+            entries = grp["folders"]
+        elif is_folder:
+            entries = grp["folders"]
+        elif is_file:
+            entries = grp["files"]
+        else:
+            pass
+                    
+        if is_folder:   # BRUKER data
+            folders = entries
+            for file in folders:
+                base_name = f"{file.parent.name[:12]}…{file.parent.name[-12:]}-{file.stem}"
+                folder_name_short = base_name
+                counter = 1
+                while folder_name_short in analysis_results:
+                    folder_name_short = f"{base_name}_{counter}"
+                    counter += 1
+                analysis_results[folder_name_short] = {}
+                folder_keys_per_group[grp_idx].append(folder_name_short)
 
-            if group_meta[grp_idx].get("work_offset_hz") is None:
-                group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
-            else:
-                if group_meta[grp_idx]["work_offset_hz"] != work_offset_hz:
-                    print(colored(
-                        f"Error: different work_offset in group '{label}'", 
-                        "red", 
-                        attrs=["bold"])
-                    )
-                    #return
+                sat_trans_hz, work_offset_hz = extract_parameters(file)
+                analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
+                analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
 
-            dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
-            analysis_results[folder_name_short]["uc"] = uc
-            analysis_results[folder_name_short]["bf1"] = bf1
-            if group_meta[grp_idx].get("uc") is None:
-                group_meta[grp_idx]["uc"] = uc
-                group_meta[grp_idx]["bf1"] = bf1
+                if group_meta[grp_idx].get("work_offset_hz") is None:
+                    group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
+                else:
+                    if group_meta[grp_idx]["work_offset_hz"] != work_offset_hz:
+                        print(colored(
+                            f"Error: different work_offset in group '{label}'", 
+                            "red", 
+                            attrs=["bold"])
+                        )
+                        #return
 
-            spectra = process_spectra(data, dic, n_exp)
-            fig = plot_spectra(
-                title=f"Spectra - {folder_name_short}",
-                spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
-                sat_trans_hz=sat_trans_hz,
-                visibility=config.get("plot_visibility", get_default_visibility())
-            )
+                dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(file)
+                analysis_results[folder_name_short]["uc"] = uc
+                analysis_results[folder_name_short]["bf1"] = bf1
+                if group_meta[grp_idx].get("uc") is None:
+                    group_meta[grp_idx]["uc"] = uc
+                    group_meta[grp_idx]["bf1"] = bf1
 
-            if ppm_missing and grp_idx == 0 and folder == folders[0]:
-                plt.pause(0.05)
-                start_ppm, end_ppm = ask_user_for_ppm_range()
-                config["start_ppm"] = start_ppm
-                config["end_ppm"] = end_ppm
-                config["ppm_missing"] = False
-                ppm_missing = False
-                if config_name:
-                    save_config(config_name, config)
+                spectra = process_spectra(data, dic, n_exp)
+                fig = plot_spectra(
+                    title=f"{label} - {folder_name_short}",
+                    spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
+                    sat_trans_hz=sat_trans_hz,
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f"{label}: Spectra  for {folder_name_short}"
+                )
 
-            start_idx = ppm_to_index(uc, end_ppm)
-            end_idx = ppm_to_index(uc, start_ppm)
+                if ppm_missing and grp_idx == 0 and file == folders[0]:
+                    plt.pause(0.05)
+                    start_ppm, end_ppm = ask_user_for_ppm_range()
+                    config["start_ppm"] = start_ppm
+                    config["end_ppm"] = end_ppm
+                    config["ppm_missing"] = False
+                    ppm_missing = False
+                    if config_name:
+                        save_config(config_name, config)
 
-            max_vals, max_indexes = find_max_vals(spectra, start_idx, end_idx)
+                start_idx = ppm_to_index(uc, end_ppm)
+                end_idx = ppm_to_index(uc, start_ppm)
 
-            combined = list(zip(sat_trans_hz, max_indexes, max_vals))
-            combined.sort()
-            sat_trans_hz[:], max_indexes[:], max_vals[:] = zip(*combined)
+                max_vals: List[float] = []
+                max_indexes: List[int] = []
+                global_max: float
+                global_min: float
+                max_vals, max_indexes, global_max, global_min = find_max_vals(spectra, start_idx, end_idx)
+                max_vals = normalize_max_vals(max_vals=max_vals, global_max=global_max, global_min=global_min, )
 
-            analysis_results[folder_name_short].update({
-                "max_indexes": max_indexes,
-                "max_vals": max_vals
-            })
-            group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
+                # Correct saturation frequencies
+                zero_corrected_ppm: List[float] = correct_sat_frequencies(
+                    sat_trans_hz, 
+                    max_indexes,
+                    work_offset_hz, 
+                    uc, 
+                    bf1
+                )
 
-            # --- Calculate integrals for this individual folder ---
-            res = process_zspectrum_and_integrals(
-                max_vals, max_indexes, sat_trans_hz,
-                work_offset_hz, uc, bf1
-            )
-            analysis_results[folder_name_short].update({
-                "integrals": res["integrals"],
-                "diff_x": res["diff_x"],
-                "diff_y": res["diff_y"],
-                "sigmoidal_envelope_results": res["sigmoidal_envelope_results"],
-                "lorentzian_envelope_results": res["lorentzian_envelope_results"],
-                "spline_fit_results": res["spline_fit_results"]
-            })
+                # --- Sort by ppm ---
+                combined = list(zip(sat_trans_hz, max_indexes, max_vals, zero_corrected_ppm))
+                combined.sort()
+                sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
-            # After storing the results for the single folder, optionally plot it
-            plot_data(
-                x=res["spline_fit_results"]["x"],
-                y=res["spline_fit_results"]["y"],
-                x_fit=res["spline_fit_results"]["x_fit"],
-                y_fit=res["spline_fit_results"]["y_fit"],
-                title=f"Single folder: {folder_name_short}",
-                invert_x=True,
-                add_lorentz=True,
-                lorentzian_envelope_results=res["lorentzian_envelope_results"],
-                add_sigmoid=True,
-                sigmoidal_envelope_results=res["sigmoidal_envelope_results"],
-                diff_x=res["diff_x"],
-                diff_y=res["diff_y"],
-                diff_label="Lorentzian envelope - Spline fit",
-                visibility=config.get("plot_visibility", get_default_visibility())
-            )
+                analysis_results[folder_name_short].update({
+                    "max_indexes": max_indexes,
+                    "max_vals": max_vals
+                })
+                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
 
-        # --- Group average ---
+                # --- Calculate integrals for this individual folder ---
+                res = process_zspectrum_and_integrals(
+                    max_vals, 
+                    zero_corrected_ppm
+                )
+                analysis_results[folder_name_short].update(res)
+                
+                # After storing the results for the single folder, optionally plot it
+                plot_data(
+                    x=res["spline_fit_results"]["x"],
+                    y=res["spline_fit_results"]["y"],
+                    x_fit=res["spline_fit_results"]["x_fit"],
+                    y_fit=res["spline_fit_results"]["y_fit"],
+                    title=f" {label}: {folder_name_short}",
+                    invert_x=True,
+                    add_lorentz=True,
+                    lorentzian_envelope_results=res["lorentzian_envelope_results"],
+                    add_sigmoid=True,
+                    sigmoidal_envelope_results=res["sigmoidal_envelope_results"],
+                    diff_x=res["diff_x"],
+                    diff_y=res["diff_y"],
+                    diff_label="Lorentzian envelope - Spline fit",
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f" {label}: spline fit for {folder_name_short}"
+                )
+        else:   # txt data files (sat_trans_hz vs max_vals) 
+            files = entries
+            for file_idx, file in enumerate(files):
+                base_name = file.stem
+                # Ensure unique key in analysis_results
+                key = base_name
+                counter = 1
+                while key in analysis_results:
+                    key = f"{base_name}_{counter}"
+                    counter += 1
+                analysis_results[key] = {}
+                folder_keys_per_group[grp_idx].append(key)
+
+                # --- Read x/y data from file ---
+                try:
+                    # Assume two columns: sat_trans_hz vs max_vals.
+                    # Skip comments (lines starting with '#') and handle possible header.
+                    data = np.loadtxt(file, comments='#')
+                    if data.ndim != 2 or data.shape[1] < 2:
+                        raise ValueError("File must contain at least two columns.")
+                    sat_trans_hz = data[:, 0].tolist()
+                    max_vals     = data[:, 1].tolist()
+                    max_vals = normalize_max_vals(max_vals=max_vals, global_max=max(max_vals), global_min=min(max_vals))
+                    
+                    try:
+                        value = config["groups"][grp_idx]["BF1"][file_idx]
+                        group_meta[grp_idx]["bf1"] = value
+                    except KeyError as e:
+                        print(colored(f"Missing key {e} for {file}", "red", attrs=["bold"]))
+                        continue
+                    except (TypeError, IndexError) as e:
+                        print(colored(f"Invalid structure (expected dict/list) for {file}: {e}", "red", attrs=["bold"]))
+                        continue
+                                        
+                    zero_corrected_ppm = [sat_trans_hz[i] / group_meta[grp_idx]["bf1"] for i in range(len(sat_trans_hz))]
+                except Exception as e:
+                    print(colored(f"Error reading file {file}: {e}", "red", attrs=["bold"]))
+                    continue
+
+                max_indexes = [0] * len(max_vals)
+
+                # --- Sort by ppm ---
+                combined = list(zip(zero_corrected_ppm, max_vals, sat_trans_hz))
+                combined.sort()
+                zero_corrected_ppm[:], max_vals[:], sat_trans_hz[:] = zip(*combined)
+
+                # --- Store raw data for later group averaging ---
+                group_raw[grp_idx].append( (max_indexes, max_vals, sat_trans_hz) )
+
+                # No max_indexes or sat_trans_hz needed; store what we have
+                analysis_results[key].update({
+                    "max_vals": max_vals,
+                    "zero_corrected_ppm": zero_corrected_ppm
+                })
+
+                # --- Fit, integrate, and plot (common pipeline) ---
+                res = process_zspectrum_and_integrals(
+                    max_vals, 
+                    zero_corrected_ppm
+                )
+                analysis_results[key].update(res)
+
+                plot_data(
+                    x=res["spline_fit_results"]["x"],
+                    y=res["spline_fit_results"]["y"],
+                    x_fit=res["spline_fit_results"]["x_fit"],
+                    y_fit=res["spline_fit_results"]["y_fit"],
+                    title=f"{label}: {key}",
+                    invert_x=True,
+                    add_lorentz=True,
+                    lorentzian_envelope_results=res["lorentzian_envelope_results"],
+                    add_sigmoid=True,
+                    sigmoidal_envelope_results=res["sigmoidal_envelope_results"],
+                    diff_x=res["diff_x"],
+                    diff_y=res["diff_y"],
+                    diff_label="Lorentzian envelope - Spline fit",
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f"{label}: spline fit for file {key}"
+                )
+
+        # --- Calculate the group average ---
         if group_raw[grp_idx]:
             idx_arr = np.array([d[0] for d in group_raw[grp_idx]])
             val_arr = np.array([d[1] for d in group_raw[grp_idx]])
@@ -1485,6 +1701,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             mean_max_idx = np.round(np.mean(idx_arr, axis=0)).tolist()
             mean_max_vals = np.mean(val_arr, axis=0).tolist()
             mean_sat = np.mean(sat_arr, axis=0).tolist()
+            mean_zero_corrected_ppm: List[float] = [mean_sat[i] / group_meta[grp_idx]["bf1"] for i in range(len(mean_sat))]
+
             analysis_results[label] = {
                 "max_indexes": mean_max_idx,
                 "max_vals": mean_max_vals,
@@ -1492,25 +1710,16 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "sd_max_indexes": np.std(idx_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(idx_arr[0]),
                 "sd_max_vals": np.std(val_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(val_arr[0]),
                 "sd_sat_trans_hz": np.std(sat_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(sat_arr[0]),
-                "work_offset_hz": group_meta[grp_idx]["work_offset_hz"],
-                "uc": group_meta[grp_idx]["uc"],
                 "bf1": group_meta[grp_idx]["bf1"],
             }
+
             # Fit and integrals for group average
             res_avg = process_zspectrum_and_integrals(
-                mean_max_vals, mean_max_idx, mean_sat,
-                group_meta[grp_idx]["work_offset_hz"],
-                group_meta[grp_idx]["uc"],
-                group_meta[grp_idx]["bf1"]
+                mean_max_vals,
+                mean_zero_corrected_ppm
             )
-            analysis_results[label].update({
-                "integrals": res_avg["integrals"],
-                "diff_x": res_avg["diff_x"],
-                "diff_y": res_avg["diff_y"],
-                "sigmoidal_envelope_results": res_avg["sigmoidal_envelope_results"],
-                "lorentzian_envelope_results": res_avg["lorentzian_envelope_results"],
-                "spline_fit_results": res_avg["spline_fit_results"]
-            })
+            analysis_results[label].update(res_avg)
+
             # Plot group average
             plot_data(
                 x=res_avg["spline_fit_results"]["x"],
@@ -1525,28 +1734,29 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 sigmoidal_envelope_results=res_avg["sigmoidal_envelope_results"],
                 diff_x=res_avg["diff_x"], diff_y=res_avg["diff_y"],
                 diff_label="Lorentzian envelope - Spline fit",
-                visibility=config.get("plot_visibility", get_default_visibility())
+                visibility=config.get("plot_visibility", get_default_visibility()),
+                window_title=f"Group {label} (average of {n} {'folders' if is_folder else 'files'})"
             )
 
-    # ---- Group statistics (mean ± std of per‑folder integrals) ----
+    # ---- Statistics for the groups (mean ± std of per‑folder integrals) ----
     group_stats = {}
+    per_folder_integrals = {}
+
     for grp_idx, grp in enumerate(groups):
         label = grp["label"]
         keys = folder_keys_per_group[grp_idx]
         group_stats[label] = _compute_group_stats(keys, analysis_results)
-    analysis_results["group_stats"] = group_stats
-
-    # ---- Per‑folder integrals dictionary (per i grafici di gruppo) ----
-    per_folder_integrals = {}
-    for grp_idx, grp in enumerate(groups):
-        label = grp["label"]
-        keys = folder_keys_per_group[grp_idx]
+    
+        # ---- Per‑folder integrals dictionary (per i grafici di gruppo) ----
         group_folder_integrals = {}
         for key in keys:
             integr = analysis_results.get(key, {}).get("integrals", {})
             for region, val in integr.items():
                 group_folder_integrals.setdefault(region, []).append(val)
+
         per_folder_integrals[label] = group_folder_integrals    
+
+    analysis_results["group_stats"] = group_stats
 
     # ---- p‑values (reference vs each sample) ----
     ref_label = None
@@ -1573,7 +1783,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # ---- Save cache and show multigroup bar plot ----
     save_cache(config_name, config, analysis_results)
     plot_multigroup_integrals(group_stats, p_values, groups,
-                              visibility=config.get("plot_visibility", get_default_visibility()))
+                              visibility=config.get("plot_visibility", get_default_visibility()),
+                              title="Integrali per regione (ricalcolati)",
+                              window_title="Integrali per regione (ricalcolati)")
 
     # ---- Plot per gruppo con cartelle singole ----
     for grp_idx, grp in enumerate(groups):
@@ -1583,9 +1795,14 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             group_stats=group_stats,
             per_folder_integrals=per_folder_integrals,
             folder_names=folder_keys_per_group[grp_idx],   # <-- lista dei nomi brevi
-            visibility=config.get("plot_visibility", get_default_visibility())
+            visibility=config.get("plot_visibility", get_default_visibility()),
+            title=f"Integrali per regione - {label} (ricalcolati)",
+            window_title=f"Integrali per regione - {label} (ricalcolati)"
         )
 
+    # --- Saving ---
+    save_analysis_results(analysis_results=analysis_results, config_name=config_name)
+    
     print("\nTutti i grafici sono stati creati. Premi Invio per uscire.")
     input()
     plt.close('all')
