@@ -15,7 +15,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons, Button
 from matplotlib.figure import Figure
-from matplotlib.axes import Axes
 import re
 import tkinter as tk
 from tkinter import filedialog
@@ -30,7 +29,6 @@ import os
 import hashlib
 from joblib import dump, load
 import csv
-import types
 
 print(f"Using nmrglue version: {ng.__version__}")
 
@@ -906,23 +904,190 @@ def estimate_constrained_sigmoid(x_data, y_data, fix_center=True, x0_fixed=0.0):
     return L_opt, R_opt, tau_opt
 
 # ----------------------------------------------------------------------
+# Multi Lorentzian feature functions
+# ----------------------------------------------------------------------
+
+def lorentzian_peak(x, h, x0, w):
+    """
+    Lorentziana classica: h * w^2 / (w^2 + (x - x0)^2)
+    h : ampiezza (positiva per CEST, negativa per NOE)
+    x0: centro (ppm)
+    w : semi-larghezza a metà altezza (ppm)
+    """
+    return h * w**2 / (w**2 + (x - x0)**2)
+
+def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, fixed_width=0.2):
+    """
+    Fit simultaneo:
+      - saturazione diretta (centro=0) -> (h_center, gamma)
+      - una lorentziana per ogni regione (h, x0, w)
+    
+    Returns dict con 'center', 'extra', 'integrals_extra', 'y_total', 'y_center', etc.
+    """
+    def model(params, x):
+        h_c, gamma = params[0], params[1]
+        result = baseline - lorentzian_peak(x, h_c, 0, gamma)
+        idx = 2
+        for _ in region_list:
+            h = params[idx]
+            x0 = params[idx+1]
+            w = params[idx+2]
+            result += lorentzian_peak(x, h, x0, w) if w > 0 else 0
+            idx += 3
+        return result
+    
+    def mse(params):
+        y_pred = model(params, x)
+        return np.sum((y - y_pred)**2)
+    
+    def average_separation(values):
+        """
+        Returns the average difference between successive elements
+        after sorting the input list in ascending order.
+
+        Uses the fact that:
+            sum of consecutive gaps = max - min
+        so average gap = (max - min) / (n - 1)
+
+        Parameters
+        ----------
+        values : list of numbers
+            Input list (will be sorted internally).
+
+        Returns
+        -------
+        float
+            Average separation between successive sorted elements.
+
+        Raises
+        ------
+        ValueError
+            If the list contains fewer than 2 elements.
+        """
+        if len(values) < 2:
+            raise ValueError("At least two values are required to calculate separation.")
+        
+        sorted_vals = sorted(values)
+        total_range = sorted_vals[-1] - sorted_vals[0]
+        return total_range / (len(sorted_vals) - 1)
+
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+    
+    h0_c, gamma0 = center_init
+    params_init = [h0_c, gamma0]        # altezza, larghezza della lorentziana centrale
+    bounds = [(0, None), (0.05, 2.0)]   # altezza >= 0, larghezza > 0
+    
+    region_list = list(regions.items())
+    for reg_name, (start, end) in region_list:
+        x0_init = (start + end) / 2.0
+        params_init += [0.0, x0_init, fixed_width]  # altezza, posizione e larghezza della lorentziana
+        bounds += [(None, 0.0), (start, end), (average_separation(x), None)]    # altezza, posizione e larghezza della lorentziana (la minima larghezza è la separazione media tra i punti x)
+    
+    res = minimize(mse, params_init, bounds=bounds, method='L-BFGS-B')
+    if not res.success:
+        print(colored("Warning: global lorentzian fit did not converge", "yellow"))
+    
+    h_c_opt, gamma_opt = res.x[0], res.x[1]
+    y_center = baseline - lorentzian_peak(x, h_c_opt, 0, gamma_opt)
+    
+    extra_results = {}
+    integrals_extra = {}
+    idx = 2
+    for reg_name, (start, end) in region_list:
+        h_opt = res.x[idx]
+        x0_opt = res.x[idx+1]
+        w_opt = res.x[idx+2]
+        integral = np.pi * h_opt * w_opt
+        y_peak = lorentzian_peak(x, h_opt, x0_opt, w_opt)
+        extra_results[reg_name] = {'h': h_opt, 'x0': x0_opt, 'w': w_opt,
+                                   'integral': integral, 'y': y_peak}
+        integrals_extra[reg_name] = integral
+        idx += 3
+    
+    y_extra_sum = np.zeros_like(x)
+    for r in extra_results.values():
+        y_extra_sum += r['y']
+    y_total = y_center + y_extra_sum
+    
+    return {
+        'center': {'h': h_c_opt, 'gamma': gamma_opt, 'baseline': baseline},
+        'extra': extra_results,
+        'integrals_extra': integrals_extra,
+        'y_center': y_center,
+        'y_extra_sum': y_extra_sum,
+        'y_total': y_total,
+        'x': x,
+        'success': res.success
+    }
+
+def plot_lorentzian_decomposition(
+        x_data, 
+        y_data, 
+        x_common, 
+        L_main_y, 
+        extra_lor_results, 
+        title, 
+        invert_x=True,
+        window_title=None
+    ):
+    """
+    Plot dei dati, lorentziana principale, lorentziane extra e somma.
+    - x_data, y_data: punti originali (z-spectrum corretto)
+    - x_common: griglia per le curve continue
+    - L_main_y: valore della lorentziana principale su x_common
+    - extra_lor_results: dict da fit_extra_lorentzians
+    - title: titolo del plot
+    """
+    fig, ax = plt.subplots(num=window_title, figsize=(10,6))
+    
+    # Dati sperimentali
+    ax.plot(x_data, y_data, 'o', color='k', label='Data (corrected)')
+    
+    # Lorentziana principale
+    ax.plot(x_common, L_main_y, 'b-', linewidth=2, label='Lorentzian main')
+    
+    # Somma delle lorentziane extra
+    sum_extra = np.zeros_like(x_common)
+    for reg, res in extra_lor_results.items():
+        y_peak = lorentzian_peak(x_common, res['h'], res['x0'], res['w'])
+        sum_extra += y_peak
+        # Plot singole lorentziane (opzionale, potrebbe essere confusionario, meglio usare tratti sottili)
+        ax.plot(x_common, y_peak, '--', alpha=0.5, label=f"{reg} (h={res['h']:.2f})")
+    
+    # Totale
+    total_y = L_main_y + sum_extra
+    ax.plot(x_common, total_y, 'r-', linewidth=2, label='Total (main + extra)')
+    
+    if invert_x:
+        ax.invert_xaxis()
+    
+    ax.set_xlabel('Saturation ppm')
+    ax.set_ylabel('Normalized intensity')
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.show(block=False)
+    return fig
+
+# ----------------------------------------------------------------------
 # Process a single z-spectrum to get integrals
 # ----------------------------------------------------------------------
 def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lorentzians=False) -> Dict[str, Any]:
 
     """Fit envelopes, spline, lorentzians, compute difference and integrals for one dataset."""
     
-    # 2. Sort
+    # Sort
     combined = list(zip(zero_corrected_ppm, max_vals))
     combined.sort()
     zero_corrected_ppm, max_vals_sorted = zip(*combined)
     zero_corrected_ppm = list(zero_corrected_ppm)
     max_vals_sorted = list(max_vals_sorted)
 
-    # 3. Common grid
+    # Common grid
     x_common = np.linspace(min(zero_corrected_ppm), max(zero_corrected_ppm), N_POINTS_FIT)
 
-    # 4. Sigmoid envelope
+    # Sigmoid envelope
     L, R, tau = estimate_constrained_sigmoid(zero_corrected_ppm, max_vals_sorted,
                                              fix_center=True, x0_fixed=0.0)
     y_sig = constrained_sigmoid(x_common, L, R, tau)
@@ -930,7 +1095,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
                    "fit_label": f'Sigmoid (L={L:.3f}, R={R:.3f}, τ={tau:.3f})',
                    "fit_successful": True}
 
-    # 5. Correct with sigmoid
+    # Correct with sigmoid
     linspace_indices = [np.argmin(np.abs(x_common - v)) for v in zero_corrected_ppm]
     sig_corrected = []
     for i, idx in enumerate(linspace_indices):
@@ -940,7 +1105,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
         else:
             sig_corrected.append(max_vals_sorted[i] / env_val)
 
-    # 6. Lorentzian envelope on corrected data
+    # Lorentzian envelope on corrected data
     A, gamma = estimate_constrained_lorentzian(zero_corrected_ppm, sig_corrected)
     y_min = np.min(sig_corrected)
     y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
@@ -948,7 +1113,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
                "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
                "fit_successful": True}
 
-    # 7. Spline fit on corrected data
+    # Spline fit on corrected data
     spline_res = spline_fit(x=zero_corrected_ppm, y=sig_corrected, x_fit=x_common)
     if not spline_res.get("fit_successful", False):
         return {
@@ -966,7 +1131,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
             "lorentzian_fit": None
         }
 
-    # 8. Difference and integrals
+    # Difference and integrals
     diff_y = lor_env["y"] - spline_res["y_fit"]
     integrals = compute_regions_integrals(x_common, diff_y)
 
@@ -1402,152 +1567,6 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
     return config_data
 
 # ----------------------------------------------------------------------
-# Multi Lorentzian feature functions
-# ----------------------------------------------------------------------
-
-def lorentzian_peak(x, h, x0, w):
-    """
-    Lorentziana classica: h * w^2 / (w^2 + (x - x0)^2)
-    h : ampiezza (positiva per CEST, negativa per NOE)
-    x0: centro (ppm)
-    w : semi-larghezza a metà altezza (ppm)
-    """
-    return h * w**2 / (w**2 + (x - x0)**2)
-
-def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, fixed_width=0.2):
-    """
-    Fit simultaneo:
-      - saturazione diretta (centro=0) -> (h_center, gamma)
-      - una lorentziana per ogni regione (h, x0, w)
-    
-    Returns dict con 'center', 'extra', 'integrals_extra', 'y_total', 'y_center', etc.
-    """
-    from scipy.optimize import minimize
-    x = np.asarray(x_data)
-    y = np.asarray(y_data)
-    
-    h0_c, gamma0 = center_init
-    params_init = [h0_c, gamma0]
-    bounds = [(0, None), (0.05, 2.0)]   # h_center>=0, gamma>0
-    
-    region_list = list(regions.items())
-    for reg_name, (start, end) in region_list:
-        x0_init = (start + end) / 2.0
-        params_init += [0.0, x0_init, fixed_width]
-        bounds += [(None, None), (start, end), (0.05, 1.0)]
-    
-    def model(params, x):
-        h_c, gamma = params[0], params[1]
-        result = direct_saturation(x, h_c, gamma, baseline)
-        idx = 2
-        for _ in region_list:
-            h = params[idx]
-            x0 = params[idx+1]
-            w = params[idx+2]
-            result += lorentzian_peak(x, h, x0, w) if w > 0 else 0
-            idx += 3
-        return result
-    
-    def mse(params):
-        y_pred = model(params, x)
-        return np.sum((y - y_pred)**2)
-    
-    res = minimize(mse, params_init, bounds=bounds, method='L-BFGS-B')
-    if not res.success:
-        print(colored("Warning: global lorentzian fit did not converge", "yellow"))
-    
-    h_c_opt, gamma_opt = res.x[0], res.x[1]
-    y_center = direct_saturation(x, h_c_opt, gamma_opt, baseline)
-    
-    extra_results = {}
-    integrals_extra = {}
-    idx = 2
-    for reg_name, (start, end) in region_list:
-        h_opt = res.x[idx]
-        x0_opt = res.x[idx+1]
-        w_opt = res.x[idx+2]
-        integral = np.pi * h_opt * w_opt
-        y_peak = lorentzian_peak(x, h_opt, x0_opt, w_opt)
-        extra_results[reg_name] = {'h': h_opt, 'x0': x0_opt, 'w': w_opt,
-                                   'integral': integral, 'y': y_peak}
-        integrals_extra[reg_name] = integral
-        idx += 3
-    
-    y_extra_sum = np.zeros_like(x)
-    for r in extra_results.values():
-        y_extra_sum += r['y']
-    y_total = y_center + y_extra_sum
-    
-    return {
-        'center': {'h': h_c_opt, 'gamma': gamma_opt, 'baseline': baseline},
-        'extra': extra_results,
-        'integrals_extra': integrals_extra,
-        'y_center': y_center,
-        'y_extra_sum': y_extra_sum,
-        'y_total': y_total,
-        'x': x,
-        'success': res.success
-    }
-
-def plot_lorentzian_decomposition(
-        x_data, 
-        y_data, 
-        x_common, 
-        L_main_y, 
-        extra_lor_results, 
-        title, 
-        invert_x=True,
-        window_title=None
-    ):
-    """
-    Plot dei dati, lorentziana principale, lorentziane extra e somma.
-    - x_data, y_data: punti originali (z-spectrum corretto)
-    - x_common: griglia per le curve continue
-    - L_main_y: valore della lorentziana principale su x_common
-    - extra_lor_results: dict da fit_extra_lorentzians
-    - title: titolo del plot
-    """
-    fig, ax = plt.subplots(num=window_title, figsize=(10,6))
-    
-    # Dati sperimentali
-    ax.plot(x_data, y_data, 'o', color='k', label='Data (corrected)')
-    
-    # Lorentziana principale
-    ax.plot(x_common, L_main_y, 'b-', linewidth=2, label='Lorentzian main')
-    
-    # Somma delle lorentziane extra
-    sum_extra = np.zeros_like(x_common)
-    for reg, res in extra_lor_results.items():
-        y_peak = lorentzian_peak(x_common, res['h'], res['x0'], res['w'])
-        sum_extra += y_peak
-        # Plot singole lorentziane (opzionale, potrebbe essere confusionario, meglio usare tratti sottili)
-        ax.plot(x_common, y_peak, '--', alpha=0.5, label=f"{reg} (h={res['h']:.2f})")
-    
-    # Totale
-    total_y = L_main_y + sum_extra
-    ax.plot(x_common, total_y, 'r-', linewidth=2, label='Total (main + extra)')
-    
-    if invert_x:
-        ax.invert_xaxis()
-    
-    ax.set_xlabel('Saturation ppm')
-    ax.set_ylabel('Normalized intensity')
-    ax.set_title(title)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    plt.show(block=False)
-    return fig
-
-def direct_saturation(x, h_center, gamma, baseline=1.0):
-    """
-    Modella la riduzione del segnale dovuta alla saturazione diretta.
-    baseline: asintoto per |x|→∞ (tipicamente 1 dopo correzione sigmoide)
-    h_center: ampiezza della riduzione (positiva)
-    gamma: larghezza
-    """
-    return baseline - h_center * gamma**2 / (gamma**2 + x**2)
-
-# ----------------------------------------------------------------------
 # Core analysis routine
 # ----------------------------------------------------------------------
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
@@ -1604,7 +1623,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         x_data=z.get("x_data"),
                         y_data=z.get("y_data"),
                         x_common=z.get("x_common"),
-                        L_main_y=L_main_y_common,
+                        L_main_y=1+lorentzian_peak(z["x_common"], -z["lorentzian_fit"]["center"]["h"], 0, z["lorentzian_fit"]["center"]["gamma"]),
                         extra_lor_results=lorentzian_fit.get("extra"),
                         title=f"Lorentzian decomposition - {label} (average)",
                         invert_x=True,
@@ -1653,7 +1672,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                             x_data=res.get("x_data"),
                             y_data=res.get("y_data"),
                             x_common=res.get("x_common"),
-                            L_main_y=L_main_y_common,
+                            L_main_y=1+lorentzian_peak(res["x_common"], -res["lorentzian_fit"]["center"]["h"], 0, res["lorentzian_fit"]["center"]["gamma"]),
                             extra_lor_results=lorentzian_fit.get("extra"),
                             title=f"Lorentzian decomposition - {key}",
                             invert_x=True,
@@ -1857,15 +1876,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
                 # Nuovo plot di decomposizione lorentziana
                 if use_extra_lor and res.get("lorentzian_fit") is not None:
-                    # interpolo la lorentziana centrale sulla griglia comune per il plot
-                    interp_center = interp1d(res["lorentzian_fit"]["x"], res["lorentzian_fit"]["y_center"],
-                                            kind='linear', fill_value="extrapolate")
-                    L_main_y_common = interp_center(res["x_common"])
                     plot_lorentzian_decomposition(
                         x_data=res["x_data"],
                         y_data=res["y_data"],
                         x_common=res["x_common"],
-                        L_main_y=L_main_y_common,
+                        L_main_y=1+lorentzian_peak(res["x_common"], -res["lorentzian_fit"]["center"]["h"], 0, res["lorentzian_fit"]["center"]["gamma"]),
                         extra_lor_results=res["extra_lorentzians_results"],
                         title=f"Lorentzian decomposition - {folder_name_short}",
                         invert_x=True,
@@ -2009,7 +2024,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     x_data=res_avg["x_data"],
                     y_data=res_avg["y_data"],
                     x_common=res_avg["x_common"],
-                    L_main_y=L_main_y_common,
+                    L_main_y=1+lorentzian_peak(res_avg["x_common"], -res_avg["lorentzian_fit"]["center"]["h"], 0, res_avg["lorentzian_fit"]["center"]["gamma"]),
                     extra_lor_results=res_avg["extra_lorentzians_results"],
                     title=f"Lorentzian decomposition - {label} (average)",
                     invert_x=True,
@@ -2093,7 +2108,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             x_data=res_avg["x_data"],
             y_data=res_avg["y_data"],
             x_common=res_avg["x_common"],
-            L_main_y=L_main_y_common,
+            L_main_y=1+lorentzian_peak(res_avg["x_common"], -res_avg["lorentzian_fit"]["center"]["h"], 0, res_avg["lorentzian_fit"]["center"]["gamma"]),
             extra_lor_results=res_avg["extra_lorentzians_results"],
             title=f"Lorentzian decomposition - {label} (average)",
             invert_x=True,
