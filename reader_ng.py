@@ -1072,7 +1072,9 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
                         txt = significance[thr]
                         break
                 if txt is None:
-                    txt = f"p={p:.3f}"
+                    # TODO: improve visibility of p values
+                    #txt = f"p={p:.3f}"
+                    pass
                 ref_idx = next(k for k, g in enumerate(groups) if g["label"] == ref_label)
                 y_ref = group_stats[ref_label]["mean"][reg] + group_stats[ref_label]["std"][reg]
                 y_this = group_stats[grp["label"]]["mean"][reg] + group_stats[grp["label"]]["std"][reg]
