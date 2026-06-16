@@ -43,6 +43,7 @@ DEFAULT_METABOLITE_REGIONS: dict[str, List[float]] = {
     "ALPHA-ATP": [-9, -6]
 }
 METABOLITE_REGIONS = DEFAULT_METABOLITE_REGIONS.copy()
+CACHE_VERSION = 2 
 CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 N_POINTS_FIT = 200
@@ -93,6 +94,7 @@ def _build_cache_key(config: Dict[str, Any]) -> str:
                 mtime = 0
             folder_info.append((str(f), mtime))
     key_data = {
+        "cache_version": CACHE_VERSION,
         "groups": [{"label": g["label"], "is_reference": g.get("is_reference", False)}
                    for g in groups],
         "start_ppm": config.get("start_ppm"),
@@ -930,24 +932,24 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
 
     # 5. Correct with sigmoid
     linspace_indices = [np.argmin(np.abs(x_common - v)) for v in zero_corrected_ppm]
-    sig_corrected = []
+    sigmoid_corrected = []
     for i, idx in enumerate(linspace_indices):
         env_val = sigmoid_env["y"][idx]
         if np.abs(env_val) < 1e-12:
-            sig_corrected.append(max_vals_sorted[i])
+            sigmoid_corrected.append(max_vals_sorted[i])
         else:
-            sig_corrected.append(max_vals_sorted[i] / env_val)
+            sigmoid_corrected.append(max_vals_sorted[i] / env_val)
 
     # 6. Lorentzian envelope on corrected data
-    A, gamma = estimate_constrained_lorentzian(zero_corrected_ppm, sig_corrected)
-    y_min = np.min(sig_corrected)
+    A, gamma = estimate_constrained_lorentzian(zero_corrected_ppm, sigmoid_corrected)
+    y_min = np.min(sigmoid_corrected)
     y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
     lor_env = {"A": A, "gamma": gamma, "x": x_common, "y": y_lor,
                "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
                "fit_successful": True}
 
     # 7. Spline fit on corrected data
-    spline_res = spline_fit(x=zero_corrected_ppm, y=sig_corrected, x_fit=x_common)
+    spline_res = spline_fit(x=zero_corrected_ppm, y=sigmoid_corrected, x_fit=x_common)
     if not spline_res.get("fit_successful", False):
         return {"integrals": {},
                 "diff_x": None, "diff_y": None,
@@ -965,7 +967,13 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
         "diff_y": diff_y,
         "sigmoidal_envelope_results": sigmoid_env,
         "lorentzian_envelope_results": lor_env,
-        "spline_fit_results": spline_res
+        "spline_fit_results": spline_res,
+        # ---- intermediate data for later averaging ----
+        "zero_corrected_ppm": zero_corrected_ppm,
+        "sigmoid_corrected": sigmoid_corrected,
+        "A": A,
+        "gamma": gamma,
+        "y_min": y_min,
     }
 
 # ----------------------------------------------------------------------
@@ -1185,6 +1193,189 @@ def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
     fig.tight_layout()
     plt.show(block=False)
     return fig
+
+def plot_group_difference(
+    group_label: str,
+    group_data: Dict[str, Any],
+    visibility: Optional[Dict[str, bool]] = None,
+    window_title: Optional[str] = None,
+) -> Figure:
+    """
+    Plot the mean difference curve ± SEM, the raw mean data points, and metabolite regions.
+    """
+    if visibility is None:
+        visibility = get_default_visibility()
+
+    fig, ax = plt.subplots(num=window_title, figsize=(8, 5))
+
+    # Raw mean data with error bars
+    if visibility.get("data", True):
+        raw_ppm = np.array(group_data["sat_trans_hz"]) / group_data["bf1"]
+        raw_vals = np.array(group_data["max_vals"])
+        raw_sd = np.array(group_data.get("sd_max_vals", [0]*len(raw_vals)))
+        ax.errorbar(raw_ppm, raw_vals, yerr=raw_sd, fmt='o', color='b', label='Raw mean')
+
+    # Mean difference curve
+    x = np.array(group_data["x_common"])
+    mean_diff = np.array(group_data["mean_diff_y"])
+    sem_diff = np.array(group_data["sem_diff_y"])
+
+    if visibility.get("difference", True):
+        ax.plot(x, mean_diff, 'm-', linewidth=1.5, label='Mean diff (Lor−Spline)')
+        ax.fill_between(x, mean_diff - sem_diff, mean_diff + sem_diff,
+                        color='m', alpha=0.2, label='± SEM')
+
+    # Metabolite regions
+    if visibility.get("regions", True):
+        cmap = plt.get_cmap('tab10')
+        for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
+            ax.axvspan(start, end, facecolor=cmap(idx % 10), alpha=0.25,
+                       edgecolor='none', label=region_name)
+
+    ax.invert_xaxis()
+    ax.set_xlabel("Saturation ppm")
+    ax.set_ylabel("Intensity / Difference")
+    ax.set_title(f"Group {group_label} – Averaged Difference")
+    ax.grid(True)
+    if visibility["legend"].get("z-spectra", True):
+        ax.legend()
+    plt.show(block=False)
+    return fig
+
+def build_common_ppm_grid(
+    folder_keys: List[str],
+    analysis_results: Dict[str, Any],
+    n_points: int = N_POINTS_FIT
+) -> np.ndarray:
+    """
+    Build a common ppm axis covering all replicates in a group.
+
+    The function retrieves the 'zero_corrected_ppm' array from each
+    replicate's entry in analysis_results, finds the global minimum
+    and maximum, and returns a linearly spaced grid with `n_points`.
+
+    Parameters
+    ----------
+    folder_keys : List[str]
+        Keys into `analysis_results` corresponding to the replicates
+        (e.g., 'folder_name_short' for Bruker data or 'file_stem' for text files).
+    analysis_results : Dict[str, Any]
+        The main results dictionary. Each replicate must already contain
+        the key 'zero_corrected_ppm' (list of floats).
+    n_points : int, optional
+        Number of points in the output grid (default = N_POINTS_FIT).
+
+    Returns
+    -------
+    x_common : np.ndarray
+        1D array of ppm values from the overall min to the overall max,
+        equally spaced.
+
+    Raises
+    ------
+    ValueError
+        If any replicate lacks 'zero_corrected_ppm' or if the range is invalid.
+    """
+    global_min = float('inf')
+    global_max = -float('inf')
+
+    for key in folder_keys:
+        entry = analysis_results.get(key, {})
+        ppm_list = entry.get("zero_corrected_ppm")
+        if ppm_list is None:
+            raise ValueError(
+                f"Missing 'zero_corrected_ppm' for replicate '{key}' in analysis_results."
+            )
+        # Handle both list and numpy array
+        ppm_arr = np.asarray(ppm_list)
+        if ppm_arr.size == 0:
+            raise ValueError(f"'zero_corrected_ppm' for '{key}' is empty.")
+        global_min = min(global_min, ppm_arr.min())
+        global_max = max(global_max, ppm_arr.max())
+
+    if global_min >= global_max:
+        raise ValueError(
+            f"Invalid ppm range: min={global_min}, max={global_max}."
+        )
+
+    return np.linspace(global_min, global_max, n_points)
+
+def collect_replicate_differences(
+    folder_keys: List[str],
+    analysis_results: Dict[str, Any],
+    x_common: Optional[np.ndarray] = None,
+    n_points: int = N_POINTS_FIT,
+    compute_integrals: bool = True,
+) -> Dict[str, Any]:
+    """
+    Reconstruct the difference curve (Lorentzian – spline) for each replicate
+    on a common ppm grid, then compute the mean and SEM.
+
+    Parameters
+    ----------
+    folder_keys : List[str]
+        Keys for individual replicates in analysis_results.
+    analysis_results : Dict[str, Any]
+        Must contain, for each key, 'zero_corrected_ppm', 'sig_corrected',
+        'A', 'gamma', 'y_min'.
+    x_common : np.ndarray, optional
+        Pre‑built common grid. If None, built automatically via
+        build_common_ppm_grid().
+    n_points : int
+        Used only if x_common is None.
+    compute_integrals : bool
+        If True, calculate integrals of the mean difference curve.
+
+    Returns
+    -------
+    dict with keys:
+        "x_common" : np.ndarray
+        "mean_diff" : np.ndarray
+        "sem_diff" : np.ndarray
+        "individual_diffs" : list of np.ndarray
+        "integrals" : dict (if compute_integrals=True)
+    """
+
+    if x_common is None:
+        x_common = build_common_ppm_grid(folder_keys, analysis_results, n_points=n_points)
+
+    diffs = []
+    for key in folder_keys:
+        entry = analysis_results[key]
+        ppm = np.asarray(entry["zero_corrected_ppm"])
+        sigmoid_corrected = np.asarray(entry["sigmoid_corrected"])
+        A = entry["A"]
+        gamma = entry["gamma"]
+        y_min = entry["y_min"]
+
+        # Lorentzian envelope
+        y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
+
+        # Re‑fit spline on the replicate's corrected data
+        spline = PchipInterpolator(ppm, sigmoid_corrected)
+        y_spline = spline(x_common)
+
+        diff = y_lor - y_spline
+        diffs.append(diff)
+
+    diffs_arr = np.array(diffs)  # shape (n_replicates, n_points)
+    mean_diff = np.mean(diffs_arr, axis=0)
+    n = len(diffs)
+    if n > 1:
+        sem_diff = np.std(diffs_arr, axis=0, ddof=1) / np.sqrt(n)
+    else:
+        sem_diff = np.zeros_like(mean_diff)
+
+    result = {
+        "x_common": x_common,
+        "mean_diff": mean_diff,
+        "sem_diff": sem_diff,
+        "individual_diffs": [d for d in diffs],  # list of arrays
+    }
+    if compute_integrals:
+        result["integrals"] = compute_regions_integrals(x_common, mean_diff)
+
+    return result
 
 # ----------------------------------------------------------------------
 # Main interactive configuration setup
@@ -1581,18 +1772,15 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 combined.sort()
                 sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
+                res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
                 analysis_results[folder_name_short].update({
                     "max_indexes": max_indexes,
-                    "max_vals": max_vals
+                    "max_vals": max_vals,
                 })
+                analysis_results[folder_name_short].update(res)
                 group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
 
                 # --- Calculate integrals for this individual folder ---
-                res = process_zspectrum_and_integrals(
-                    max_vals, 
-                    zero_corrected_ppm
-                )
-                analysis_results[folder_name_short].update(res)
                 
                 # After storing the results for the single folder, optionally plot it
                 plot_data(
@@ -1658,14 +1846,14 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 combined.sort()
                 zero_corrected_ppm[:], max_vals[:], sat_trans_hz[:] = zip(*combined)
 
-                # --- Store raw data for later group averaging ---
-                group_raw[grp_idx].append( (max_indexes, max_vals, sat_trans_hz) )
-
-                # No max_indexes or sat_trans_hz needed; store what we have
+                res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
+                # No max_indexes, zero_corrected_ppm or sat_trans_hz needed; store what we have
                 analysis_results[key].update({
                     "max_vals": max_vals,
-                    "zero_corrected_ppm": zero_corrected_ppm
                 })
+                analysis_results[key].update(res)
+                # --- Store raw data for later group averaging ---
+                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
 
                 # --- Fit, integrate, and plot (common pipeline) ---
                 res = process_zspectrum_and_integrals(
@@ -1692,50 +1880,49 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     window_title=f"{label}: spline fit for file {key}"
                 )
 
-        # --- Calculate the group average z-spectrum ---
+        # --- Build averaged difference curves for the group ---
         if group_raw[grp_idx]:
-            idx_arr = np.array([d[0] for d in group_raw[grp_idx]])
+            keys = folder_keys_per_group[grp_idx]
+
+            # --- Raw data for plotting (mean of max_vals) ---
             val_arr = np.array([d[1] for d in group_raw[grp_idx]])
             sat_arr = np.array([d[2] for d in group_raw[grp_idx]])
             n = len(group_raw[grp_idx])
-            mean_max_idx = np.round(np.mean(idx_arr, axis=0)).tolist()
             mean_max_vals = np.mean(val_arr, axis=0).tolist()
             mean_sat = np.mean(sat_arr, axis=0).tolist()
-            mean_zero_corrected_ppm: List[float] = [mean_sat[i] / group_meta[grp_idx]["bf1"] for i in range(len(mean_sat))]
+            sd_max_vals = np.std(val_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(val_arr[0])
 
+            # Ppm axis for the raw data (mean saturation freq / BF1)
+            mean_zero_ppm = [mean_sat[i] / group_meta[grp_idx]["bf1"] for i in range(len(mean_sat))]
+
+            # --- Collect per-replicate differences on a common grid ---
+            coll_res = collect_replicate_differences(
+                keys, analysis_results, compute_integrals=True
+            )
+            x_common = coll_res["x_common"]
+            mean_diff = coll_res["mean_diff"]
+            sem_diff = coll_res["sem_diff"]
+            group_integrals = coll_res["integrals"]
+
+            # --- Store under the group label ---
             analysis_results[label] = {
-                "max_indexes": mean_max_idx,
+                "max_indexes": np.round(np.mean(np.array([d[0] for d in group_raw[grp_idx]]), axis=0)).tolist(),
                 "max_vals": mean_max_vals,
                 "sat_trans_hz": mean_sat,
-                "sd_max_indexes": np.std(idx_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(idx_arr[0]),
-                "sd_max_vals": np.std(val_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(val_arr[0]),
-                "sd_sat_trans_hz": np.std(sat_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(sat_arr[0]),
+                "sd_max_vals": sd_max_vals,
                 "bf1": group_meta[grp_idx]["bf1"],
+                "x_common": x_common,
+                "mean_diff_y": mean_diff,
+                "sem_diff_y": sem_diff,
+                "integrals": group_integrals,   # exactly matches mean of per-replicate integrals
+                "per_replicate_diffs": coll_res["individual_diffs"],  # optional
             }
 
-            # Calculate regions integrals from average z-spectrum
-            res_avg = process_zspectrum_and_integrals(
-                mean_max_vals,
-                mean_zero_corrected_ppm
-            )
-            analysis_results[label].update(res_avg)
-
-            # Plot group average
-            plot_data(
-                x=res_avg["spline_fit_results"]["x"],
-                y=res_avg["spline_fit_results"]["y"],
-                x_fit=res_avg["spline_fit_results"]["x_fit"],
-                y_fit=res_avg["spline_fit_results"]["y_fit"],
-                y_std_data=analysis_results[label].get("sd_max_vals"),
-                title=label, invert_x=True,
-                add_lorentz=True,
-                lorentzian_envelope_results=res_avg["lorentzian_envelope_results"],
-                add_sigmoid=True,
-                sigmoidal_envelope_results=res_avg["sigmoidal_envelope_results"],
-                diff_x=res_avg["diff_x"], diff_y=res_avg["diff_y"],
-                diff_label="Lorentzian envelope - Spline fit",
+            plot_group_difference(
+                group_label=label,
+                group_data=analysis_results[label],
                 visibility=config.get("plot_visibility", get_default_visibility()),
-                window_title=f"Group {label} (average of {n} {'folders' if is_folder else 'files'})"
+                window_title=f"Group {label} - Averaged Difference"
             )
 
     # ---- Statistics for the groups (mean ± std of per‑folder integrals) ----
