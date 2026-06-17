@@ -361,12 +361,6 @@ def save_analysis_results(config_name: str, analysis_results: dict) -> None:
 
     ensure_output_dir()
 
-    with open(Path(OUTPUT_DIR / f"{config_name}.csv"), "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow([f"Output values for {config_name}"])          # header
-            for key, value in analysis_results.items():
-                writer.writerow([key, value])          # csv module converts to string automatically
-
     analysis_results = replace_uc_objects(analysis_results)  # Convert uc objects to dicts for JSON serialization
 
     with open(Path(OUTPUT_DIR / f"{config_name}.json"), "w", encoding="utf-8") as f:
