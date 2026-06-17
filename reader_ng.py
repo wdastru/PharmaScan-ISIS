@@ -360,10 +360,9 @@ def replace_uc_objects(obj):
 def save_analysis_results(config_name: str, analysis_results: dict) -> None:
 
     ensure_output_dir()
-
     analysis_results = replace_uc_objects(analysis_results)  # Convert uc objects to dicts for JSON serialization
-
-    with open(Path(OUTPUT_DIR / f"{config_name}.json"), "w", encoding="utf-8") as f:
+    version = f"-{analysis_results.get('__script_version__', '')}" if analysis_results.get('__script_version__') else ''
+    with open(Path(OUTPUT_DIR / f"{config_name}{version}.json"), "w", encoding="utf-8") as f:
         json.dump(analysis_results, f, indent=2, cls=SafeEncoder, ensure_ascii=False)   # indent for human readability
 
 def find_methods(obj, path=""):
