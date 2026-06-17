@@ -31,6 +31,7 @@ import hashlib
 from joblib import dump, load
 import csv
 import types
+import subprocess
 
 print(f"Using nmrglue version: {ng.__version__}")
 
@@ -272,7 +273,32 @@ def select_or_create_config() -> Tuple[str, Dict[str, Any]]:
 # ----------------------------------------------------------------------
 # Utility functions
 # ----------------------------------------------------------------------
+def get_git_hash(short=True):
+    """
+    Return 'abc1234' for a clean working tree, or 'abc1234-dirty'
+    if there are uncommitted changes.
+    """
+    try:
+        base = os.path.dirname(os.path.abspath(__file__))
+        cmd = ["git", "rev-parse"]
+        if short:
+            cmd.append("--short")
+        cmd.append("HEAD")
+        hash_ = subprocess.check_output(
+            cmd, cwd=base, stderr=subprocess.DEVNULL
+        ).strip().decode()
 
+        # Check for uncommitted changes
+        dirty = subprocess.call(
+            ["git", "diff-index", "--quiet", "HEAD", "--"],
+            cwd=base,
+            stderr=subprocess.DEVNULL
+        )
+        if dirty != 0:
+            hash_ += "-dirty"
+        return hash_
+    except Exception:
+        return "unknown"
 class SafeEncoder(json.JSONEncoder):
     def default(self, obj):
         # Handle methods / functions
@@ -1967,8 +1993,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # da usare nel ramo cache
     analysis_results["folder_keys_per_group"] = folder_keys_per_group
 
-    # ---- Save cache and show multigroup bar plot ----
-    save_cache(config_name, config, analysis_results)
+    # ---- Show multigroup bar plot ----
     plot_multigroup_integrals(group_stats, p_values, groups,
                               visibility=config.get("plot_visibility", get_default_visibility()),
                               title="Integrali per regione (ricalcolati)",
@@ -1988,6 +2013,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         )
 
     # --- Saving ---
+    analysis_results["__script_version__"] = get_git_hash(short=True)
+    save_cache(config_name, config, analysis_results)
     save_analysis_results(analysis_results=analysis_results, config_name=config_name)
     
     print("\nTutti i grafici sono stati creati. Premi Invio per uscire.")
