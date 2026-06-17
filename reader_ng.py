@@ -1074,12 +1074,17 @@ def plot_lorentzian_decomposition(
     for reg, res in extra_lor_results.items():
         y_peak = lorentzian_peak(x_common, res['h'], res['x0'], res['w'])
         sum_extra += y_peak
-        # Plot singole lorentziane (opzionale, potrebbe essere confusionario, meglio usare tratti sottili)
         ax.plot(x_common, y_peak, '--', alpha=0.5, label=f"{reg} (h={res['h']:.2f})")
     
     # Totale
     total_y = L_main_y - sum_extra
     ax.plot(x_common, total_y, 'r-', linewidth=2, label='Total (main + extra dips)')
+    
+    # Metabolite regions
+    cmap = plt.get_cmap('tab10')
+    for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
+        ax.axvspan(start, end, facecolor=cmap(idx % 10), alpha=0.25,
+                   edgecolor='none', label=region_name)
     
     if invert_x:
         ax.invert_xaxis()
