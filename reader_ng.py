@@ -1936,47 +1936,57 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # ------------------------------------------------------------
         # 3. Prepara i dati per i grafici a barre dei singoli gruppi
         # ------------------------------------------------------------
-        per_folder_integrals = {}
+        per_folder_integrals_spline = {}
+        per_folder_integrals_extra = {}
+
         for grp_idx, grp in enumerate(groups):
             label = grp["label"]
             keys = folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else []
-            group_folder_integrals = {}
+            spline_dict = {}
+            extra_dict = {}
             for key in keys:
-                integr = analysis_results.get(key, {}).get("integrals", {})
-                for region, val in integr.items():
-                    group_folder_integrals.setdefault(region, []).append(val)
-            per_folder_integrals[label] = group_folder_integrals
+                # Spline integrals
+                integr_spl = analysis_results.get(key, {}).get("integrals", {})
+                for region, val in integr_spl.items():
+                    spline_dict.setdefault(region, []).append(val)
 
-        group_stats = analysis_results.get("group_stats", {})
+                # Lorentzian extra integrals
+                integr_ext = analysis_results.get(key, {}).get("integrals_extra", {})
+                for region, val in integr_ext.items():
+                    extra_dict.setdefault(region, []).append(val)
+
+            per_folder_integrals_spline[label] = spline_dict
+            per_folder_integrals_extra[label] = extra_dict
 
         # ------------------------------------------------------------
         # 4. Grafico a barre per gruppo (cartelle + media)
         # ------------------------------------------------------------
+        group_stats = analysis_results.get("group_stats", {})
         for grp_idx, grp in enumerate(groups):
             label = grp["label"]
-            if label in group_stats and label in per_folder_integrals:
+            if label in group_stats and label in per_folder_integrals_spline:
                 plot_group_folder_integrals(
                     group_label=label,
                     group_stats=group_stats,
-                    per_folder_integrals=per_folder_integrals,
+                    per_folder_integrals=per_folder_integrals_spline,
                     folder_names=folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else [],
                     visibility=config.get("plot_visibility", get_default_visibility()),
                     title=f"Spline - integrali per regione - {label} (da cache)",
                     window_title=f"Spline - integrali per regione - {label} (da cache)",
                     integrals_key="integrals"
                 )
-                if use_extra_lor:
-                    plot_group_folder_integrals(
-                        group_label=label,
-                        group_stats=group_stats,
-                        per_folder_integrals=per_folder_integrals,
-                        folder_names=folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else [],
-                        visibility=config.get("plot_visibility", get_default_visibility()),
-                        title=f"Lorentzian - integrali per regione - {label} (da cache)",
-                        window_title=f"Lorentzian - integrali per regione - {label} (da cache)",
-                        integrals_key="integrals_extra"
-                    )
-
+            if use_extra_lor and label in group_stats and label in per_folder_integrals_extra:
+                plot_group_folder_integrals(
+                    group_label=label,
+                    group_stats=group_stats,
+                    per_folder_integrals=per_folder_integrals_extra,
+                    folder_names=folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else [],
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    title=f"Lorentzian - integrali per regione - {label} (da cache)",
+                    window_title=f"Lorentzian - integrali per regione - {label} (da cache)",
+                    integrals_key="integrals_extra"
+                )
+                
         # ------------------------------------------------------------
         # 5. Grafici multi-gruppo con p-value (già presente)
         # ------------------------------------------------------------
@@ -2288,21 +2298,32 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
     # ---- Statistics for the groups (mean ± std of per-folder integrals) ----
     group_stats = {}
-    per_folder_integrals = {}
+    per_folder_integrals_spline = {}
+    per_folder_integrals_extra = {}
 
     for grp_idx, grp in enumerate(groups):
         label = grp["label"]
         keys = folder_keys_per_group[grp_idx]
-        group_stats[label] = _compute_group_stats(keys, analysis_results)
-    
-        # ---- Per-folder integrals dictionary (per i grafici di gruppo) ----
-        group_folder_integrals = {}
-        for key in keys:
-            integr = analysis_results.get(key, {}).get("integrals", {})
-            for region, val in integr.items():
-                group_folder_integrals.setdefault(region, []).append(val)
 
-        per_folder_integrals[label] = group_folder_integrals    
+        # ---------- Group statistics (mean ± std) ----------
+        group_stats[label] = _compute_group_stats(keys, analysis_results)
+
+        # ---------- Per‑folder integrals for the single‑group plot ----------
+        spline_dict = {}
+        extra_dict = {}
+        for key in keys:
+            # Spline integrals
+            integr_spl = analysis_results.get(key, {}).get("integrals", {})
+            for region, val in integr_spl.items():
+                spline_dict.setdefault(region, []).append(val)
+
+            # Lorentzian extra integrals
+            integr_ext = analysis_results.get(key, {}).get("integrals_extra", {})
+            for region, val in integr_ext.items():
+                extra_dict.setdefault(region, []).append(val)
+
+        per_folder_integrals_spline[label] = spline_dict
+        per_folder_integrals_extra[label] = extra_dict  
 
     analysis_results["group_stats"] = group_stats
 
@@ -2343,7 +2364,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         plot_group_folder_integrals(
             group_label=label,
             group_stats=group_stats,
-            per_folder_integrals=per_folder_integrals,
+            per_folder_integrals=per_folder_integrals_spline,
             folder_names=folder_keys_per_group[grp_idx],   # <-- lista dei nomi brevi
             visibility=config.get("plot_visibility", get_default_visibility()),
             title=f"Spline - integrali per regione - {label} (ricalcolati)",
@@ -2355,7 +2376,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             plot_group_folder_integrals(
                 group_label=label,
                 group_stats=group_stats,
-                per_folder_integrals=per_folder_integrals,
+                per_folder_integrals=per_folder_integrals_extra,
                 folder_names=folder_keys_per_group[grp_idx],   # <-- lista dei nomi brevi
                 visibility=config.get("plot_visibility", get_default_visibility()),
                 title=f"Lorentzian - integrali per regione - {label} (ricalcolati)",
