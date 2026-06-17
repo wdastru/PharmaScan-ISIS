@@ -1157,22 +1157,26 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
     diff_y = lor_env["y"] - spline_res["y_fit"]
     integrals = compute_regions_integrals(x_common, diff_y)
 
-    extra_lorentzians_results = None
+    extra_lor_extra = None
+    integrals_extra = None
+    lorentzian_fit = None
+
     if use_extra_lorentzians:
         # Build center initialization from the Lorentzian envelope
-        # (A and gamma come from the previously fitted envelope)
         center_init = (A, gamma)       # (h_c, gamma) for the main dip
         # Pass the metabolite regions
-        extra_lorentzians_results = fit_global_lorentzians(
+        fit_res = fit_global_lorentzians(
             x_data=zero_corrected_ppm,
             y_data=sigmoid_corrected,
             regions=METABOLITE_REGIONS,
             center_init=center_init,
             baseline=1.0,
             fixed_width=0.2
-        ) 
+        )
+        lorentzian_fit = fit_res                       # <-- whole result
+        extra_lor_extra = fit_res.get("extra")         # <-- dict of extra Lorentzians
+        integrals_extra = fit_res.get("integrals_extra")
 
-    # Dizionario base da ritornare
     return {
         "integrals": integrals,
         "diff_x": x_common,
@@ -1187,9 +1191,9 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
         "gamma": gamma,
         "y_min": y_min,
         # chiavi per la parte sperimentale
-        "extra_lorentzians_results": extra_lorentzians_results.get("extra", None),
-        "integrals_extra": extra_lorentzians_results.get("integrals_extra", None),
-        "lorentzian_fit": extra_lorentzians_results.get("lorentzian_fit", None),
+        "extra_lorentzians_results": extra_lor_extra,   # the "extra" dict
+        "integrals_extra": integrals_extra,
+        "lorentzian_fit": lorentzian_fit,               # the full result
         "x_data": zero_corrected_ppm,
         "y_data": sigmoid_corrected,
         "x_common": x_common
@@ -1855,32 +1859,58 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     window_title=f"Group {label} - Averaged Difference (da cache)"
                 )
 
-        # 1b. Plot aggiuntivi di decomposizione per le medie di gruppo
         use_extra_lor = config.get("use_extra_lorentzians", False)
+        folder_keys_per_group_cached = analysis_results.get("folder_keys_per_group", [])
         if use_extra_lor:
+            # Plot di decomposizione multi-lorentziana per singole cartelle (se presenti)
+            for grp_idx, keys in enumerate(folder_keys_per_group_cached):
+                for key in keys:
+                    res = analysis_results.get(key, {})
+                    lorentzian_fit = res.get("lorentzian_fit")
+                    if lorentzian_fit is not None:
+                        plot_lorentzian_decomposition(
+                            x_data=res.get("x_data"),
+                            y_data=res.get("y_data"),
+                            x_common=res.get("x_common"),
+                            L_main_y=1+lorentzian_peak(res["x_common"], -res["lorentzian_fit"]["center"]["h"], 0, res["lorentzian_fit"]["center"]["gamma"]),
+                            extra_lor_results=lorentzian_fit.get("extra"),
+                            title=f"Lorentzian decomposition - {key}",
+                            invert_x=True,
+                            window_title=f"Lorentzian decomposition - {key} (da cache)"
+                        )
+
+            # Plot di decomposizione per le medie di gruppo
             for grp in groups:
                 label = grp["label"]
                 z = analysis_results.get(label, {})
-                lorentzian_fit = z.get("lorentzian_fit")
+                decomp = z.get("decomposition", {})
+                lorentzian_fit = decomp.get("lorentzian_fit")
                 if lorentzian_fit is not None:
-                    interp_center = interp1d(lorentzian_fit["x"], lorentzian_fit["y_center"],
-                                                kind='linear', fill_value="extrapolate")
-                    L_main_y_common = interp_center(z.get("x_common"))
+                    interp_center = interp1d(
+                        lorentzian_fit["x"], lorentzian_fit["y_center"],
+                        kind='linear', fill_value="extrapolate"
+                    )
+                    x_common = decomp["x_common"]
+                    L_main_y_common = interp_center(x_common)
                     plot_lorentzian_decomposition(
-                        x_data=z.get("x_data"),
-                        y_data=z.get("y_data"),
-                        x_common=z.get("x_common"),
-                        L_main_y=1+lorentzian_peak(z["x_common"], -z["lorentzian_fit"]["center"]["h"], 0, z["lorentzian_fit"]["center"]["gamma"]),
+                        x_data=decomp["x_data"],
+                        y_data=decomp["y_data"],
+                        x_common=x_common,
+                        L_main_y=1 + lorentzian_peak(
+                            x_common,
+                            -lorentzian_fit["center"]["h"],
+                            0,
+                            lorentzian_fit["center"]["gamma"]
+                        ),
                         extra_lor_results=lorentzian_fit.get("extra"),
                         title=f"Lorentzian decomposition - {label} (average)",
                         invert_x=True,
                         window_title=f"Lorentzian decomposition - {label} (average)"
-                    )                
-                
+                    )
+                    
         # ------------------------------------------------------------
         # 2. Re-plot Z-spettri per le singole cartelle
         # ------------------------------------------------------------
-        folder_keys_per_group_cached = analysis_results.get("folder_keys_per_group", [])
         for grp_idx, keys in enumerate(folder_keys_per_group_cached):
             for key in keys:
                 res = analysis_results.get(key, {})
@@ -1902,25 +1932,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         visibility=config.get("plot_visibility", get_default_visibility()),
                         window_title=f"Spline fit: {key} (da cache)"
                     )
-
-        # 2b. Plot aggiuntivi di decomposizione multi-lorentziana per singole cartelle (se presenti)
-        use_extra_lor = config.get("use_extra_lorentzians", False)
-        if use_extra_lor:
-            for grp_idx, keys in enumerate(folder_keys_per_group_cached):
-                for key in keys:
-                    res = analysis_results.get(key, {})
-                    lorentzian_fit = res.get("lorentzian_fit")
-                    if lorentzian_fit is not None:
-                        plot_lorentzian_decomposition(
-                            x_data=res.get("x_data"),
-                            y_data=res.get("y_data"),
-                            x_common=res.get("x_common"),
-                            L_main_y=1+lorentzian_peak(res["x_common"], -res["lorentzian_fit"]["center"]["h"], 0, res["lorentzian_fit"]["center"]["gamma"]),
-                            extra_lor_results=lorentzian_fit.get("extra"),
-                            title=f"Lorentzian decomposition - {key}",
-                            invert_x=True,
-                            window_title=f"Lorentzian decomposition - {key} (da cache)"
-                        )
 
         # ------------------------------------------------------------
         # 3. Prepara i dati per i grafici a barre dei singoli gruppi
@@ -2380,6 +2391,15 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
         # ---- Choose which plot to draw ----
         if use_extra_lor and avg_res.get("lorentzian_fit") is not None:
+
+            # Store the decomposition results so they are available in the cache
+            grp_data["decomposition"] = {
+                "lorentzian_fit": avg_res["lorentzian_fit"],
+                "x_data": avg_res["x_data"],
+                "y_data": avg_res["y_data"],
+                "x_common": avg_res["x_common"],
+            }        
+            
             lfit = avg_res["lorentzian_fit"]
             # Interpolate the main Lorentzian onto the common grid
             interp_center = interp1d(
