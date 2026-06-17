@@ -645,7 +645,7 @@ def spline_fit(x, y, x_fit=None, n_points=N_POINTS_FIT) -> Dict[str, Any]:
     x, y : array-like
         Data points.
     x_fit : array-like, optional
-        Pre‑computed x values for the fitted curve. If None, generate with np.linspace.
+        Pre-computed x values for the fitted curve. If None, generate with np.linspace.
     n_points : int
         Only used if x_fit is None.
     """
@@ -1146,7 +1146,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
             "spline_fit_results": spline_res,
             # extra-lorentzians fitting
             "x_data": zero_corrected_ppm,
-            "y_data": sig_corrected,
+            "y_data": sigmoid_corrected,
             "x_common": x_common,
             "extra_lorentzians_results": None,
             "integrals_extra": None,
@@ -1157,8 +1157,23 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
     diff_y = lor_env["y"] - spline_res["y_fit"]
     integrals = compute_regions_integrals(x_common, diff_y)
 
+    extra_lorentzians_results = None
+    if use_extra_lorentzians:
+        # Build center initialization from the Lorentzian envelope
+        # (A and gamma come from the previously fitted envelope)
+        center_init = (A, gamma)       # (h_c, gamma) for the main dip
+        # Pass the metabolite regions
+        extra_lorentzians_results = fit_global_lorentzians(
+            x_data=zero_corrected_ppm,
+            y_data=sigmoid_corrected,
+            regions=METABOLITE_REGIONS,
+            center_init=center_init,
+            baseline=1.0,
+            fixed_width=0.2
+        ) 
+
     # Dizionario base da ritornare
-    result = {
+    return {
         "integrals": integrals,
         "diff_x": x_common,
         "diff_y": diff_y,
@@ -1172,11 +1187,11 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
         "gamma": gamma,
         "y_min": y_min,
         # chiavi per la parte sperimentale
-        "extra_lorentzians_results": None,
-        "integrals_extra": None,
-        "lorentzian_fit": None,
+        "extra_lorentzians_results": extra_lorentzians_results.get("extra", None),
+        "integrals_extra": extra_lorentzians_results.get("integrals_extra", None),
+        "lorentzian_fit": extra_lorentzians_results.get("lorentzian_fit", None),
         "x_data": zero_corrected_ppm,
-        "y_data": sig_corrected,
+        "y_data": sigmoid_corrected,
         "x_common": x_common
     }
 
@@ -1564,10 +1579,10 @@ def collect_replicate_differences(
     folder_keys : List[str]
         Keys for individual replicates in analysis_results.
     analysis_results : Dict[str, Any]
-        Must contain, for each key, 'zero_corrected_ppm', 'sig_corrected',
+        Must contain, for each key, 'zero_corrected_ppm', 'sigmoid_corrected',
         'A', 'gamma', 'y_min'.
     x_common : np.ndarray, optional
-        Pre‑built common grid. If None, built automatically via
+        Pre-built common grid. If None, built automatically via
         build_common_ppm_grid().
     n_points : int
         Used only if x_common is None.
@@ -1599,7 +1614,7 @@ def collect_replicate_differences(
         # Lorentzian envelope
         y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
 
-        # Re‑fit spline on the replicate's corrected data
+        # Re-fit spline on the replicate's corrected data
         spline = PchipInterpolator(ppm, sigmoid_corrected)
         y_spline = spline(x_common)
 
@@ -1863,7 +1878,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     )                
                 
         # ------------------------------------------------------------
-        # 2. Re‑plot Z‑spettri per le singole cartelle
+        # 2. Re-plot Z-spettri per le singole cartelle
         # ------------------------------------------------------------
         folder_keys_per_group_cached = analysis_results.get("folder_keys_per_group", [])
         for grp_idx, keys in enumerate(folder_keys_per_group_cached):
@@ -1888,7 +1903,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         window_title=f"Spline fit: {key} (da cache)"
                     )
 
-        # 2b. Plot aggiuntivi di decomposizione multi‑lorentziana per singole cartelle (se presenti)
+        # 2b. Plot aggiuntivi di decomposizione multi-lorentziana per singole cartelle (se presenti)
         use_extra_lor = config.get("use_extra_lorentzians", False)
         if use_extra_lor:
             for grp_idx, keys in enumerate(folder_keys_per_group_cached):
@@ -1952,7 +1967,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     )
 
         # ------------------------------------------------------------
-        # 5. Grafici multi‑gruppo con p‑value (già presente)
+        # 5. Grafici multi-gruppo con p-value (già presente)
         # ------------------------------------------------------------
         pvals = analysis_results.get("p_values", {})
         plot_multigroup_integrals(group_stats, pvals, groups,
@@ -2260,23 +2275,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 window_title=f"Group {label} - Averaged Difference"
             )
 
-            # Nuovo plot di decomposizione lorentziana per la media del gruppo
-            if use_extra_lor and res_avg.get("lorentzian_fit") is not None:
-                interp_center = interp1d(res_avg["lorentzian_fit"]["x"], res_avg["lorentzian_fit"]["y_center"],
-                                        kind='linear', fill_value="extrapolate")
-                L_main_y_common = interp_center(res_avg["x_common"])
-                plot_lorentzian_decomposition(
-                    x_data=res_avg["x_data"],
-                    y_data=res_avg["y_data"],
-                    x_common=res_avg["x_common"],
-                    L_main_y=1+lorentzian_peak(res_avg["x_common"], -res_avg["lorentzian_fit"]["center"]["h"], 0, res_avg["lorentzian_fit"]["center"]["gamma"]),
-                    extra_lor_results=res_avg["extra_lorentzians_results"],
-                    title=f"Lorentzian decomposition - {label} (average)",
-                    invert_x=True,
-                    window_title=f"Lorentzian decomposition - {label} (average)"
-                )
-
-    # ---- Statistics for the groups (mean ± std of per‑folder integrals) ----
+    # ---- Statistics for the groups (mean ± std of per-folder integrals) ----
     group_stats = {}
     per_folder_integrals = {}
 
@@ -2285,7 +2284,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         keys = folder_keys_per_group[grp_idx]
         group_stats[label] = _compute_group_stats(keys, analysis_results)
     
-        # ---- Per‑folder integrals dictionary (per i grafici di gruppo) ----
+        # ---- Per-folder integrals dictionary (per i grafici di gruppo) ----
         group_folder_integrals = {}
         for key in keys:
             integr = analysis_results.get(key, {}).get("integrals", {})
@@ -2296,7 +2295,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
     analysis_results["group_stats"] = group_stats
 
-    # ---- p‑values (reference vs each sample) ----
+    # ---- p-values (reference vs each sample) ----
     ref_label = None
     ref_keys = []
     for grp_idx, grp in enumerate(groups):
@@ -2353,37 +2352,73 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 integrals_key="integrals_extra"
             )
 
-    # Plot a seconda della modalità per la media del gruppo
-    if use_extra_lor and res_avg.get("lorentzian_fit") is not None:
-        interp_center = interp1d(res_avg["lorentzian_fit"]["x"], res_avg["lorentzian_fit"]["y_center"],
-                                kind='linear', fill_value="extrapolate")
-        L_main_y_common = interp_center(res_avg["x_common"])
-        plot_lorentzian_decomposition(
-            x_data=res_avg["x_data"],
-            y_data=res_avg["y_data"],
-            x_common=res_avg["x_common"],
-            L_main_y=1+lorentzian_peak(res_avg["x_common"], -res_avg["lorentzian_fit"]["center"]["h"], 0, res_avg["lorentzian_fit"]["center"]["gamma"]),
-            extra_lor_results=res_avg["extra_lorentzians_results"],
-            title=f"Lorentzian decomposition - {label} (average)",
-            invert_x=True,
-            window_title=f"Lorentzian decomposition - {label} (average)"
+    # ---- Plot the group average raw data with envelope / decomposition ----
+    for grp in groups:
+        label = grp["label"]
+        if label not in analysis_results:
+            continue
+        grp_data = analysis_results[label]
+
+        # Only proceed if we have the necessary mean raw values
+        if not all(k in grp_data for k in ("max_vals", "sat_trans_hz", "bf1")):
+            continue
+
+        # Build the ppm axis for the group mean
+        mean_max_vals = grp_data["max_vals"]
+        mean_sat_hz = grp_data["sat_trans_hz"]
+        bf1 = grp_data["bf1"]
+        mean_zero_ppm = [sat / bf1 for sat in mean_sat_hz]
+
+        # Run the same fitting routine on the mean curve
+        use_extra_lor = config.get("use_extra_lorentzians", False)
+        avg_res = process_zspectrum_and_integrals(
+            mean_max_vals, mean_zero_ppm,
+            use_extra_lorentzians=use_extra_lor
         )
-    else:
-        plot_data(
-            x=res_avg["spline_fit_results"]["x"],
-            y=res_avg["spline_fit_results"]["y"],
-            x_fit=res_avg["spline_fit_results"]["x_fit"],
-            y_fit=res_avg["spline_fit_results"]["y_fit"],
-            y_std_data=analysis_results[label].get("sd_max_vals"),
-            title=label, invert_x=True,
-            add_lorentz=True,
-            lorentzian_envelope_results=res_avg["lorentzian_envelope_results"],
-            add_sigmoid=True,
-            sigmoidal_envelope_results=res_avg["sigmoidal_envelope_results"],
-            diff_x=res_avg["diff_x"], diff_y=res_avg["diff_y"],
-            diff_label="Lorentzian envelope - Spline fit",
-            visibility=config.get("plot_visibility", get_default_visibility())
-        )
+        # Optionally store for later use
+        grp_data["average_fit"] = avg_res
+
+        # ---- Choose which plot to draw ----
+        if use_extra_lor and avg_res.get("lorentzian_fit") is not None:
+            lfit = avg_res["lorentzian_fit"]
+            # Interpolate the main Lorentzian onto the common grid
+            interp_center = interp1d(
+                lfit["x"], lfit["y_center"],
+                kind='linear', fill_value="extrapolate"
+            )
+            L_main_y_common = interp_center(avg_res["x_common"])
+
+            plot_lorentzian_decomposition(
+                x_data=avg_res["x_data"],
+                y_data=avg_res["y_data"],
+                x_common=avg_res["x_common"],
+                L_main_y=1 + lorentzian_peak(
+                    avg_res["x_common"],
+                    -lfit["center"]["h"],
+                    0,
+                    lfit["center"]["gamma"]
+                ),
+                extra_lor_results=lfit["extra"],
+                title=f"Lorentzian decomposition - {label} (average)",
+                invert_x=True,
+                window_title=f"Lorentzian decomposition - {label} (average)"
+            )
+        else:
+            plot_data(
+                x=avg_res["spline_fit_results"]["x"],
+                y=avg_res["spline_fit_results"]["y"],
+                x_fit=avg_res["spline_fit_results"]["x_fit"],
+                y_fit=avg_res["spline_fit_results"]["y_fit"],
+                y_std_data=grp_data.get("sd_max_vals"),   # error bars from replicate SD
+                title=label, invert_x=True,
+                add_lorentz=True,
+                lorentzian_envelope_results=avg_res["lorentzian_envelope_results"],
+                add_sigmoid=True,
+                sigmoidal_envelope_results=avg_res["sigmoidal_envelope_results"],
+                diff_x=avg_res["diff_x"], diff_y=avg_res["diff_y"],
+                diff_label="Lorentzian envelope - Spline fit",
+                visibility=config.get("plot_visibility", get_default_visibility())
+            )
 
     # --- Saving ---
     analysis_results["__script_version__"] = get_git_hash(short=True)
