@@ -1594,25 +1594,19 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         analysis_results = cached
 
         # ------------------------------------------------------------
-        # 1. Re‑plot Z‑spettri per i gruppi (media)
+        # 1. Plot group average difference curves (da cache)
         # ------------------------------------------------------------
         for grp in groups:
             label = grp["label"]
-            z = analysis_results.get(label, {})
-            if "spline_fit_results" in z and z["spline_fit_results"].get("fit_successful"):
-                fit = z["spline_fit_results"]
-                plot_data(
-                    fit["x"], fit["y"], fit["x_fit"], fit["y_fit"],
-                    y_std_data=z.get("sd_max_vals"),
-                    title=label, invert_x=True,
-                    add_lorentz=True, lorentzian_envelope_results=z.get("lorentzian_envelope_results"),
-                    add_sigmoid=True, sigmoidal_envelope_results=z.get("sigmoidal_envelope_results"),
-                    diff_x=z.get("diff_x"), diff_y=z.get("diff_y"),
-                    diff_label="Lorentzian envelope - Spline fit",
+            grp_data = analysis_results.get(label, {})
+            if grp_data:   # any data at all – plot_group_difference will handle missing keys gracefully
+                plot_group_difference(
+                    group_label=label,
+                    group_data=grp_data,
                     visibility=config.get("plot_visibility", get_default_visibility()),
-                    window_title=f"Group {label} spline fit (da cache)"
+                    window_title=f"Group {label} – Averaged Difference (da cache)"
                 )
-
+                
         # ------------------------------------------------------------
         # 2. Re‑plot Z‑spettri per le singole cartelle
         # ------------------------------------------------------------
