@@ -14,7 +14,7 @@ run_analysis(config_name, config)
 │       │   ├── Per ogni cartella (dalle chiavi salvate):
 │       │   │   └── plot_data( ... )                     # Z‑spettro singola cartella
 │       │   │
-│       │   ├── _compute_group_stats(keys, analysis_results)  (era già salvata, ma qui non serve; usa group_stats pre‑calcolate)
+│       │   ├── _compute_group_stats(keys, analysis_results)  (pre‑calcolate)
 │       │   │
 │       │   ├── Per ogni gruppo:
 │       │   │   └── plot_group_folder_integrals( ... )   # barre cartelle + media
@@ -27,58 +27,66 @@ run_analysis(config_name, config)
     │
     ├── Per ogni gruppo (grp_idx, grp):
     │   │
-    │   ├── Per ogni cartella (folder):
-    │   │   ├── extract_parameters(folder)
-    │   │   │   └── parameter_extract(method, "PVM_SatTransFL")
-    │   │   │   └── parameter_extract(method, "PVM_FrqWorkOffset")
+    │   ├── SE il gruppo ha cartelle Bruker ("folders"):
     │   │   │
-    │   │   ├── load_spectra(folder)
-    │   │   │   └── ng.bruker.read, ng.bruker.guess_udic, uc_from_udic
+    │   │   ├── Per ogni cartella (folder):
+    │   │   │   ├── extract_parameters(folder)
+    │   │   │   │   └── parameter_extract(method, "PVM_SatTransFL")
+    │   │   │   │   └── parameter_extract(method, "PVM_FrqWorkOffset")
+    │   │   │   ├── load_spectra(folder)
+    │   │   │   │   └── ng.bruker.read, ng.bruker.guess_udic, uc_from_udic
+    │   │   │   ├── process_spectra(data, dic, n_exp)
+    │   │   │   │   └── per ogni esperimento:
+    │   │   │   │         remove_digital_filter, zf_size, em, fft, autops (acme)
+    │   │   │   ├── plot_spectra( ... )                   # spettri interattivi (CheckButtons)
+    │   │   │   ├── (se ppm mancanti) ask_user_for_ppm_range()
+    │   │   │   ├── ppm_to_index(uc, end_ppm) / ppm_to_index(uc, start_ppm)
+    │   │   │   ├── find_max_vals(spectra, start_idx, end_idx)
+    │   │   │   ├── normalize_max_vals(max_vals, global_max, global_min)
+    │   │   │   ├── correct_sat_frequencies(sat_trans_hz, max_indexes, work_offset_hz, uc, bf1)
+    │   │   │   ├── (ordina per ppm: sat_trans_hz, max_vals, ...)
+    │   │   │   ├── process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
+    │   │   │   │   ├── estimate_constrained_sigmoid( ... )
+    │   │   │   │   ├── constrained_sigmoid( ... )
+    │   │   │   │   ├── estimate_constrained_lorentzian( ... )
+    │   │   │   │   ├── constrained_lorentzian( ... )
+    │   │   │   │   ├── spline_fit(x, y, x_fit)  →  PchipInterpolator
+    │   │   │   │   └── compute_regions_integrals(x_common, diff_y)
+    │   │   │   ├── analysis_results[folder_name_short].update({ ... })
+    │   │   │   └── plot_data( ... )                     # Z‑spettro della singola cartella
     │   │   │
-    │   │   ├── process_spectra(data, dic, n_exp)
-    │   │   │   └── per ogni esperimento:
-    │   │   │         remove_digital_filter, zf_size, em, fft, autops (acme)
+    │   │   │   (Fine loop cartelle)
     │   │   │
-    │   │   ├── plot_spectra( ... )                       # spettri interattivi (CheckButtons)
-    │   │   │     (funzione interna definita due volte, usa la seconda)
-    │   │   │
-    │   │   ├── (se ppm mancanti) ask_user_for_ppm_range()
-    │   │   ├── ppm_to_index(uc, end_ppm) / ppm_to_index(uc, start_ppm)
-    │   │   │
-    │   │   ├── find_max_vals(spectra, start_idx, end_idx)
-    │   │   │   └── Per ogni spettro
-    │   │   │       └── find_maximum(spec, start, end)  per ogni spettro
-    │   │   │
-    │   │   ├── normalize_max_vals(max_vals, global_max, global_min)
-    │   │   ├── correct_sat_frequencies(sat_trans_hz, max_indexes, work_offset_hz, uc, bf1)
-    │   │   │
-    │   │   ├── process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
-    │   │   │   ├── estimate_constrained_sigmoid( ... )
-    │   │   │   │     └── solve_LR_for_tau (chiama minimize con vincoli)
-    │   │   │   ├── constrained_sigmoid(x_common, L,R,tau)
-    │   │   │   ├── estimate_constrained_lorentzian( ... )
-    │   │   │   │     └── minimize_scalar annidati
-    │   │   │   ├── constrained_lorentzian(x_common, A,gamma, y_min)
-    │   │   │   ├── spline_fit(x, y, x_fit)
-    │   │   │   │     └── PchipInterpolator
-    │   │   │   └── compute_regions_integrals(x_common, diff_y)
-    │   │   │
-    │   │   ├── analysis_results[folder_name_short].update({ ... })   # salva i risultati chiave
-    │   │   │
-    │   │   └── plot_data( ... )                           # Z‑spettro della singola cartella
+    │   │   └── (Elaborazione media del gruppo – vedi sotto)
     │   │
-    │   │   (Fine loop cartelle)
+    │   ├── SE il gruppo ha file di testo ("files"):
+    │   │   │
+    │   │   ├── Per ogni file:
+    │   │   │   ├── np.loadtxt(file) → sat_trans_hz, max_vals
+    │   │   │   ├── normalize_max_vals(max_vals, ...)
+    │   │   │   ├── zero_corrected_ppm = sat_trans_hz / BF1 (dal config)
+    │   │   │   ├── (ordina per ppm)
+    │   │   │   ├── process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
+    │   │   │   │   └── (stessa sequenza di fit di cui sopra)
+    │   │   │   ├── analysis_results[key].update({ ... })
+    │   │   │   └── plot_data( ... )                     # Z‑spettro del file
+    │   │   │
+    │   │   │   (Fine loop file)
+    │   │   │
+    │   │   └── (Elaborazione media del gruppo – vedi sotto)
     │   │
-    │   └── Calcolo media del gruppo (se ci sono dati):
-    │       ├── media di max_indexes, max_vals, sat_trans_hz (con np.mean)
-    │       ├── analysis_results[label] = { statistiche, work_offset, uc, bf1 }
-    │       ├── process_zspectrum_and_integrals(mean_max_vals, mean_zero_corrected_ppm)  (come sopra)
-    │       └── plot_data( ... )                           # Z‑spettro medio del gruppo
-    │
+    │   └── (Elaborazione media del gruppo – per entrambi i tipi di dato):
+    │       ├── Se ci sono dati (group_raw[grp_idx] non vuoto):
+    │       │   ├── collect_replicate_differences(keys, analysis_results)
+    │       │   │     └── per ogni replica: ricostruisce differenza (Lor – spline)
+    │       │   │         su griglia comune → media e SEM
+    │       │   ├── Salva risultati nel gruppo: mean_diff_y, sem_diff_y, x_common, integrals, ecc.
+    │       │   └── plot_group_difference( ... )        # curva media differenza ± SEM
+    │       │
     │   (Fine loop gruppi)
     │
-    ├── Per ogni gruppo (grp_idx, grp):
-    │   └── _compute_group_stats(keys, analysis_results)   per ogni gruppo
+    ├── Per ogni gruppo:
+    │   └── _compute_group_stats(keys, analysis_results)   # media e std degli integrali per cartella/file
     │
     ├── _compute_pvalues(ref_keys, sample_keys, analysis_results)  se c'è riferimento
     │     └── stats.ttest_ind  (o mannwhitneyu)
