@@ -948,13 +948,13 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
     """
     def model(params, x):
         h_c, gamma = params[0], params[1]
-        result = baseline - lorentzian_peak(x, h_c, 0, gamma)
+        result = baseline - lorentzian_peak(x, h_c, 0, gamma)   # main Lorentzian dip
         idx = 2
         for _ in region_list:
             h = params[idx]
             x0 = params[idx+1]
             w = params[idx+2]
-            result += lorentzian_peak(x, h, x0, w) if w > 0 else 0
+            result -= lorentzian_peak(x, h, x0, w) if w > 0 else 0  # <-- subtraction of positive Lorentzians
             idx += 3
         return result
     
@@ -998,13 +998,13 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
     
     h0_c, gamma0 = center_init
     params_init = [h0_c, gamma0]        # altezza, larghezza della lorentziana centrale
-    bounds = [(0, None), (0.05, 2.0)]   # altezza >= 0, larghezza > 0
+    bounds = [(0.0, None), (0.05, 2.0)]   # altezza >= 0, larghezza > 0
     
     region_list = list(regions.items())
     for reg_name, (start, end) in region_list:
         x0_init = (start + end) / 2.0
         params_init += [0.0, x0_init, fixed_width]  # altezza, posizione e larghezza della lorentziana
-        bounds += [(None, 0.0), (start, end), (average_separation(x), None)]    # altezza, posizione e larghezza della lorentziana (la minima larghezza è la separazione media tra i punti x)
+        bounds += [(0.0, None), (start, end), (average_separation(x), None)]    # altezza, posizione e larghezza della lorentziana (la minima larghezza è la separazione media tra i punti x)
     
     res = minimize(mse, params_init, bounds=bounds, method='L-BFGS-B')
     if not res.success:
@@ -1030,7 +1030,7 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
     y_extra_sum = np.zeros_like(x)
     for r in extra_results.values():
         y_extra_sum += r['y']
-    y_total = y_center + y_extra_sum
+    y_total = y_center - y_extra_sum
     
     return {
         'center': {'h': h_c_opt, 'gamma': gamma_opt, 'baseline': baseline},
@@ -1078,8 +1078,8 @@ def plot_lorentzian_decomposition(
         ax.plot(x_common, y_peak, '--', alpha=0.5, label=f"{reg} (h={res['h']:.2f})")
     
     # Totale
-    total_y = L_main_y + sum_extra
-    ax.plot(x_common, total_y, 'r-', linewidth=2, label='Total (main + extra)')
+    total_y = L_main_y - sum_extra
+    ax.plot(x_common, total_y, 'r-', linewidth=2, label='Total (main + extra dips)')
     
     if invert_x:
         ax.invert_xaxis()
