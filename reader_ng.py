@@ -1190,7 +1190,12 @@ def plot_lorentzian_decomposition(
 # ----------------------------------------------------------------------
 # Process a single z-spectrum to get integrals
 # ----------------------------------------------------------------------
-def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lorentzians=False) -> Dict[str, Any]:
+def process_zspectrum_and_integrals(
+        max_vals, 
+        zero_corrected_ppm, 
+        use_extra_lorentzians=False,
+        config=None
+    ) -> Dict[str, Any]:
 
     """Fit envelopes, spline, lorentzians, compute difference and integrals for one dataset."""
     
@@ -1266,7 +1271,8 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm, use_extra_lore
             regions=METABOLITE_REGIONS,
             center_init=center_init,
             baseline=1.0,
-            fixed_width=0.2
+            fixed_width=0.2,
+            central_bounds=config.get("central_bounds", None) if config else None
         )
         lorentzian_fit = fit_res                       # <-- whole result
         extra_lor_extra = fit_res.get("extra")         # <-- dict of extra Lorentzians
@@ -2237,7 +2243,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 # --- Calculate integrals for this individual folder ---
                 res = process_zspectrum_and_integrals(
                     max_vals, zero_corrected_ppm,
-                    use_extra_lorentzians=use_extra_lor
+                    use_extra_lorentzians=use_extra_lor,
+                    config=config
                 )
                 analysis_results[folder_name_short].update(res)
             
@@ -2523,7 +2530,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         use_extra_lor = config.get("use_extra_lorentzians", False)
         avg_res = process_zspectrum_and_integrals(
             mean_max_vals, mean_zero_ppm,
-            use_extra_lorentzians=use_extra_lor
+            use_extra_lorentzians=use_extra_lor,
+            config=config
         )
         # Optionally store for later use
         grp_data["average_fit"] = avg_res
