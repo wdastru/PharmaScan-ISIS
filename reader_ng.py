@@ -34,13 +34,13 @@ import subprocess
 
 print(f"Using nmrglue version: {ng.__version__}")
 
-DEFAULT_METABOLITE_REGIONS: dict[str, List[float]] = {
-    "Glycolytic PMEs": [5.5, 9.0],
-    "Pi": [4.3, 5.3],
-    "PEP 1,3 BPG": [1.0, 4.3],
-    "GAMMA-ATP": [-3.5, -1.3],
-    "ALPHA,BETA-ADP": [-6, -3],
-    "ALPHA-ATP": [-9, -6]
+DEFAULT_METABOLITE_REGIONS: dict[str, dict[str, list[float]]] = {
+    "Glycolytic PMEs":   {"ppm": [5.5, 9.0]},
+    "Pi":                {"ppm": [4.3, 5.3]},
+    "PEP 1,3 BPG":       {"ppm": [1.0, 4.3]},
+    "GAMMA-ATP":         {"ppm": [-3.5, -1.3]},
+    "ALPHA,BETA-ADP":    {"ppm": [-6, -3]},
+    "ALPHA-ATP":         {"ppm": [-9, -6]},
 }
 METABOLITE_REGIONS = DEFAULT_METABOLITE_REGIONS.copy()
 CACHE_VERSION = 2 
@@ -170,6 +170,14 @@ def load_config(name: str) -> Dict[str, Any]:
         with open(config_path, "r") as f:
             config = json.load(f)
 
+        if "metabolite_regions" in config:
+            first = next(iter(config["metabolite_regions"].values()), None)
+            if isinstance(first, list):
+                # Old format: convert to new dict
+                for name, bounds in config["metabolite_regions"].items():
+                    config["metabolite_regions"][name] = {"ppm": bounds}
+                print("Metabolite regions auto‑migrated to new format.")
+
         # --- Migration from old format ---
         if "groups" not in config:
             with_ref = config.get("with_ref", False)
@@ -273,6 +281,12 @@ def select_or_create_config() -> Tuple[str, Dict[str, Any]]:
 # ----------------------------------------------------------------------
 # Utility functions
 # ----------------------------------------------------------------------
+def _region_ppm(region_entry):
+    """Return [start, end] ppm for a region, supporting old list format."""
+    if isinstance(region_entry, list):
+        return region_entry
+    return region_entry["ppm"]
+    
 def get_git_hash(short=True):
     """
     Return 'abc1234' for a clean working tree, or 'abc1234-dirty'
@@ -528,7 +542,8 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
         Dizionario con chiavi i nomi delle regioni e valori gli integrali calcolati.
     """
     integrals = {}
-    for region, (start, end) in METABOLITE_REGIONS.items():
+    for region, entry in METABOLITE_REGIONS.items():
+        start, end = _region_ppm(entry)
         # Trova i punti all'interno dell'intervallo
         mask = (x_fit >= start) & (x_fit <= end)
         if not np.any(mask):
@@ -623,7 +638,8 @@ def plot_data(
         ax = plt.gca()
         cmap = plt.get_cmap('tab10')
         colors = [cmap(i % 10) for i in range(len(METABOLITE_REGIONS))]
-        for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
+        for idx, (region_name, entry) in enumerate(METABOLITE_REGIONS.items()):
+            start, end = _region_ppm(entry)
             ax.axvspan(start, end, facecolor=colors[idx], alpha=0.25, edgecolor='none', label=region_name)
     
     if invert_x:
@@ -997,15 +1013,30 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
     y = np.asarray(y_data)
     
     h0_c, gamma0 = center_init
-    params_init = [h0_c, gamma0]        # altezza, larghezza della lorentziana centrale
-    bounds = [(0.0, None), (0.05, 2.0)]   # altezza >= 0, larghezza > 0
+    params_init = [h0_c, gamma0]
+    bounds = [(0.0, None), (0.05, 2.0)]
     
     region_list = list(regions.items())
-    for reg_name, (start, end) in region_list:
+    for reg_name, entry in region_list:
+        start, end = _region_ppm(entry)
         x0_init = (start + end) / 2.0
-        params_init += [0.0, x0_init, fixed_width]  # altezza, posizione e larghezza della lorentziana
-        bounds += [(0.0, None), (start, end), (average_separation(x), None)]    # altezza, posizione e larghezza della lorentziana (la minima larghezza è la separazione media tra i punti x)
-    
+
+        # Height bounds
+        h_min, h_max = 0.0, None
+        if isinstance(entry, dict) and "height" in entry:
+            h_min, h_max = entry["height"]
+
+        # Width bounds
+        w_min = average_separation(x)
+        w_max = None
+        if isinstance(entry, dict) and "width" in entry:
+            user_w_min, user_w_max = entry["width"]
+            w_min = max(user_w_min, w_min) if user_w_min is not None else w_min
+            w_max = user_w_max
+
+        params_init += [0.0, x0_init, fixed_width]
+        bounds += [(h_min, h_max), (start, end), (w_min, w_max)]
+
     res = minimize(mse, params_init, bounds=bounds, method='L-BFGS-B')
     if not res.success:
         print(colored("Warning: global lorentzian fit did not converge", "yellow"))
@@ -1016,7 +1047,8 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
     extra_results = {}
     integrals_extra = {}
     idx = 2
-    for reg_name, (start, end) in region_list:
+    for reg_name, entry in region_list:
+        start, end = _region_ppm(entry)
         h_opt = res.x[idx]
         x0_opt = res.x[idx+1]
         w_opt = res.x[idx+2]
@@ -1082,7 +1114,8 @@ def plot_lorentzian_decomposition(
     
     # Metabolite regions
     cmap = plt.get_cmap('tab10')
-    for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
+    for idx, (region_name, entry) in enumerate(METABOLITE_REGIONS.items()):
+        start, end = _region_ppm(entry)
         ax.axvspan(start, end, facecolor=cmap(idx % 10), alpha=0.25,
                    edgecolor='none', label=region_name)
     
@@ -1500,7 +1533,8 @@ def plot_group_difference(
     # Metabolite regions
     if visibility.get("regions", True):
         cmap = plt.get_cmap('tab10')
-        for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
+        for idx, (region_name, entry) in enumerate(METABOLITE_REGIONS.items()):
+            start, end = _region_ppm(entry)
             ax.axvspan(start, end, facecolor=cmap(idx % 10), alpha=0.25,
                        edgecolor='none', label=region_name)
 
@@ -1817,6 +1851,17 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
     if "metabolite_regions" not in config_data:
         config_data["metabolite_regions"] = DEFAULT_METABOLITE_REGIONS
         modified = True
+    else:
+        # Ensure all default regions are present, and that they are dicts
+        for name, def_entry in DEFAULT_METABOLITE_REGIONS.items():
+            current = config_data["metabolite_regions"].get(name)
+            if current is None:
+                config_data["metabolite_regions"][name] = def_entry
+                modified = True
+            elif isinstance(current, list):
+                # Old format – auto‑migrate
+                config_data["metabolite_regions"][name] = {"ppm": current}
+                modified = True
 
     if "use_extra_lorentzians" not in config_data:
         config_data["use_extra_lorentzians"] = False
