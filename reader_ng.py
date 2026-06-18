@@ -2477,11 +2477,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     # ---- Save cache and show multigroup bar plot ----
     save_cache(config_name, config, analysis_results)
     plot_multigroup_integrals(group_stats, p_values, groups,
-                              visibility=config.get("plot_visibility", get_default_visibility()),
-                              title="Integrali per regione (ricalcolati)",
-                              window_title="Integrali per regione (ricalcolati)",
-                              integrals_key="integrals"
-    )
+                                visibility=config.get("plot_visibility", get_default_visibility()),
+                                title="Spline - integrali per regione (ricalcolati)",
+                                window_title="Spline - integrali per regione (ricalcolati)",
+                                integrals_key="integrals")
+    if use_extra_lor:
+        plot_multigroup_integrals(group_stats, p_values, groups,
+            visibility=config.get("plot_visibility", get_default_visibility()),
+            title="Lorentzian - integrali per regione (ricalcolati)",
+            window_title="Lorentzian - integrali per regione (ricalcolati)",
+            integrals_key="integrals_extra"
+        )
 
     # ---- Plot per gruppo con cartelle singole ----
     for grp_idx, grp in enumerate(groups):
