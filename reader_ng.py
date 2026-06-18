@@ -42,6 +42,11 @@ DEFAULT_METABOLITE_REGIONS: dict[str, dict[str, list[float]]] = {
     "ALPHA,BETA-ADP":    {"ppm": [-6, -3]},
     "ALPHA-ATP":         {"ppm": [-9, -6]},
 }
+DEFAULT_CENTRAL_BOUNDS = {
+    "ppm":    [-0.5, 0.5],
+    "width":  [0.05, 2.0],      # gamma (HWHM)
+    "height": [0.0, 1.0]
+}
 METABOLITE_REGIONS = DEFAULT_METABOLITE_REGIONS.copy()
 CACHE_VERSION = 2 
 CACHE_DIR = Path(__file__).parent / "cache"
@@ -954,30 +959,29 @@ def lorentzian_peak(x, h, x0, w):
     """
     return h * w**2 / (w**2 + (x - x0)**2)
 
-def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, fixed_width=0.2):
+def fit_global_lorentzians(
+        x_data, 
+        y_data, 
+        regions, 
+        center_init,        # now (h_c, gamma, ppm_c) – or 2‑tuple with ppm_c=0
+        baseline=1.0, 
+        fixed_width=0.2, 
+        central_bounds=None
+    ):
     """
-    Fit simultaneo:
-      - saturazione diretta (centro=0) -> (h_center, gamma)
+    Fit simultaneo di:
+      - saturazione diretta (centro variabile) → (h_center, gamma, ppm_center)
       - una lorentziana per ogni regione (h, x0, w)
     
-    Returns dict con 'center', 'extra', 'integrals_extra', 'y_total', 'y_center', etc.
+    Parametri
+    ---------
+    center_init : tuple di 2 o 3 float
+        Guess iniziali per (h_c, gamma, ppm_c). Se fornito come 2‑tupla, ppm_c=0.
+    central_bounds : dict o None
+        Dizionario con chiavi 'ppm', 'width', 'height', ciascuna [min, max].
+        Se None, usa DEFAULT_CENTRAL_BOUNDS.
     """
-    def model(params, x):
-        h_c, gamma = params[0], params[1]
-        result = baseline - lorentzian_peak(x, h_c, 0, gamma)   # main Lorentzian dip
-        idx = 2
-        for _ in region_list:
-            h = params[idx]
-            x0 = params[idx+1]
-            w = params[idx+2]
-            result -= lorentzian_peak(x, h, x0, w) if w > 0 else 0  # <-- subtraction of positive Lorentzians
-            idx += 3
-        return result
-    
-    def mse(params):
-        y_pred = model(params, x)
-        return np.sum((y - y_pred)**2)
-    
+
     def average_separation(values):
         """
         Returns the average difference between successive elements
@@ -1009,63 +1013,116 @@ def fit_global_lorentzians(x_data, y_data, regions, center_init, baseline=1.0, f
         total_range = sorted_vals[-1] - sorted_vals[0]
         return total_range / (len(sorted_vals) - 1)
 
+    # ---------- Gestione central_bounds ----------
+    if central_bounds is None:
+        central_bounds = DEFAULT_CENTRAL_BOUNDS.copy()
+    else:
+        # Mantieni solo le chiavi esistenti; quelle mancanti → [None, None] (senza vincolo)
+        central_bounds = {
+            "ppm":   central_bounds.get("ppm",   [None, None]),
+            "width": central_bounds.get("width", [None, None]),
+            "height":central_bounds.get("height",[None, None])
+        }
+
+    ppm_lim   = central_bounds["ppm"]
+    width_lim = central_bounds["width"]
+    height_lim = central_bounds["height"]
+
     x = np.asarray(x_data)
     y = np.asarray(y_data)
-    
-    h0_c, gamma0 = center_init
-    params_init = [h0_c, gamma0]
-    bounds = [(0.0, None), (0.05, 2.0)]
-    
+
+    # ---------- Inizializzazione parametri centrali ----------
+    if len(center_init) == 2:
+        h0_c, gamma0 = center_init
+        ppm0_c = 0.0
+    else:
+        h0_c, gamma0, ppm0_c = center_init
+
+    params_init = [h0_c, gamma0, ppm0_c]
+    bounds = [
+        (height_lim[0], height_lim[1]),
+        (width_lim[0], width_lim[1]),
+        (ppm_lim[0], ppm_lim[1])
+    ]
+
     region_list = list(regions.items())
+
+    # ---------- Aggiunta parametri per le regioni ----------
     for reg_name, entry in region_list:
         start, end = _region_ppm(entry)
         x0_init = (start + end) / 2.0
 
-        # Height bounds
+        # Altezza regione
         h_min, h_max = 0.0, None
         if isinstance(entry, dict) and "height" in entry:
             h_min, h_max = entry["height"]
 
-        # Width bounds
+        # Larghezza regione
         w_min = average_separation(x)
+
+        
         w_max = None
         if isinstance(entry, dict) and "width" in entry:
             user_w_min, user_w_max = entry["width"]
-            w_min = max(user_w_min, w_min) if user_w_min is not None else w_min
+            w_min = user_w_min if user_w_min is not None else w_min
             w_max = user_w_max
 
         params_init += [0.0, x0_init, fixed_width]
         bounds += [(h_min, h_max), (start, end), (w_min, w_max)]
 
+    # ---------- Modello e fit ----------
+    def model(params, x):
+        h_c, gamma, ppm_c = params[0], params[1], params[2]
+        result = baseline - lorentzian_peak(x, h_c, ppm_c, gamma)
+        idx = 3
+        for _ in region_list:
+            h = params[idx]
+            x0 = params[idx+1]
+            w = params[idx+2]
+            result -= lorentzian_peak(x, h, x0, w) if w > 0 else 0
+            idx += 3
+        return result
+
+    def mse(params):
+        y_pred = model(params, x)
+        return np.sum((y - y_pred)**2)
+
     res = minimize(mse, params_init, bounds=bounds, method='L-BFGS-B')
     if not res.success:
         print(colored("Warning: global lorentzian fit did not converge", "yellow"))
-    
-    h_c_opt, gamma_opt = res.x[0], res.x[1]
-    y_center = baseline - lorentzian_peak(x, h_c_opt, 0, gamma_opt)
-    
+
+    # ---------- Estrai risultati ----------
+    h_c_opt, gamma_opt, ppm_c_opt = res.x[0], res.x[1], res.x[2]
+    y_center = baseline - lorentzian_peak(x, h_c_opt, ppm_c_opt, gamma_opt)
+
     extra_results = {}
     integrals_extra = {}
-    idx = 2
+    idx = 3
     for reg_name, entry in region_list:
-        start, end = _region_ppm(entry)
         h_opt = res.x[idx]
         x0_opt = res.x[idx+1]
         w_opt = res.x[idx+2]
         integral = np.pi * h_opt * w_opt
         y_peak = lorentzian_peak(x, h_opt, x0_opt, w_opt)
-        extra_results[reg_name] = {'h': h_opt, 'x0': x0_opt, 'w': w_opt,
-                                   'integral': integral, 'y': y_peak}
+        extra_results[reg_name] = {
+            'h': h_opt, 'x0': x0_opt, 'w': w_opt,
+            'integral': integral, 'y': y_peak
+        }
         integrals_extra[reg_name] = integral
         idx += 3
-    
+
     y_extra_sum = np.zeros_like(x)
     for r in extra_results.values():
         y_extra_sum += r['y']
     y_total = y_center - y_extra_sum
-    
+
     return {
-        'center': {'h': h_c_opt, 'gamma': gamma_opt, 'baseline': baseline},
+        'center': {
+            'h': h_c_opt,
+            'gamma': gamma_opt,
+            'ppm': ppm_c_opt,
+            'baseline': baseline
+        },
         'extra': extra_results,
         'integrals_extra': integrals_extra,
         'y_center': y_center,
@@ -1847,6 +1904,17 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
         config_data["plot_visibility"] = default_vis
         modified = True
 
+    # ---------- Central Lorentzian bounds defaults ----------
+    if "central_bounds" not in config_data:
+        config_data["central_bounds"] = DEFAULT_CENTRAL_BOUNDS
+        modified = True
+    else:
+        # Merge missing keys from defaults
+        for k, v in DEFAULT_CENTRAL_BOUNDS.items():
+            if k not in config_data["central_bounds"]:
+                config_data["central_bounds"][k] = v
+                modified = True
+                
     # ---------- Metabolite regions defaults ----------
     if "metabolite_regions" not in config_data:
         config_data["metabolite_regions"] = DEFAULT_METABOLITE_REGIONS
