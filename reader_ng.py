@@ -220,6 +220,7 @@ def save_config(name: str, config: Dict[str, Any]) -> None:
             {
                 **grp, 
                 "folders": [str(p) for p in grp.get("folders", [])],
+                "topspin_folders": [str(p) for p in grp.get("topspin_folders", [])],
                 "files": [str(p) for p in grp.get("files", [])],
             } 
             for grp in to_save["groups"]
@@ -1458,15 +1459,21 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
             print(f"\n--- Group '{label}' ---")
             data_type = ask_choice(
                 "Data source type",
-                choices=["Bruker folders", "Text (x/y) files"],
+                choices=["Bruker folders", "TopSpin folders", "Text (x/y) files"],
                 default="Bruker folders"
             )
-            if data_type == "Bruker folders":
+            if data_type == "Bruker folders":   # Paravision folders
                 cnt = ask_int("Number of folders", min_val=1, default=1)
                 folders = []
                 for _ in range(cnt):
                     folders.append(select_experiment_folder())
-                return {"label": label, "is_reference": is_ref, "folders": folders, "files": []}
+                return {"label": label, "is_reference": is_ref, "folders": folders, "topspin_folders": [], "files": []}
+            elif data_type == "TopSpin folders":    # TopSpin folders
+                cnt = ask_int("Number of folders", min_val=1, default=1)
+                topspin_folders = []
+                for _ in range(cnt):
+                    topspin_folders.append(select_experiment_folder())
+                return {"label": label, "is_reference": is_ref, "folders": [], "topspin_folders": topspin_folders, "files": []}
             else:  # Text files
                 cnt = ask_int("Number of text files", min_val=1, default=1)
                 files = []
@@ -1474,7 +1481,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                 for _ in range(cnt):
                     files.append(select_text_file())
                     BF1_values.append(float(input("Enter BF1 value for this file (MHz): ")))
-                return {"label": label, "is_reference": is_ref, "folders": [], "files": files, "BF1": BF1_values}
+                return {"label": label, "is_reference": is_ref, "folders": [], "topspin_folders": [], "files": files, "BF1": BF1_values}
 
         if with_ref:
             ref_label = input("Label for reference group (default: reference): ").strip() or "reference"
@@ -1505,18 +1512,22 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
 
     # ---------- Fill missing data paths for any group ----------
     for grp in config_data["groups"]:
-        if not grp.get("folders") and not grp.get("files"):
+        if not grp.get("folders") and not grp.get("topspin_folders") and not grp.get("files"):
             # This group has no paths at all – prompt interactively
             print(f"\nGroup '{grp['label']}' has no data paths defined.")
             data_type = ask_choice(
                 f"Data source type for '{grp['label']}'",
-                choices=["Bruker folders", "Text (x/y) files"],
+                choices=["Bruker folders", "TopSpin folders", "Text (x/y) files"],
                 default="Bruker folders"
             )
             if data_type == "Bruker folders":
                 cnt = ask_int("Number of folders", min_val=1, default=1)
                 for _ in range(cnt):
                     grp.setdefault("folders", []).append(select_experiment_folder())
+            elif data_type == "TopSpin folders":
+                cnt = ask_int("Number of folders", min_val=1, default=1)
+                for _ in range(cnt):
+                    grp.setdefault("topspin_folders", []).append(select_experiment_folder())
             else:
                 cnt = ask_int("Number of text files", min_val=1, default=1)
                 for _ in range(cnt):
@@ -1530,7 +1541,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                 "Folders will be used for analysis.",
                 "yellow"
             ))
-        elif grp.get("files") and not grp.get("folders"):
+        elif grp.get("files") and not grp.get("folders") and not grp.get("topspin_folders"):
             if "BF1" not in grp or len(grp["BF1"]) != len(grp["files"]):
                 print(f"Group '{grp['label']}' has text files but missing or mismatched BF1 values.")
                 bf1_values = []
@@ -1693,8 +1704,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
         # Determine entry type for this group
         is_folder = bool(grp.get("folders"))
+        is_topspin_folder = bool(grp.get("topspin_folders"))
         is_file   = bool(grp.get("files"))
-        if is_folder and is_file:
+        if is_folder and is_file: # TODO: handle topspin folders if needed
             print(colored(
                 f"Warning: Group '{label}' has both folders and files. Only folders will be used.",
                 "yellow"
@@ -1703,6 +1715,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             entries = grp["folders"]
         elif is_folder:
             entries = grp["folders"]
+        elif is_topspin_folder:
+            entries = grp["topspin_folders"]
         elif is_file:
             entries = grp["files"]
         else:
