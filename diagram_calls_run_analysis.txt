@@ -9,10 +9,24 @@ run_analysis(config_name, config)
 │       │
 │       ├── SE CACHE E' VALIDA E USATA:
 │       │   ├── Per ogni gruppo:
-│       │   │   └── plot_data( ... )                     # Z‑spettro medio del gruppo
+│       │   │   └── plot_group_difference( ... )        # plot the difference curve Lorentzian−spline with SEM
 │       │   │
-│       │   ├── Per ogni cartella (dalle chiavi salvate):
-│       │   │   └── plot_data( ... )                     # Z‑spettro singola cartella
+│       │   ├── SE use_extra_lor è TRUE:
+│       │   │   ├── Per ogni gruppo: 
+│       │   │   │   └── Per ogni elemento: 
+│       │   │   │       └── plot_lorentzian_decomposition( ... )
+│       │   │   │
+│       │   │   └── Per ogni gruppo: 
+│       │   │       └── plot_lorentzian_decomposition( ... )
+│       │   │
+│       │   ├── Per ogni gruppo: 
+│       │   │   └── Per ogni elemento: 
+│       │   │       └── SE spline_fit_results
+│       │   │           └── plot_data( ... )
+│       │   │
+│       │   ├── Per ogni gruppo: 
+│       │   │   └── Per ogni elemento: 
+│       │   │       └── Read integrals and integrals_extra
 │       │   │
 │       │   ├── _compute_group_stats(keys, analysis_results)  (pre‑calcolate)
 │       │   │
