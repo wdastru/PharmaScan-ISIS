@@ -1045,6 +1045,13 @@ def fit_global_lorentzians(
         (ppm_lim[0], ppm_lim[1])
     ]
 
+    params_init = [center_init[0], center_init[1], 0.0]
+    bounds = [
+        (center_init[0], center_init[0]),
+        (center_init[1], center_init[1]),
+        (0.0, 0.0)
+    ]
+
     region_list = list(regions.items())
 
     # ---------- Aggiunta parametri per le regioni ----------
