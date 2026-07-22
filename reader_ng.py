@@ -421,6 +421,11 @@ def find_maximum(arr: np.ndarray,
     return float(max_val), int(max_idx)
 
 def parameter_extract(file_path: Path, PARAMETER: str = None) -> List[float]:
+
+    def _read_fq2list(filename):
+        with open(filename, encoding="utf-8") as f:
+            return [float(line.strip()) for line in f if line.strip()]
+
     if not file_path.exists():
         raise FileNotFoundError(colored(
             f"{file_path} not found.", "red", attrs=["bold"])
@@ -461,8 +466,9 @@ def parameter_extract(file_path: Path, PARAMETER: str = None) -> List[float]:
                     f"Attenzione: trovati {len(vals)} numeri nel blocco (attesi {N}), uso i primi {N}.", "yellow")
                 )
             return [float(v) for v in vals[:N]]
-    else: #TODO: implement the case when PARAMETER is None, if needed
-        pass
+    else:
+        return _read_fq2list(file_path)
+        
 
 def apply_phase(data: np.ndarray, p0: float, p1: float) -> np.ndarray:
     """
@@ -1446,13 +1452,19 @@ def load_spectra(folder: Path):
     bf1 = dic["acqus"]["BF1"]
     return dic, data, uc, ppm_axis, n_exp, bf1
 
-def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
+def process_spectra(data: np.ndarray, dic: dict, n_exp: int, lb: float = 0.005):
+
+    def _next_power_of_2(n):
+        if n < 1:
+            return 1
+        return 1 << (n - 1).bit_length()
+    
     spectra: dict = {}
     for exp_idx in range(n_exp):
         fid = data[exp_idx, :]
         fid = ng.bruker.remove_digital_filter(dic, data=fid)
-        fid_zf = ng.proc_base.zf_size(fid, size=2048)
-        fid_apod = ng.proc_base.em(fid_zf, lb=0.005)
+        fid_zf = ng.proc_base.zf_size(fid, size=_next_power_of_2(len(fid)))
+        fid_apod = ng.proc_base.em(fid_zf, lb)
         spectrum = ng.proc_base.fft(fid_apod)
         spectrum_phased = ng.proc_autophase.autops(spectrum, fn="acme")
         spectrum_phased = spectrum_phased[::-1]
