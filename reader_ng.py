@@ -766,29 +766,6 @@ def find_max_vals(spectra, start_idx, end_idx):
     
     return max_vals, max_indexes, global_max, global_min
 
-def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
-    while True:
-        try:
-            start_prompt = "Enter the minimum ppm (start)"
-            end_prompt = "Enter the maximum ppm (end)"
-            if default_start is not None:
-                start_prompt += f" (default {default_start})"
-            if default_end is not None:
-                end_prompt += f" (default {default_end})"
-            start_input = input(f"{start_prompt}: ").strip()
-            end_input = input(f"{end_prompt}: ").strip()
-            start_ppm = float(start_input) if start_input else default_start
-            end_ppm = float(end_input) if end_input else default_end
-            if start_ppm is None or end_ppm is None:
-                print("Inserire entrambi i valori.")
-                continue
-            if end_ppm <= start_ppm:
-                print("end deve essere maggiore di start.")
-                continue
-            return start_ppm, end_ppm
-        except ValueError:
-            print("Inserire numeri validi.")
-
 def correct_sat_frequencies(sat_trans_hz, max_indexes, work_offset_hz, uc, bf1):
     sat_trans_f1_ppm = [0.0] * len(sat_trans_hz)
     for i, (st_hz, idx) in enumerate(zip(sat_trans_hz, max_indexes)):
@@ -866,6 +843,29 @@ def ask_choice(prompt: str, choices: List[str], default: Optional[str] = None) -
         except ValueError:
             pass
         print("Invalid choice.")
+
+def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
+    while True:
+        try:
+            start_prompt = "Enter the minimum ppm (start)"
+            end_prompt = "Enter the maximum ppm (end)"
+            if default_start is not None:
+                start_prompt += f" (default {default_start})"
+            if default_end is not None:
+                end_prompt += f" (default {default_end})"
+
+            start_ppm = ask_float(start_prompt, default=default_start)
+            end_ppm = ask_float(end_prompt, default=default_end)
+            
+            if start_ppm is None or end_ppm is None:
+                print("Inserire entrambi i valori.")
+                continue
+            if end_ppm <= start_ppm:
+                print("end deve essere maggiore di start.")
+                continue
+            return start_ppm, end_ppm
+        except ValueError:
+            print("Inserire numeri validi.")
 
 # ----------------------------------------------------------------------
 # Envelope fitting functions (unchanged)
