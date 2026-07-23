@@ -1470,13 +1470,14 @@ def load_spectra(folder: Path):
     bf1 = dic["acqus"]["BF1"]
     return dic, data, uc, ppm_axis, n_exp, bf1
 
-def process_spectra(data: np.ndarray, dic: dict, n_exp: int, lb: float = 0.005):
+def process_spectra(data: np.ndarray, dic: dict, n_exp: int, lb_Hz: float = 0.005):
 
     def _next_power_of_2(n):
         if n < 1:
             return 1
         return 1 << (n - 1).bit_length()
-    
+
+    lb = lb_Hz / dic.copy().get("acqus", {}).get("SW_h", 1.0)
     spectra: dict = {}
     for exp_idx in range(n_exp):
         fid = data[exp_idx, :]
@@ -1618,9 +1619,8 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
     #  because we may need a spectrum to show. The flag is set here.)
 
     # ---------- lb handling ----------
-    if config_data.get("lb") is None:
-        config_data["lb"] = ask_float("Enter line broadening (lb) in Hz", default=0.005)
-        # TODO: trasformare lb da punti ad Hz
+    if config_data.get("lb_Hz") is None:
+        config_data["lb_Hz"] = ask_float("Enter line broadening (lb) in Hz", default=0.005)
         modified = True
 
     # ---------- Plot visibility defaults ----------
@@ -1655,7 +1655,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     plt.ion()
 
     groups = config["groups"]
-    lb = config["lb"]
+    lb_Hz = config["lb_Hz"]
     start_ppm = config.get("start_ppm")
     end_ppm = config.get("end_ppm")
     ppm_missing = config.get("ppm_missing", False)
@@ -1821,7 +1821,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     group_meta[grp_idx]["uc"] = uc
                     group_meta[grp_idx]["bf1"] = bf1
 
-                spectra = process_spectra(data, dic, n_exp, lb=lb)
+                spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
                 fig = plot_spectra(
                     title=f"{label} - {folder_name_short}",
                     spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
@@ -1928,7 +1928,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     group_meta[grp_idx]["uc"] = uc
                     group_meta[grp_idx]["bf1"] = bf1
 
-                spectra = process_spectra(data, dic, n_exp, lb=lb)
+                spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
                 fig = plot_spectra(
                     title=f"{label} - {folder_name_short}",
                     spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
