@@ -834,6 +834,24 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
         except ValueError:
             print("Inserire un numero intero.")
 
+def ask_float(prompt: str, min_val: float = None, max_val: float = None, default: Optional[float] = None) -> float:
+    default_prompt = f" (default {default})" if default is not None else ""
+    while True:
+        answer = input(f"{prompt}{default_prompt}: ").strip()
+        if not answer and default is not None:
+            return default
+        try:
+            value = float(answer)
+            if min_val is not None and value < min_val:
+                print(f"Valore deve essere >= {min_val}")
+                continue
+            if max_val is not None and value > max_val:
+                print(f"Valore deve essere <= {max_val}")
+                continue
+            return value
+        except ValueError:
+            print("Inserire un numero.")
+
 def ask_choice(prompt: str, choices: List[str], default: Optional[str] = None) -> str:
     for i, c in enumerate(choices, 1):
         print(f"  {i}. {c}")
@@ -1599,6 +1617,12 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
     # (If ppm_missing, the actual prompting occurs later during analysis,
     #  because we may need a spectrum to show. The flag is set here.)
 
+    # ---------- lb handling ----------
+    if config_data.get("lb") is None:
+        config_data["lb"] = ask_float("Enter line broadening (lb) in Hz", default=0.005)
+        # TODO: trasformare lb da punti ad Hz
+        modified = True
+
     # ---------- Plot visibility defaults ----------
     default_vis = get_default_visibility()
     if "plot_visibility" in config_data:
@@ -1631,6 +1655,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     plt.ion()
 
     groups = config["groups"]
+    lb = config["lb"]
     start_ppm = config.get("start_ppm")
     end_ppm = config.get("end_ppm")
     ppm_missing = config.get("ppm_missing", False)
@@ -1796,7 +1821,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     group_meta[grp_idx]["uc"] = uc
                     group_meta[grp_idx]["bf1"] = bf1
 
-                spectra = process_spectra(data, dic, n_exp)
+                spectra = process_spectra(data, dic, n_exp, lb=lb)
                 fig = plot_spectra(
                     title=f"{label} - {folder_name_short}",
                     spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
@@ -1903,7 +1928,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     group_meta[grp_idx]["uc"] = uc
                     group_meta[grp_idx]["bf1"] = bf1
 
-                spectra = process_spectra(data, dic, n_exp)
+                spectra = process_spectra(data, dic, n_exp, lb=lb)
                 fig = plot_spectra(
                     title=f"{label} - {folder_name_short}",
                     spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
