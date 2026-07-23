@@ -766,13 +766,61 @@ def find_max_vals(spectra, start_idx, end_idx):
     
     return max_vals, max_indexes, global_max, global_min
 
+def replace_zero_delta(sat_trans_hz, delta):
+    """
+    Replaces the delta value at the position where sat_trans_hz is 0.0
+    with the mean of delta values corresponding to the smallest positive
+    and smallest negative sat_trans_hz values.
+    """
+    if len(sat_trans_hz) != len(delta):
+        raise ValueError("Both lists must have the same length")
+    
+    # Find the index of 0.0
+    zero_idx = sat_trans_hz.index(0.0)
+    
+    # Find smallest positive and smallest negative values (excluding 0.0)
+    min_positive_val = float('inf')
+    min_negative_val = float('-inf')
+    min_positive_idx = None
+    min_negative_idx = None
+    
+    for idx, val in enumerate(sat_trans_hz):
+        if idx == zero_idx:
+            continue
+        if val > 0 and val < min_positive_val:
+            min_positive_val = val
+            min_positive_idx = idx
+        elif val < 0 and val > min_negative_val:
+            min_negative_val = val
+            min_negative_idx = idx
+    
+    # Calculate the mean of their corresponding delta values
+    mean_delta = (delta[min_positive_idx] + delta[min_negative_idx]) / 2
+    
+    # Create a new delta list with the replacement
+    new_delta = delta.copy()
+    new_delta[zero_idx] = mean_delta
+
+    new_delta = [d - mean_delta for d in new_delta]
+    
+    return new_delta
+
 def correct_sat_frequencies(sat_trans_hz, max_indexes, work_offset_hz, uc, bf1):
     sat_trans_f1_ppm = [0.0] * len(sat_trans_hz)
+
+    freq = [0.0] * len(sat_trans_hz)
+    delta = [0.0] * len(sat_trans_hz)
     for i, (st_hz, idx) in enumerate(zip(sat_trans_hz, max_indexes)):
-        delta = work_offset_hz[0] - uc.hz(idx)
-        if st_hz != 0.0:
-            sat_trans_hz[i] += delta
-        sat_trans_f1_ppm[i] = sat_trans_hz[i] / bf1
+        freq[i] = uc.hz(idx)
+        delta[i] = work_offset_hz[0] - freq[i]
+  
+    delta = replace_zero_delta(sat_trans_hz, delta)
+
+    for i, (st_hz, idx) in enumerate(zip(sat_trans_hz, max_indexes)):
+        sat_trans_hz[i] += delta[i]
+
+    sat_trans_f1_ppm = [f / bf1 for f in sat_trans_hz]
+
     return sat_trans_f1_ppm
 
 def ask_yes_no(prompt: str, default: Optional[bool] = None) -> bool:
