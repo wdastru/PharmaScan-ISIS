@@ -440,32 +440,34 @@ def parameter_extract(file_path: Path, PARAMETER: str = None) -> List[float]:
             raise ValueError(colored(
                 f"Header '##${PARAMETER}=( N )' non trovato in {file_path}.", "red", attrs=["bold"])
             )
-
-        if match.group("N") is not None:
-            N = int(match.group("N"))
-        if match.group("block") is not None:
-            block = match.group("block")
-        if match.group("value") is not None:
-            val = match.group("value")
-
-        if val is not None:
-            print(f"{PARAMETER} value: {val}")
-            return [float(val)]
         else:
-            print(f"{PARAMETER} dimension: {N}")
 
-            # Extract numbers only from this block
-            num_pattern = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
-            vals = re.findall(num_pattern, block)
-            if len(vals) < N:
-                raise ValueError(colored(
-                    f"Trovati solo {len(vals)} numeri nel blocco, attesi {N}.", "red", attrs=["bold"])
-                )
-            if len(vals) > N:
-                print(colored(
-                    f"Attenzione: trovati {len(vals)} numeri nel blocco (attesi {N}), uso i primi {N}.", "yellow")
-                )
-            return [float(v) for v in vals[:N]]
+            N_str = match.group("N")      # None if not matched
+            block = match.group("block")  # None if not matched
+            val   = match.group("value")  # None if not matched
+
+            if val is not None:
+                print(f"{PARAMETER} value: {val}")
+                return [float(val)]
+            else:
+
+                if match.group("N") is not None:
+                    N = int(N_str)
+
+                print(f"{PARAMETER} dimension: {N}")
+
+                # Extract numbers only from this block
+                num_pattern = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
+                vals = re.findall(num_pattern, block)
+                if len(vals) < N:
+                    raise ValueError(colored(
+                        f"Trovati solo {len(vals)} numeri nel blocco, attesi {N}.", "red", attrs=["bold"])
+                    )
+                if len(vals) > N:
+                    print(colored(
+                        f"Attenzione: trovati {len(vals)} numeri nel blocco (attesi {N}), uso i primi {N}.", "yellow")
+                    )
+                return [float(v) for v in vals[:N]]
     else:
         return _read_fq2list(file_path)
         
