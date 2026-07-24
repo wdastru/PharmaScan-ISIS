@@ -1675,6 +1675,77 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                 grp["BF1"] = bf1_values
                 modified = True
 
+    # ---------- Validate that all provided folder/file paths exist ----------
+    for grp in config_data["groups"]:
+        # Validate "folders" key
+        if "folders" in grp:
+            valid_folders = []
+            for folder in grp["folders"]:
+                if os.path.exists(folder):
+                    valid_folders.append(folder)
+                else:
+                    print(colored(f"Folder not found: {folder}", "red"))
+                    if ask_yes_no("Do you want to select a new folder?", default=True):
+                        new_folder = select_experiment_folder()
+                        if new_folder and os.path.exists(new_folder):
+                            valid_folders.append(new_folder)
+                            modified = True
+                        else:
+                            print(colored("New folder also invalid - skipping.", "yellow"))
+                    else:
+                        print(colored("Missing folder remains in the list.", "yellow"))
+                        valid_folders.append(folder)
+
+            grp["folders"] = valid_folders
+
+        # Validate "topspin_folders" key (if present)
+        if "topspin_folders" in grp:
+            valid_tf = []
+            for folder in grp["topspin_folders"]:
+                if os.path.exists(folder):
+                    valid_tf.append(folder)
+                else:
+                    print(colored(f"TopSpin folder not found: {folder}", "red"))
+                    if ask_yes_no("Do you want to select a new folder?", default=True):
+                        new_folder = select_experiment_folder()
+                        if new_folder and os.path.exists(new_folder):
+                            valid_tf.append(new_folder)
+                            modified = True
+                        else:
+                            print(colored("New folder also invalid – skipping.", "yellow"))
+                    else:
+                        print(colored("Missing folder remains in the list.", "yellow"))
+                        valid_folders.append(folder)
+            grp["topspin_folders"] = valid_tf
+
+        # Validate "files" key
+        if "files" in grp:
+            # Keep BF1 in sync if it exists (same length as files)
+            has_bf1 = "BF1" in grp and len(grp["BF1"]) == len(grp["files"])
+            valid_files = []
+            valid_bf1 = [] if has_bf1 else None
+            for i, file in enumerate(grp["files"]):
+                if os.path.exists(file):
+                    valid_files.append(file)
+                    if has_bf1:
+                        valid_bf1.append(grp["BF1"][i])
+                else:
+                    print(colored(f"File not found: {file}", "red"))
+                    if ask_yes_no("Do you want to select a new file?", default=True):
+                        new_file = select_text_file()
+                        if new_file and os.path.exists(new_file):
+                            valid_files.append(new_file)
+                            if has_bf1:
+                                new_bf1 = float(input(f"Enter BF1 value for '{new_file}' (MHz): "))
+                                valid_bf1.append(new_bf1)
+                            modified = True
+                        else:
+                            print(colored("New file also invalid – skipping.", "yellow"))
+                    else:
+                        print(colored("Missing folder remains in the list.", "yellow"))
+                        valid_folders.append(folder)
+            grp["files"] = valid_files
+                    
     # ---------- ppm range handling ----------
     if config_data.get("start_ppm") is None or config_data.get("end_ppm") is None:
         config_data["ppm_missing"] = True
