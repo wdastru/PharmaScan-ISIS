@@ -776,7 +776,6 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None,
     # buttons stop responding even though they're still visible on screen.
     fig._widgets = (checks, btn_all, btn_none)
     plt.show(block=False)
-    plt.pause(0.001)
     return fig
 
 def normalize_max_vals(max_vals, global_max, global_min):
