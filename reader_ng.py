@@ -176,31 +176,36 @@ def load_config(name: str) -> Dict[str, Any]:
             ref_count = config.get("multiple_amount_ref", 0) if with_ref else 0
             sample_count = config.get("multiple_amount", 0) if config.get("with_multiple", False) else 0
             folders = [Path(p) for p in config.get("folders", [])]
+            topspin_folders = [Path(p) for p in config.get("topspin_folders", [])]
             groups = []
             idx = 0
             if with_ref and ref_count > 0:
                 groups.append({
                     "label": "reference",
                     "is_reference": True,
-                    "folders": folders[idx:idx+ref_count]
+                    "folders": folders[idx:idx+ref_count],
+                    "topspin_folders": topspin_folders[idx:idx+ref_count]
                 })
                 idx += ref_count
             if sample_count > 0:
                 groups.append({
                     "label": "sample",
                     "is_reference": False,
-                    "folders": folders[idx:idx+sample_count]
+                    "folders": folders[idx:idx+sample_count],
+                    "topspin_folders": topspin_folders[idx:idx+sample_count]
                 })
             config["groups"] = groups
             # Remove old keys
             for old_key in ("with_ref", "with_multiple", "multiple_amount",
-                            "multiple_amount_ref", "folders"):
+                            "multiple_amount_ref", "folders", "topspin_folders"):
                 config.pop(old_key, None)
         else:
             # Ensure folders and files are Path objects
             for grp in config["groups"]:
                 if "folders" in grp:
                     grp["folders"] = [Path(p) for p in grp.get("folders", [])]
+                if "topspin_folders" in grp:
+                    grp["topspin_folders"] = [Path(p) for p in grp.get("topspin_folders", [])]
                 if "files" in grp:
                     grp["files"] = [Path(p) for p in grp.get("files", [])]
         return config
@@ -220,6 +225,7 @@ def save_config(name: str, config: Dict[str, Any]) -> None:
             {
                 **grp, 
                 "folders": [str(p) for p in grp.get("folders", [])],
+                "topspin_folders": [str(p) for p in grp.get("topspin_folders", [])],
                 "files": [str(p) for p in grp.get("files", [])],
             } 
             for grp in to_save["groups"]
@@ -414,37 +420,55 @@ def find_maximum(arr: np.ndarray,
     max_idx = sub_arr.argmax() + start
     return float(max_val), int(max_idx)
 
-def parameter_extract(file_path: Path, PARAMETER: str) -> List[float]:
+def parameter_extract(file_path: Path, PARAMETER: str = None) -> List[float]:
+
+    def _read_fq2list(filename):
+        with open(filename, encoding="utf-8") as f:
+            return [float(line.strip()) for line in f if line.strip()]
+
     if not file_path.exists():
         raise FileNotFoundError(colored(
             f"{file_path} not found.", "red", attrs=["bold"])
         )
     text = file_path.read_text(encoding="utf-8", errors="ignore")
 
-    # Look for the header and also capture the block up to the next '##$'
-    hdr_pattern = rf"##\${PARAMETER}=\s*\(\s*(?P<N>\d+)\s*\)\s*\n(?P<block>.*?)(?=\n##\$|\Z)"
-    match = re.search(hdr_pattern, text, re.DOTALL)
-    if not match:
-        raise ValueError(colored(
-            f"Header '##${PARAMETER}=( N )' non trovato in {file_path}.", "red", attrs=["bold"])
-        )
+    if PARAMETER is not None:
+        # Look for the header and also capture the block up to the next '##$'
+        hdr_pattern = rf"##\${PARAMETER}=(?:\s*\(\s*(?P<N>\d+)\s*\)\s*\n(?P<block>.*?)(?=\r?\n##\$|\Z)|\s*(?P<value>[^\r\n]*))"
+        match = re.search(hdr_pattern, text, re.DOTALL)
+        if not match:
+            raise ValueError(colored(
+                f"Header '##${PARAMETER}=( N )' non trovato in {file_path}.", "red", attrs=["bold"])
+            )
 
-    N = int(match.group("N"))
-    block = match.group("block")
-    print(f"{PARAMETER} dimension: {N}")
+        if match.group("N") is not None:
+            N = int(match.group("N"))
+        if match.group("block") is not None:
+            block = match.group("block")
+        if match.group("value") is not None:
+            val = match.group("value")
 
-    # Extract numbers only from this block
-    num_pattern = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
-    vals = re.findall(num_pattern, block)
-    if len(vals) < N:
-        raise ValueError(colored(
-            f"Trovati solo {len(vals)} numeri nel blocco, attesi {N}.", "red", attrs=["bold"])
-        )
-    if len(vals) > N:
-        print(colored(
-            f"Attenzione: trovati {len(vals)} numeri nel blocco (attesi {N}), uso i primi {N}.", "yellow")
-        )
-    return [float(v) for v in vals[:N]]
+        if val is not None:
+            print(f"{PARAMETER} value: {val}")
+            return [float(val)]
+        else:
+            print(f"{PARAMETER} dimension: {N}")
+
+            # Extract numbers only from this block
+            num_pattern = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
+            vals = re.findall(num_pattern, block)
+            if len(vals) < N:
+                raise ValueError(colored(
+                    f"Trovati solo {len(vals)} numeri nel blocco, attesi {N}.", "red", attrs=["bold"])
+                )
+            if len(vals) > N:
+                print(colored(
+                    f"Attenzione: trovati {len(vals)} numeri nel blocco (attesi {N}), uso i primi {N}.", "yellow")
+                )
+            return [float(v) for v in vals[:N]]
+    else:
+        return _read_fq2list(file_path)
+        
 
 def apply_phase(data: np.ndarray, p0: float, p1: float) -> np.ndarray:
     """
@@ -755,36 +779,61 @@ def find_max_vals(spectra, start_idx, end_idx):
     
     return max_vals, max_indexes, global_max, global_min
 
-def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
-    while True:
-        try:
-            start_prompt = "Enter the minimum ppm (start)"
-            end_prompt = "Enter the maximum ppm (end)"
-            if default_start is not None:
-                start_prompt += f" (default {default_start})"
-            if default_end is not None:
-                end_prompt += f" (default {default_end})"
-            start_input = input(f"{start_prompt}: ").strip()
-            end_input = input(f"{end_prompt}: ").strip()
-            start_ppm = float(start_input) if start_input else default_start
-            end_ppm = float(end_input) if end_input else default_end
-            if start_ppm is None or end_ppm is None:
-                print("Inserire entrambi i valori.")
-                continue
-            if end_ppm <= start_ppm:
-                print("end deve essere maggiore di start.")
-                continue
-            return start_ppm, end_ppm
-        except ValueError:
-            print("Inserire numeri validi.")
+def replace_zero_delta(sat_trans_hz, delta):
+    """
+    Replaces the delta value at the position where sat_trans_hz is 0.0
+    with the mean of delta values corresponding to the smallest positive
+    and smallest negative sat_trans_hz values.
+    """
+    if len(sat_trans_hz) != len(delta):
+        raise ValueError("Both lists must have the same length")
+    
+    # Find the index of 0.0
+    zero_idx = sat_trans_hz.index(0.0)
+    
+    # Find smallest positive and smallest negative values (excluding 0.0)
+    min_positive_val = float('inf')
+    min_negative_val = float('-inf')
+    min_positive_idx = None
+    min_negative_idx = None
+    
+    for idx, val in enumerate(sat_trans_hz):
+        if idx == zero_idx:
+            continue
+        if val > 0 and val < min_positive_val:
+            min_positive_val = val
+            min_positive_idx = idx
+        elif val < 0 and val > min_negative_val:
+            min_negative_val = val
+            min_negative_idx = idx
+    
+    # Calculate the mean of their corresponding delta values
+    mean_delta = (delta[min_positive_idx] + delta[min_negative_idx]) / 2
+    
+    # Create a new delta list with the replacement
+    new_delta = delta.copy()
+    new_delta[zero_idx] = mean_delta
+
+    new_delta = [d - mean_delta for d in new_delta]
+    
+    return new_delta
 
 def correct_sat_frequencies(sat_trans_hz, max_indexes, work_offset_hz, uc, bf1):
     sat_trans_f1_ppm = [0.0] * len(sat_trans_hz)
+
+    freq = [0.0] * len(sat_trans_hz)
+    delta = [0.0] * len(sat_trans_hz)
     for i, (st_hz, idx) in enumerate(zip(sat_trans_hz, max_indexes)):
-        delta = work_offset_hz[0] - uc.hz(idx)
-        if st_hz != 0.0:
-            sat_trans_hz[i] += delta
-        sat_trans_f1_ppm[i] = sat_trans_hz[i] / bf1
+        freq[i] = uc.hz(idx)
+        delta[i] = work_offset_hz[0] - freq[i]
+  
+    delta = replace_zero_delta(sat_trans_hz, delta)
+
+    for i, (st_hz, idx) in enumerate(zip(sat_trans_hz, max_indexes)):
+        sat_trans_hz[i] += delta[i]
+
+    sat_trans_f1_ppm = [f / bf1 for f in sat_trans_hz]
+
     return sat_trans_f1_ppm
 
 def ask_yes_no(prompt: str, default: Optional[bool] = None) -> bool:
@@ -823,6 +872,24 @@ def ask_int(prompt: str, min_val: int = None, max_val: int = None, default: Opti
         except ValueError:
             print("Inserire un numero intero.")
 
+def ask_float(prompt: str, min_val: float = None, max_val: float = None, default: Optional[float] = None) -> float:
+    default_prompt = f" (default {default})" if default is not None else ""
+    while True:
+        answer = input(f"{prompt}{default_prompt}: ").strip()
+        if not answer and default is not None:
+            return default
+        try:
+            value = float(answer)
+            if min_val is not None and value < min_val:
+                print(f"Valore deve essere >= {min_val}")
+                continue
+            if max_val is not None and value > max_val:
+                print(f"Valore deve essere <= {max_val}")
+                continue
+            return value
+        except ValueError:
+            print("Inserire un numero.")
+
 def ask_choice(prompt: str, choices: List[str], default: Optional[str] = None) -> str:
     for i, c in enumerate(choices, 1):
         print(f"  {i}. {c}")
@@ -837,6 +904,29 @@ def ask_choice(prompt: str, choices: List[str], default: Optional[str] = None) -
         except ValueError:
             pass
         print("Invalid choice.")
+
+def ask_user_for_ppm_range(default_start=None, default_end=None) -> Tuple[float, float]:
+    while True:
+        try:
+            start_prompt = "Enter the minimum ppm (start)"
+            end_prompt = "Enter the maximum ppm (end)"
+            if default_start is not None:
+                start_prompt += f" (default {default_start})"
+            if default_end is not None:
+                end_prompt += f" (default {default_end})"
+
+            start_ppm = ask_float(start_prompt, default=default_start)
+            end_ppm = ask_float(end_prompt, default=default_end)
+            
+            if start_ppm is None or end_ppm is None:
+                print("Inserire entrambi i valori.")
+                continue
+            if end_ppm <= start_ppm:
+                print("end deve essere maggiore di start.")
+                continue
+            return start_ppm, end_ppm
+        except ValueError:
+            print("Inserire numeri validi.")
 
 # ----------------------------------------------------------------------
 # Envelope fitting functions (unchanged)
@@ -1417,11 +1507,20 @@ def select_experiment_folder(title="Select a folder") -> Path:
     root.withdraw()
     return Path(filedialog.askdirectory(title=title))
 
-def extract_parameters(folder: Path) -> Tuple[List[float], List[float]]:
-    method = folder / "method"
-    sat_hz = parameter_extract(method, "PVM_SatTransFL")
-    offset_hz = parameter_extract(method, "PVM_FrqWorkOffset")
-    return sat_hz, offset_hz
+def extract_parameters(folder: Path, filename: str) -> Tuple[List[float], List[float]]:
+    file = folder / filename
+    if filename == "method":
+        sat_hz = parameter_extract(file, "PVM_SatTransFL")
+        offset_hz = parameter_extract(file, "PVM_FrqWorkOffset")
+        return sat_hz, offset_hz
+    elif filename == "acqu2":
+        offset_hz = parameter_extract(file, "SFO1")
+        return offset_hz
+    elif filename == "fq2list":
+        sat_hz = parameter_extract(file)
+        return sat_hz
+    else:
+        raise ValueError(f"Unknown parameter file: {filename}")
 
 def load_spectra(folder: Path):
     dic, data = ng.bruker.read(folder)
@@ -1432,13 +1531,20 @@ def load_spectra(folder: Path):
     bf1 = dic["acqus"]["BF1"]
     return dic, data, uc, ppm_axis, n_exp, bf1
 
-def process_spectra(data: np.ndarray, dic: dict, n_exp: int):
+def process_spectra(data: np.ndarray, dic: dict, n_exp: int, lb_Hz: float = 0.005):
+
+    def _next_power_of_2(n):
+        if n < 1:
+            return 1
+        return 1 << (n - 1).bit_length()
+
+    lb = lb_Hz / dic.copy().get("acqus", {}).get("SW_h", 1.0)
     spectra: dict = {}
     for exp_idx in range(n_exp):
         fid = data[exp_idx, :]
         fid = ng.bruker.remove_digital_filter(dic, data=fid)
-        fid_zf = ng.proc_base.zf_size(fid, size=2048)
-        fid_apod = ng.proc_base.em(fid_zf, lb=0.005)
+        fid_zf = ng.proc_base.zf_size(fid, size=_next_power_of_2(len(fid)))
+        fid_apod = ng.proc_base.em(fid_zf, lb)
         spectrum = ng.proc_base.fft(fid_apod)
         spectrum_phased = ng.proc_autophase.autops(spectrum, fn="acme")
         spectrum_phased = spectrum_phased[::-1]
@@ -1471,15 +1577,23 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
             print(f"\n--- Group '{label}' ---")
             data_type = ask_choice(
                 "Data source type",
-                choices=["Bruker folders", "Text (x/y) files"],
+                choices=["Bruker folders", "TopSpin folders", "Text (x/y) files"],
                 default="Bruker folders"
             )
-            if data_type == "Bruker folders":
+            if data_type == "Bruker folders":   # Paravision folders
                 cnt = ask_int("Number of folders", min_val=1, default=1)
                 folders = []
                 for _ in range(cnt):
                     folders.append(select_experiment_folder())
-                return {"label": label, "is_reference": is_ref, "folders": folders, "files": []}
+                return {"label": label, "is_reference": is_ref, "folders": folders, "topspin_folders": [], "files": []}
+            elif data_type == "TopSpin folders":    # TopSpin folders
+                cnt = ask_int("Number of folders", min_val=1, default=1)
+                topspin_folders = []
+                for _ in range(cnt):
+                    tmp_path: Path = select_experiment_folder()
+                    topspin_folders.append(tmp_path)
+                    #topspin_folders.append(select_experiment_folder())
+                return {"label": label, "is_reference": is_ref, "folders": [], "topspin_folders": topspin_folders, "files": []}
             else:  # Text files
                 cnt = ask_int("Number of text files", min_val=1, default=1)
                 files = []
@@ -1487,7 +1601,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                 for _ in range(cnt):
                     files.append(select_text_file())
                     BF1_values.append(float(input("Enter BF1 value for this file (MHz): ")))
-                return {"label": label, "is_reference": is_ref, "folders": [], "files": files, "BF1": BF1_values}
+                return {"label": label, "is_reference": is_ref, "folders": [], "topspin_folders": [], "files": files, "BF1": BF1_values}
 
         if with_ref:
             ref_label = input("Label for reference group (default: reference): ").strip() or "reference"
@@ -1517,18 +1631,22 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
 
     # ---------- Fill missing data paths for any group ----------
     for grp in config_data["groups"]:
-        if not grp.get("folders") and not grp.get("files"):
+        if not grp.get("folders") and not grp.get("topspin_folders") and not grp.get("files"):
             # This group has no paths at all – prompt interactively
             print(f"\nGroup '{grp['label']}' has no data paths defined.")
             data_type = ask_choice(
                 f"Data source type for '{grp['label']}'",
-                choices=["Bruker folders", "Text (x/y) files"],
+                choices=["Bruker folders", "TopSpin folders", "Text (x/y) files"],
                 default="Bruker folders"
             )
             if data_type == "Bruker folders":
                 cnt = ask_int("Number of folders", min_val=1, default=1)
                 for _ in range(cnt):
                     grp.setdefault("folders", []).append(select_experiment_folder())
+            elif data_type == "TopSpin folders":
+                cnt = ask_int("Number of folders", min_val=1, default=1)
+                for _ in range(cnt):
+                    grp.setdefault("topspin_folders", []).append(select_experiment_folder())
             else:
                 cnt = ask_int("Number of text files", min_val=1, default=1)
                 for _ in range(cnt):
@@ -1542,7 +1660,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                 "Folders will be used for analysis.",
                 "yellow"
             ))
-        elif grp.get("files") and not grp.get("folders"):
+        elif grp.get("files") and not grp.get("folders") and not grp.get("topspin_folders"):
             if "BF1" not in grp or len(grp["BF1"]) != len(grp["files"]):
                 print(f"Group '{grp['label']}' has text files but missing or mismatched BF1 values.")
                 bf1_values = []
@@ -1559,6 +1677,11 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
 
     # (If ppm_missing, the actual prompting occurs later during analysis,
     #  because we may need a spectrum to show. The flag is set here.)
+
+    # ---------- lb handling ----------
+    if config_data.get("lb_Hz") is None:
+        config_data["lb_Hz"] = ask_float("Enter line broadening (lb) in Hz", default=0.005)
+        modified = True
 
     # ---------- Plot visibility defaults ----------
     default_vis = get_default_visibility()
@@ -1616,6 +1739,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     plt.ion()
 
     groups = config["groups"]
+    lb_Hz = config["lb_Hz"]
     start_ppm = config.get("start_ppm")
     end_ppm = config.get("end_ppm")
     ppm_missing = config.get("ppm_missing", False)
@@ -1729,8 +1853,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
         # Determine entry type for this group
         is_folder = bool(grp.get("folders"))
+        is_topspin_folder = bool(grp.get("topspin_folders"))
         is_file   = bool(grp.get("files"))
-        if is_folder and is_file:
+        if is_folder and is_file: # TODO: handle topspin folders if needed
             print(colored(
                 f"Warning: Group '{label}' has both folders and files. Only folders will be used.",
                 "yellow"
@@ -1739,6 +1864,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             entries = grp["folders"]
         elif is_folder:
             entries = grp["folders"]
+        elif is_topspin_folder:
+            entries = grp["topspin_folders"]
         elif is_file:
             entries = grp["files"]
         else:
@@ -1746,8 +1873,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     
         if is_folder:   # BRUKER data
             folders = entries
-            for file in folders:
-                base_name = f"{file.parent.name[:12]}…{file.parent.name[-12:]}-{file.stem}"
+            for folder in folders:
+                base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
                 folder_name_short = base_name
                 counter = 1
                 while folder_name_short in analysis_results:
@@ -1756,7 +1883,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 analysis_results[folder_name_short] = {}
                 folder_keys_per_group[grp_idx].append(folder_name_short)
 
-                sat_trans_hz, work_offset_hz = extract_parameters(file)
+                sat_trans_hz, work_offset_hz = extract_parameters(folder, "method")
                 analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
                 analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
 
@@ -1771,14 +1898,14 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         )
                         #return
 
-                dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(file)
+                dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
                 analysis_results[folder_name_short]["uc"] = uc
                 analysis_results[folder_name_short]["bf1"] = bf1
                 if group_meta[grp_idx].get("uc") is None:
                     group_meta[grp_idx]["uc"] = uc
                     group_meta[grp_idx]["bf1"] = bf1
 
-                spectra = process_spectra(data, dic, n_exp)
+                spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
                 fig = plot_spectra(
                     title=f"{label} - {folder_name_short}",
                     spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
@@ -1787,7 +1914,114 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     window_title=f"{label}: Spectra  for {folder_name_short}"
                 )
 
-                if ppm_missing and grp_idx == 0 and file == folders[0]:
+                if ppm_missing and grp_idx == 0 and folder == folders[0]:
+                    plt.pause(0.05)
+                    start_ppm, end_ppm = ask_user_for_ppm_range()
+                    config["start_ppm"] = start_ppm
+                    config["end_ppm"] = end_ppm
+                    config["ppm_missing"] = False
+                    ppm_missing = False
+                    if config_name:
+                        save_config(config_name, config)
+
+                start_idx = ppm_to_index(uc, end_ppm)
+                end_idx = ppm_to_index(uc, start_ppm)
+
+                max_vals: List[float] = []
+                max_indexes: List[int] = []
+                global_max: float
+                global_min: float
+                max_vals, max_indexes, global_max, global_min = find_max_vals(spectra, start_idx, end_idx)
+                max_vals = normalize_max_vals(max_vals=max_vals, global_max=global_max, global_min=global_min, )
+
+                # Correct saturation frequencies
+                zero_corrected_ppm: List[float] = correct_sat_frequencies(
+                    sat_trans_hz, 
+                    max_indexes,
+                    work_offset_hz, 
+                    uc, 
+                    bf1
+                )
+
+                # --- Sort by ppm ---
+                combined = list(zip(sat_trans_hz, max_indexes, max_vals, zero_corrected_ppm))
+                combined.sort()
+                sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
+
+                res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
+                analysis_results[folder_name_short].update({
+                    "max_indexes": max_indexes,
+                    "max_vals": max_vals,
+                })
+                analysis_results[folder_name_short].update(res)
+                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
+
+                # --- Calculate integrals for this individual folder ---
+                
+                # After storing the results for the single folder, optionally plot it
+                plot_data(
+                    x=res["spline_fit_results"]["x"],
+                    y=res["spline_fit_results"]["y"],
+                    x_fit=res["spline_fit_results"]["x_fit"],
+                    y_fit=res["spline_fit_results"]["y_fit"],
+                    title=f" {label}: {folder_name_short}",
+                    invert_x=True,
+                    add_lorentz=True,
+                    lorentzian_envelope_results=res["lorentzian_envelope_results"],
+                    add_sigmoid=True,
+                    sigmoidal_envelope_results=res["sigmoidal_envelope_results"],
+                    diff_x=res["diff_x"],
+                    diff_y=res["diff_y"],
+                    diff_label="Lorentzian envelope - Spline fit",
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f" {label}: spline fit for {folder_name_short}"
+                )
+        elif is_topspin_folder:   # BRUKER data spectroscopy
+            folders = entries
+            for folder in folders:
+                base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
+                folder_name_short = base_name
+                counter = 1
+                while folder_name_short in analysis_results:
+                    folder_name_short = f"{base_name}_{counter}"
+                    counter += 1
+                analysis_results[folder_name_short] = {}
+                folder_keys_per_group[grp_idx].append(folder_name_short)
+
+                work_offset_hz = extract_parameters(folder, "acqu2")
+                sat_trans_hz = extract_parameters(folder, "fq2list")
+
+                analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
+                analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
+
+                if group_meta[grp_idx].get("work_offset_hz") is None:
+                    group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
+                else:
+                    if group_meta[grp_idx]["work_offset_hz"] != work_offset_hz:
+                        print(colored(
+                            f"Error: different work_offset in group '{label}'", 
+                            "red", 
+                            attrs=["bold"])
+                        )
+                        #return
+
+                dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
+                analysis_results[folder_name_short]["uc"] = uc
+                analysis_results[folder_name_short]["bf1"] = bf1
+                if group_meta[grp_idx].get("uc") is None:
+                    group_meta[grp_idx]["uc"] = uc
+                    group_meta[grp_idx]["bf1"] = bf1
+
+                spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
+                fig = plot_spectra(
+                    title=f"{label} - {folder_name_short}",
+                    spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
+                    sat_trans_hz=sat_trans_hz,
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f"{label}: Spectra  for {folder_name_short}"
+                )
+
+                if ppm_missing and grp_idx == 0 and folder == folders[0]:
                     plt.pause(0.05)
                     start_ppm, end_ppm = ask_user_for_ppm_range()
                     config["start_ppm"] = start_ppm
@@ -1851,8 +2085,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 )
         else:   # txt data files (sat_trans_hz vs max_vals) 
             files = entries
-            for file_idx, file in enumerate(files):
-                base_name = file.stem
+            for file_idx, folder in enumerate(files):
+                base_name = folder.stem
                 # Ensure unique key in analysis_results
                 key = base_name
                 counter = 1
@@ -1866,7 +2100,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 try:
                     # Assume two columns: sat_trans_hz vs max_vals.
                     # Skip comments (lines starting with '#') and handle possible header.
-                    data = np.loadtxt(file, comments='#')
+                    data = np.loadtxt(folder, comments='#')
                     if data.ndim != 2 or data.shape[1] < 2:
                         raise ValueError("File must contain at least two columns.")
                     sat_trans_hz = data[:, 0].tolist()
@@ -1877,15 +2111,15 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         value = config["groups"][grp_idx]["BF1"][file_idx]
                         group_meta[grp_idx]["bf1"] = value
                     except KeyError as e:
-                        print(colored(f"Missing key {e} for {file}", "red", attrs=["bold"]))
+                        print(colored(f"Missing key {e} for {folder}", "red", attrs=["bold"]))
                         continue
                     except (TypeError, IndexError) as e:
-                        print(colored(f"Invalid structure (expected dict/list) for {file}: {e}", "red", attrs=["bold"]))
+                        print(colored(f"Invalid structure (expected dict/list) for {folder}: {e}", "red", attrs=["bold"]))
                         continue
                                         
                     zero_corrected_ppm = [sat_trans_hz[i] / group_meta[grp_idx]["bf1"] for i in range(len(sat_trans_hz))]
                 except Exception as e:
-                    print(colored(f"Error reading file {file}: {e}", "red", attrs=["bold"]))
+                    print(colored(f"Error reading file {folder}: {e}", "red", attrs=["bold"]))
                     continue
 
                 max_indexes = [0] * len(max_vals)
