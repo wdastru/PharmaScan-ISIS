@@ -507,11 +507,19 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
         Dizionario con chiavi i nomi delle regioni e valori gli integrali calcolati.
     """
     integrals = {}
-    for region, (start, end) in METABOLITE_REGIONS.items():
+    
+    for name, region in METABOLITE_REGIONS.items():
+
+        if region["ppm"] is not None and len(region["ppm"]) == 2:
+            start, end = region["ppm"]
+        else:
+            print(colored(f"Region {name} is not defined properly. Aborting.", "red"))
+            exit(1)
+
         # Trova i punti all'interno dell'intervallo
         mask = (x_fit >= start) & (x_fit <= end)
         if not np.any(mask):
-            integrals[region] = 0.0
+            integrals[name] = 0.0
             continue
 
         # Estrai i punti interni
@@ -532,7 +540,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
 
         # Calcola l'integrale con il metodo dei trapezi
         area = np.trapezoid(y_inside, x_inside)
-        integrals[region] = area
+        integrals[name] = area
 
     return integrals
 
@@ -602,8 +610,13 @@ def plot_data(
         ax = plt.gca()
         cmap = plt.get_cmap('tab10')
         colors = [cmap(i % 10) for i in range(len(METABOLITE_REGIONS))]
-        for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
-            ax.axvspan(start, end, facecolor=colors[idx], alpha=0.25, edgecolor='none', label=region_name)
+        for idx, (name, region) in enumerate(METABOLITE_REGIONS.items()):
+            if region["ppm"] is not None and len(region["ppm"]) == 2:
+                start, end = region["ppm"]
+                ax.axvspan(start, end, facecolor=colors[idx], alpha=0.25, edgecolor='none', label=name)
+            else:
+                print(colored(f"Region {name} is not defined properly. Aborting.", "red"))
+                exit(1)
     
     if invert_x:
         plt.gca().invert_xaxis()
@@ -1291,7 +1304,6 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
             if "BF1" not in grp:
                 grp["BF1"] = []
                 modified = True
-            
 
     # ---------- Fill missing data paths for any group ----------
     for grp in config_data["groups"]:
@@ -1354,6 +1366,30 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
     if "metabolite_regions" not in config_data:
         config_data["metabolite_regions"] = DEFAULT_METABOLITE_REGIONS
         modified = True
+
+    else:
+        for name, region in config_data["metabolite_regions"].items():
+            if isinstance(region, list):
+                # Old style: just [start, end] ppm boundaries
+                start, end = region[0], region[1]
+                config_data["metabolite_regions"][name] = {
+                    "ppm": [start, end],
+                    "width": [1.0, None],   # default width
+                    "height": [0.0, None]   # default height
+                }
+                modified = True
+            elif isinstance(region, dict):
+                # Possibly new style, but ensure required keys exist
+                if "ppm" not in region:
+                    raise ValueError(f"Metabolite region '{name}' missing 'ppm' key.")
+                if "width" not in region:
+                    region["width"] = [1.0, None]
+                    modified = True
+                if "height" not in region:
+                    region["height"] = [0.0, None]
+                    modified = True
+            else:
+                raise ValueError(f"Invalid metabolite region definition for '{name}'")
     
     # ---------- Save if modified ----------
     if modified and config_name:
