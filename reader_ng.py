@@ -1350,9 +1350,13 @@ def plot_group_difference(
     # Metabolite regions
     if visibility.get("regions", True):
         cmap = plt.get_cmap('tab10')
-        for idx, (region_name, (start, end)) in enumerate(METABOLITE_REGIONS.items()):
-            ax.axvspan(start, end, facecolor=cmap(idx % 10), alpha=0.25,
-                       edgecolor='none', label=region_name)
+        for idx, (name, region) in enumerate(METABOLITE_REGIONS.items()):
+            if region["ppm"] is not None and len(region["ppm"]) == 2:
+                start, end = region["ppm"]
+                ax.axvspan(start, end, facecolor=cmap(idx % 10), alpha=0.25, edgecolor='none', label=name)
+            else:
+                print(colored(f"Region {name} is not defined properly. Aborting.", "red"))
+                exit(1)    
 
     ax.invert_xaxis()
     ax.set_xlabel("Saturation ppm")
