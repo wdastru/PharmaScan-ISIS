@@ -15,7 +15,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons, Button
 from matplotlib.figure import Figure
-from matplotlib.axes import Axes
+from matplotlib.lines import Line2D
 import re
 import tkinter as tk
 from tkinter import filedialog
@@ -715,12 +715,12 @@ def spline_fit(x, y, x_fit=None, n_points=N_POINTS_FIT) -> Dict[str, Any]:
 
 def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None, window_title=None) -> Figure:
     fig, ax = plt.subplots(num=window_title, figsize=(12, 6))
-    lines = []
+    lines:List[Line2D] = []
     labels = []
     for exp_idx in range(n_exp):
-        line, = ax.plot(ppm_axis, np.real(spectra[exp_idx]),
+        line: Line2D = ax.plot(ppm_axis, np.real(spectra[exp_idx]),
                         label=f"{exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}",
-                        alpha=0.7, linewidth=1.2)
+                        alpha=0.7, linewidth=1.2)[0]
         lines.append(line)
         labels.append(line.get_label())
     ax.invert_xaxis()
@@ -729,24 +729,38 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None,
     ax.grid(True, alpha=0.3)
     ax.set_title(title)
     rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])
-    visibility_states = [l.get_visible() for l in lines]
+    visibility_states: List = [line.get_visible() for line in lines]
     checks = CheckButtons(rax, labels, visibility_states)
+    _silent_update = False   # flag to block callback during programmatic changes
+
     def _on_check(label):
+        nonlocal _silent_update          # needed because we're in a nested function
+        if _silent_update:
+            return                        # skip if we're doing a programmatic update
         idx = labels.index(label)
         lines[idx].set_visible(not lines[idx].get_visible())
         fig.canvas.draw_idle()
+
     def _check_all(event):
+        nonlocal _silent_update
+        _silent_update = True             # block callbacks
         for i, line in enumerate(lines):
             if not line.get_visible():
                 line.set_visible(True)
-                checks.lines[i].set_visible(True)
+                checks.set_active(i, True)
+        _silent_update = False            # re-enable
         fig.canvas.draw_idle()
+
     def _uncheck_all(event):
+        nonlocal _silent_update
+        _silent_update = True
         for i, line in enumerate(lines):
             if line.get_visible():
                 line.set_visible(False)
-                checks.lines[i].set_visible(False)
+                checks.set_active(i, False)
+        _silent_update = False
         fig.canvas.draw_idle()
+
     checks.on_clicked(_on_check)
     ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
     btn_all = Button(ax_all, "Check all")
@@ -755,7 +769,14 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None,
     btn_none = Button(ax_none, "Uncheck all")
     btn_none.on_clicked(_uncheck_all)
     fig.tight_layout(rect=[0, 0, 0.80, 1])
+    # Keep strong references to the widgets on the figure itself.
+    # Without this, `checks`, `btn_all`, and `btn_none` are only referenced
+    # by local variables; once this function returns they get garbage
+    # collected, their callbacks are disconnected, and the checkboxes/
+    # buttons stop responding even though they're still visible on screen.
+    fig._widgets = (checks, btn_all, btn_none)
     plt.show(block=False)
+    plt.pause(0.001)
     return fig
 
 def normalize_max_vals(max_vals, global_max, global_min):
@@ -2351,6 +2372,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     save_cache(config_name, config, analysis_results)
     save_analysis_results(analysis_results=analysis_results, config_name=config_name)
     
+    #print("\nTutti i grafici sono stati creati.")
+    #plt.show(block=True)
     print("\nTutti i grafici sono stati creati. Premi Invio per uscire.")
     input()
     plt.close('all')
