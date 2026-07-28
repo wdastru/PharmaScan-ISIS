@@ -47,69 +47,18 @@ from plotting import (
     plot_multigroup_integrals, plot_z_spectrum
 )
 
+from cache import (
+    load_cache, save_cache
+)
+
+from data_io import (
+    extract_parameters, load_spectra, 
+    select_experiment_folder, select_text_file 
+)
+
 print(f"Using nmrglue version: {ng.__version__}")
 
 CACHE_DIR.mkdir(exist_ok=True)
-
-# ----------------------------------------------------------------------
-# Cache management
-# ----------------------------------------------------------------------
-def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
-    # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
-    if not config_name:
-        key_str = json.dumps(_build_cache_key(config), sort_keys=True)
-        name = hashlib.md5(key_str.encode()).hexdigest()[:8]
-    else:
-        # Pulisci il nome per evitare caratteri problematici
-        name = "".join(c for c in config_name if c.isalnum() or c in " _-").rstrip()
-    return CACHE_DIR / f"analysis_{name}.joblib"
-
-def _build_cache_key(config: Dict[str, Any]) -> str:
-    """
-    Crea una chiave univoca basata sui parametri e sulle cartelle (compresa la data di modifica).
-    """
-    groups = config.get("groups", [])
-    # Dati delle cartelle: percorso e timestamp dell'ultima modifica
-    folder_info = []
-    for grp in groups:
-        for f in grp.get("folders", []):
-            try:
-                mtime = os.path.getmtime(f)
-            except OSError:
-                mtime = 0
-            folder_info.append((str(f), mtime))
-    key_data = {
-        "cache_version": CACHE_VERSION,
-        "groups": [{"label": g["label"], "is_reference": g.get("is_reference", False)}
-                   for g in groups],
-        "start_ppm": config.get("start_ppm"),
-        "end_ppm": config.get("end_ppm"),
-        "folders_info": folder_info,
-        "metabolite_regions": METABOLITE_REGIONS,
-    }
-    key_str = json.dumps(key_data, sort_keys=True, default=str)
-    return hashlib.sha256(key_str.encode()).hexdigest()
-
-def load_cache(config_name: str, config: Dict[str, Any]) -> Optional[dict]:
-    cache_path = _cache_path(config_name, config)
-    if not cache_path.exists():
-        return None
-    try:
-        payload = load(cache_path)
-        if payload.get("key") == _build_cache_key(config):
-            return payload["analysis_results"]
-        else:
-            print(f"Cache obsoleta per '{config_name}'.")
-            return None
-    except Exception as e:
-        print(colored(f"Errore cache per '{config_name}': {e}", "red", attrs=["bold"]))
-        return None
-
-def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict) -> None:
-    cache_path = _cache_path(config_name, config)
-    payload = {"key": _build_cache_key(config), "analysis_results": analysis_results}
-    dump(payload, cache_path, compress=3)
-    print(f"Cache salvata per '{config_name}' in {cache_path.name}")
 
 # ----------------------------------------------------------------------
 # Utility functions
@@ -189,58 +138,6 @@ def find_maximum(arr: np.ndarray,
     max_val = sub_arr.max()
     max_idx = sub_arr.argmax() + start
     return float(max_val), int(max_idx)
-
-def parameter_extract(file_path: Path, PARAMETER: str = None) -> List[float]:
-
-    def _read_fq2list(filename):
-        with open(filename, encoding="utf-8") as f:
-            return [float(line.strip()) for line in f if line.strip()]
-
-    if not file_path.exists():
-        raise FileNotFoundError(colored(
-            f"{file_path} not found.", "red", attrs=["bold"])
-        )
-    text = file_path.read_text(encoding="utf-8", errors="ignore")
-
-    if PARAMETER is not None:
-        # Look for the header and also capture the block up to the next '##$'
-        hdr_pattern = rf"##\${PARAMETER}=(?:\s*\(\s*(?P<N>\d+)\s*\)\s*\n(?P<block>.*?)(?=\r?\n##\$|\Z)|\s*(?P<value>[^\r\n]*))"
-        match = re.search(hdr_pattern, text, re.DOTALL)
-        if not match:
-            raise ValueError(colored(
-                f"Header '##${PARAMETER}=( N )' non trovato in {file_path}.", "red", attrs=["bold"])
-            )
-        else:
-
-            N_str = match.group("N")      # None if not matched
-            block = match.group("block")  # None if not matched
-            val   = match.group("value")  # None if not matched
-
-            if val is not None:
-                print(f"{PARAMETER} value: {val}")
-                return [float(val)]
-            else:
-
-                if match.group("N") is not None:
-                    N = int(N_str)
-
-                print(f"{PARAMETER} dimension: {N}")
-
-                # Extract numbers only from this block
-                num_pattern = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
-                vals = re.findall(num_pattern, block)
-                if len(vals) < N:
-                    raise ValueError(colored(
-                        f"Trovati solo {len(vals)} numeri nel blocco, attesi {N}.", "red", attrs=["bold"])
-                    )
-                if len(vals) > N:
-                    print(colored(
-                        f"Attenzione: trovati {len(vals)} numeri nel blocco (attesi {N}), uso i primi {N}.", "yellow")
-                    )
-                return [float(v) for v in vals[:N]]
-    else:
-        return _read_fq2list(file_path)
-        
 
 def apply_phase(data: np.ndarray, p0: float, p1: float) -> np.ndarray:
     """
@@ -938,35 +835,6 @@ def collect_replicate_differences(
 # ----------------------------------------------------------------------
 # Main interactive configuration setup
 # ----------------------------------------------------------------------
-def select_experiment_folder(title="Select a folder") -> Path:
-    root = tk.Tk()
-    root.withdraw()
-    return Path(filedialog.askdirectory(title=title))
-
-def extract_parameters(folder: Path, filename: str) -> Tuple[List[float], List[float]]:
-    file = folder / filename
-    if filename == "method":
-        sat_hz = parameter_extract(file, "PVM_SatTransFL")
-        offset_hz = parameter_extract(file, "PVM_FrqWorkOffset")
-        return sat_hz, offset_hz
-    elif filename == "acqu2":
-        offset_hz = parameter_extract(file, "SFO1")
-        return offset_hz
-    elif filename == "fq2list":
-        sat_hz = parameter_extract(file)
-        return sat_hz
-    else:
-        raise ValueError(f"Unknown parameter file: {filename}")
-
-def load_spectra(folder: Path):
-    dic, data = ng.bruker.read(folder)
-    udic = ng.bruker.guess_udic(dic, data)
-    uc = ng.fileio.bruker.fileiobase.uc_from_udic(udic, dim=1)
-    ppm_axis = uc.ppm_scale()
-    n_exp = dic["acqu2s"]["TD"]
-    bf1 = dic["acqus"]["BF1"]
-    return dic, data, uc, ppm_axis, n_exp, bf1
-
 def process_spectra(data: np.ndarray, dic: dict, n_exp: int, lb_Hz: float = 0.005):
 
     def _next_power_of_2(n):
@@ -986,17 +854,6 @@ def process_spectra(data: np.ndarray, dic: dict, n_exp: int, lb_Hz: float = 0.00
         spectrum_phased = spectrum_phased[::-1]
         spectra[exp_idx] = spectrum_phased
     return spectra
-
-def select_text_file(title="Select a text data file (x/y columns)") -> Path:
-    root = tk.Tk()
-    root.withdraw()
-    file_path = filedialog.askopenfilename(
-        title=title,
-        filetypes=[("Text files", "*.txt *.dat"), ("All files", "*.*")]
-    )
-    if not file_path:
-        raise ValueError("No file selected.")
-    return Path(file_path)
 
 def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
     modified = False
