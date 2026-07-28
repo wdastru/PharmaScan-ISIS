@@ -33,21 +33,16 @@ import csv
 import types
 import subprocess
 
+from constants import (
+    N_POINTS_FIT, CACHE_VERSION,
+    DEFAULT_METABOLITE_REGIONS, CACHE_DIR, CONFIG_DIR, OUTPUT_DIR,
+    get_default_visibility
+)
+
 print(f"Using nmrglue version: {ng.__version__}")
 
-DEFAULT_METABOLITE_REGIONS: dict[str, List[float]] = {
-    "Glycolytic PMEs": [5.5, 9.0],
-    "Pi": [4.3, 5.3],
-    "PEP 1,3 BPG": [1.0, 4.3],
-    "GAMMA-ATP": [-3.5, -1.3],
-    "ALPHA,BETA-ADP": [-6, -3],
-    "ALPHA-ATP": [-9, -6]
-}
 METABOLITE_REGIONS = DEFAULT_METABOLITE_REGIONS.copy()
-CACHE_VERSION = 2 
-CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
-N_POINTS_FIT = 200
 
 # ----------------------------------------------------------------------
 # Utility functions for configuration migration and merging
@@ -127,12 +122,6 @@ def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict)
     dump(payload, cache_path, compress=3)
     print(f"Cache salvata per '{config_name}' in {cache_path.name}")
 
-# ----------------------------------------------------------------------
-# Configuration handling
-# ----------------------------------------------------------------------
-CONFIG_DIR = Path(__file__).parent / "configs"
-OUTPUT_DIR = Path(__file__).parent / "output"
-
 def ensure_config_dir() -> None:
     """Crea la cartella delle configurazioni se non esiste."""
     CONFIG_DIR.mkdir(exist_ok=True)
@@ -140,21 +129,6 @@ def ensure_config_dir() -> None:
 def ensure_output_dir() -> None:
     """Crea la cartella degli output se non esiste."""
     OUTPUT_DIR.mkdir(exist_ok=True)
-
-def get_default_visibility() -> Dict[str, bool]:
-    return {
-        "data": True,
-        "spline": True,
-        "lorentzian": True,
-        "sigmoid": True,
-        "difference": True,
-        "regions": True,
-        "corrected": True,
-        "legend": {
-            "z-spectra": True,
-            "integrals": True,
-        },
-    }
 
 def list_configs() -> List[Path]:
     """Restituisce la lista dei file di configurazione (.json) nella cartella configs."""
@@ -591,7 +565,7 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
 
     return integrals
 
-def plot_data(
+def plot_z_spectrum(
     x, 
     y, 
     x_fit, 
@@ -1872,7 +1846,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             for key in keys:
                 res = analysis_results.get(key, {})
                 if "spline_fit_results" in res and res["spline_fit_results"].get("fit_successful"):
-                    plot_data(
+                    plot_z_spectrum(
                         x=res["spline_fit_results"]["x"],
                         y=res["spline_fit_results"]["y"],
                         x_fit=res["spline_fit_results"]["x_fit"],
@@ -2056,7 +2030,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 # --- Calculate integrals for this individual folder ---
                 
                 # After storing the results for the single folder, optionally plot it
-                plot_data(
+                plot_z_spectrum(
                     x=res["spline_fit_results"]["x"],
                     y=res["spline_fit_results"]["y"],
                     x_fit=res["spline_fit_results"]["x_fit"],
@@ -2163,7 +2137,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 # --- Calculate integrals for this individual folder ---
                 
                 # After storing the results for the single folder, optionally plot it
-                plot_data(
+                plot_z_spectrum(
                     x=res["spline_fit_results"]["x"],
                     y=res["spline_fit_results"]["y"],
                     x_fit=res["spline_fit_results"]["x_fit"],
@@ -2242,7 +2216,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 )
                 analysis_results[key].update(res)
 
-                plot_data(
+                plot_z_spectrum(
                     x=res["spline_fit_results"]["x"],
                     y=res["spline_fit_results"]["y"],
                     x_fit=res["spline_fit_results"]["x_fit"],
