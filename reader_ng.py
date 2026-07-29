@@ -26,8 +26,8 @@ from config import (
 )
 
 from plotting import (
-    plot_group_difference, plot_group_folder_integrals, plot_spectra,
-    plot_multigroup_integrals, plot_z_spectrum
+    plot_group_difference, plot_group_breakdown, plot_spectra,
+    plot_groups_comparison, plot_z_spectrum
 )
 
 from cache import (
@@ -137,24 +137,26 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         for grp_idx, grp in enumerate(groups):
             label = grp["label"]
             if label in group_stats and label in per_folder_integrals:
-                plot_group_folder_integrals(
+                title=f"{label} group breakdown (da cache)"
+                plot_group_breakdown(
                     group_label=label,
                     group_stats=group_stats,
                     per_folder_integrals=per_folder_integrals,
                     folder_names=folder_keys_per_group_cached[grp_idx] if grp_idx < len(folder_keys_per_group_cached) else [],
                     visibility=config.get("plot_visibility", get_default_visibility()),
-                    title=f"Integrali per regione - {label} (da cache)",
-                    window_title=f"Integrali per regione - {label} (da cache)"
+                    title=title,
+                    window_title=title
                 )
 
         # ------------------------------------------------------------
         # 5. Grafico multi‑gruppo con p‑value (già presente)
         # ------------------------------------------------------------
         pvals = analysis_results.get("p_values", {})
-        plot_multigroup_integrals(group_stats, pvals, groups,
+        title="Groups comparison (da cache)"
+        plot_groups_comparison(group_stats, pvals, groups,
                                   visibility=config.get("plot_visibility", get_default_visibility()),
-                                  title="Integrali per regione (da cache)",
-                                  window_title="Integrali per regione (da cache)")
+                                  title=title,
+                                  window_title=title)
 
         # --- Saving ---
         save_analysis_results(analysis_results=analysis_results, config_name=config_name)
@@ -573,22 +575,24 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     analysis_results["folder_keys_per_group"] = folder_keys_per_group
 
     # ---- Show multigroup bar plot ----
-    plot_multigroup_integrals(group_stats, p_values, groups,
+    title="Groups comparison (ricalcolati)"
+    plot_groups_comparison(group_stats, p_values, groups,
                               visibility=config.get("plot_visibility", get_default_visibility()),
-                              title="Integrali per regione (ricalcolati)",
-                              window_title="Integrali per regione (ricalcolati)")
+                              title=title,
+                              window_title=title)
 
     # ---- Plot per gruppo con cartelle singole ----
     for grp_idx, grp in enumerate(groups):
         label = grp["label"]
-        plot_group_folder_integrals(
+        title: str = f"{label} group breakdown (ricalcolati)"
+        plot_group_breakdown(
             group_label=label,
             group_stats=group_stats,
             per_folder_integrals=per_folder_integrals,
             folder_names=folder_keys_per_group[grp_idx],   # <-- lista dei nomi brevi
             visibility=config.get("plot_visibility", get_default_visibility()),
-            title=f"Integrali per regione - {label} (ricalcolati)",
-            window_title=f"Integrali per regione - {label} (ricalcolati)"
+            title=title,
+            window_title=title
         )
 
     # --- Saving ---

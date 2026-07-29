@@ -165,8 +165,8 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None,
     plt.show(block=False)
     return fig
 
-def plot_multigroup_integrals(group_stats, p_values, groups,
-                              title="Integrals by region",
+def plot_groups_comparison(group_stats, p_values, groups,
+                              title="Groups comparison",
                               ylabel="Integral (mean ± SD)",
                               figsize=(12, 6),
                               visibility=None,
@@ -229,7 +229,7 @@ def plot_multigroup_integrals(group_stats, p_values, groups,
     plt.show(block=False)
     return fig
 
-def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
+def plot_group_breakdown(group_label, group_stats, per_folder_integrals,
                                 folder_names=None,
                                 title=None, ylabel="Integrale",
                                 figsize=(12, 6), visibility=None,
@@ -313,7 +313,7 @@ def plot_group_folder_integrals(group_label, group_stats, per_folder_integrals,
     ax.set_xticklabels(regions, rotation=45, ha='right')
     ax.set_ylabel(ylabel)
     if title is None:
-        title = f"Integrali per regione - {group_label}"
+        title = f"{group_label} group breakdown"
     ax.set_title(title)
     if visibility["legend"].get("integrals", True):
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
