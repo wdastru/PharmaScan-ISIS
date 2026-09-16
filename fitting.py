@@ -53,48 +53,62 @@ def constrained_lorentzian(x, A, gamma, y_min):
     return A - (A - y_min) * gamma**2 / (gamma**2 + x**2)
 
 def estimate_constrained_lorentzian(x_data, y_data):
-    x = np.asarray(x_data)
-    y = np.asarray(y_data)
-    y_min = np.min(y)
-    y_max = np.max(y)
-    if y_max == y_min:
-        return y_max, 0.0
     def error_for_A(A):
         if A < y_max:
             return np.inf
         gamma_max = np.inf
         for xi, yi in zip(x, y):
+            if xi == 0.0 or yi == 0:
+                continue
+
             if yi <= y_min:
                 continue
             bound_sq = (A - yi) / (yi - y_min) * xi**2
             if bound_sq <= 0:
                 return np.inf
             gamma_max = min(gamma_max, np.sqrt(bound_sq))
+            pass
+        
         if gamma_max <= 0.0:
             return np.inf
+        
         def mse(gamma):
             if gamma == 0.0:
                 y_pred = np.full_like(x, A)
             else:
                 y_pred = A - (A - y_min) * gamma**2 / (gamma**2 + x**2)
             return np.sum((y_pred - y)**2)
+        
         res = minimize_scalar(mse, bounds=(0.0, gamma_max), method='bounded')
         return res.fun
+    
+    x = np.asarray(x_data)
+    y = np.asarray(y_data)
+    y_min = np.min(y)
+    y_max = np.max(y)
+    if y_max == y_min:
+        return y_max, 0.0
+    
     upper_A = y_max + 5 * (y_max - y_min) if y_max > y_min else y_max + 1.0
     res_A = minimize_scalar(error_for_A, bounds=(y_max, upper_A), method='bounded')
     best_A = res_A.x
     gamma_max = np.inf
     for xi, yi in zip(x, y):
+        if xi == 0.0 or yi == 0:
+            continue
+        
         if yi <= y_min:
             continue
         bound_sq = (best_A - yi) / (yi - y_min) * xi**2
         gamma_max = min(gamma_max, np.sqrt(bound_sq))
+
     def mse(gamma):
         if gamma == 0.0:
             y_pred = np.full_like(x, best_A)
         else:
             y_pred = best_A - (best_A - y_min) * gamma**2 / (gamma**2 + x**2)
         return np.sum((y_pred - y)**2)
+    
     res_gamma = minimize_scalar(mse, bounds=(0.0, gamma_max), method='bounded')
     best_gamma = res_gamma.x
     return best_A, best_gamma
