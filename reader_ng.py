@@ -48,6 +48,10 @@ from utils import (
     ask_user_for_ppm_range, ask_yes_no, get_git_hash
 )
 
+from fitting import (
+    spline_fit
+)
+
 print(f"Using nmrglue version: {ng.__version__}")
 
 CACHE_DIR.mkdir(exist_ok=True)
@@ -517,6 +521,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "max_vals": mean_max_vals,
                 "sat_trans_hz": mean_sat,
                 "sd_max_vals": sd_max_vals,
+                "spline_fit_results": spline_fit(x=mean_zero_ppm, y=mean_max_vals, x_fit=x_common),
                 "bf1": group_meta[grp_idx]["bf1"],
                 "x_common": x_common,
                 "mean_diff_y": mean_diff,

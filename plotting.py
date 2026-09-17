@@ -343,6 +343,9 @@ def plot_group_difference(
         raw_sd = np.array(group_data.get("sd_max_vals", [0]*len(raw_vals)))
         ax.errorbar(raw_ppm, raw_vals, yerr=raw_sd, fmt='o', color='b', label='Raw mean')
 
+    if visibility.get("spline", True):
+        ax.plot(group_data.get("spline_fit_results", {}).get("x_fit", []), group_data.get("spline_fit_results", {}).get("y_fit", []), 'r-', linewidth=1.5, label='Spline fit')
+
     # Mean difference curve
     x = np.array(group_data["x_common"])
     mean_diff = np.array(group_data["mean_diff_y"])
