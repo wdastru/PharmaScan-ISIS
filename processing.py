@@ -261,8 +261,12 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
 
     # 6. Lorentzian envelope on corrected data
     A, gamma = estimate_constrained_lorentzian(zero_corrected_ppm, sigmoid_corrected)
+
     y_min = np.min(sigmoid_corrected)
     y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
+
+    y_lor = y_lor / A   # normalize the lorentzian "upper" envelope to 0-1 interval
+
     lor_env = {"A": A, "gamma": gamma, "x": x_common, "y": y_lor,
                "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
                "fit_successful": True}
