@@ -457,7 +457,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 combined.sort()
                 zero_corrected_ppm[:], max_vals[:], sat_trans_hz[:] = zip(*combined)
 
-                res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
+                # --- Fit, integrate, and plot (common pipeline) ---
+                res = process_zspectrum_and_integrals(
+                    max_vals, 
+                    zero_corrected_ppm
+                )
                 # No max_indexes, zero_corrected_ppm or sat_trans_hz needed; store what we have
                 analysis_results[key].update({
                     "max_vals": max_vals,
@@ -466,12 +470,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 # --- Store raw data for later group averaging ---
                 group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
 
-                # --- Fit, integrate, and plot (common pipeline) ---
-                res = process_zspectrum_and_integrals(
-                    max_vals, 
-                    zero_corrected_ppm
-                )
-                analysis_results[key].update(res)
 
                 plot_z_spectrum(
                     x=res["spline_fit_results"]["x"],
