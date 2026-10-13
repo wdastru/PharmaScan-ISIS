@@ -259,6 +259,8 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
         else:
             sigmoid_corrected.append(max_vals_sorted[i] / env_val)
 
+    sigmoid_corrected /= np.max(sigmoid_corrected) # ri-normalize after sigmoid correction
+
     # 6. Lorentzian envelope on corrected data
     A, gamma = estimate_constrained_lorentzian(zero_corrected_ppm, sigmoid_corrected)
 
