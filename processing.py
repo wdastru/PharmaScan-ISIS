@@ -515,12 +515,12 @@ def process_spectra(data: np.ndarray, dic: dict, n_exp: int, lb_Hz: float = 0.00
     for exp_idx in range(n_exp):
         fid = data[exp_idx, :]
         fid = ng.bruker.remove_digital_filter(dic, data=fid)
-        fid_zf = ng.proc_base.zf_size(fid, size=_next_power_of_2(len(fid)))
-        fid_apod = ng.proc_base.em(fid_zf, lb)
-        spectrum = ng.proc_base.fft(fid_apod)
-        spectrum_phased = ng.proc_autophase.autops(spectrum, fn="acme")
-        spectrum_phased = spectrum_phased[::-1]
-        spectra[exp_idx] = spectrum_phased
+        fid = ng.proc_base.zf_size(fid, size=_next_power_of_2(len(fid)))
+        fid = ng.proc_base.em(fid, lb)
+        spectrum = ng.proc_base.fft(fid)
+        spectrum = ng.proc_autophase.autops(spectrum, fn="acme")
+        spectrum = spectrum[::-1]
+        spectra[exp_idx] = spectrum
     return spectra
 
 def apply_phase(data: np.ndarray, p0: float, p1: float) -> np.ndarray:
