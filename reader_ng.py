@@ -432,7 +432,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     if data.ndim != 2 or data.shape[1] < 2:
                         raise ValueError("File must contain at least two columns.")
                     sat_trans_hz = data[:, 0].tolist()
-                    max_vals     = data[:, 1].tolist()
+                    max_vals = data[:, 1].tolist()
                     max_vals = normalize_max_vals(max_vals=max_vals, global_max=max(max_vals), global_min=min(max_vals))
                     
                     try:
