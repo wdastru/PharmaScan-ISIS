@@ -228,6 +228,86 @@ def compute_regions_integrals(x_fit: np.ndarray, y_fit: np.ndarray) -> Dict[str,
 # ----------------------------------------------------------------------
 # Pipeline per un singolo z-spectrum
 # ----------------------------------------------------------------------
+def scale_max_vals(max_vals, zero_corrected_ppm, x_common, lor_env,
+                   mode="global", return_alpha=False):
+    """
+    Scale max_vals so that each scaled value is <= the lor_env value
+    paired with the x_common value nearest to zero_corrected_ppm.
+
+    Zeros in max_vals are allowed and remain zero after scaling.
+    They do not participate in the computation of alpha.
+
+    Parameters
+    ----------
+    max_vals : array-like
+        Low-frequency y values to be scaled.
+    zero_corrected_ppm : array-like
+        Low-frequency x values (used to find nearest x_common).
+    x_common : array-like
+        High-frequency x values (lookup table).
+    lor_env : array-like
+        High-frequency y values, paired by position with x_common.
+    mode : {"global", "per_point"}
+        - "global":     one single factor alpha applied to all max_vals.
+        - "per_point": each max_vals[i] scaled by its own alpha_i
+                        (scaled value becomes exactly its upper bound).
+    return_alpha : bool
+        If True, also return the scaling factor(s).
+
+    Returns
+    -------
+    scaled_max_vals : np.ndarray
+    alpha : float or np.ndarray   (only if return_alpha=True)
+    """
+    max_vals           = np.asarray(max_vals, dtype=float)
+    zero_corrected_ppm = np.asarray(zero_corrected_ppm, dtype=float)
+    x_common           = np.asarray(x_common, dtype=float)
+    lor_env            = np.asarray(lor_env, dtype=float)
+
+    if len(x_common) != len(lor_env):
+        raise ValueError("x_common and lor_env must have the same length.")
+    if len(max_vals) != len(zero_corrected_ppm):
+        raise ValueError("max_vals and zero_corrected_ppm must have the same length.")
+
+    # --- Nearest x_common for each zero_corrected_ppm ---
+    if len(x_common) > 1 and np.all(np.diff(x_common) > 0):
+        idx = np.searchsorted(x_common, zero_corrected_ppm)
+        idx = np.clip(idx, 1, len(x_common) - 1)
+        left  = x_common[idx - 1]
+        right = x_common[idx]
+        choose_left = np.abs(zero_corrected_ppm - left) <= np.abs(zero_corrected_ppm - right)
+        j = np.where(choose_left, idx - 1, idx)
+    else:
+        j = np.array([np.argmin(np.abs(x_common - z)) for z in zero_corrected_ppm])
+
+    targets = lor_env[j]
+
+    # --- Mask: only strictly positive max_vals constrain alpha ---
+    nonzero = max_vals != 0
+
+    if mode == "global":
+        if not np.any(nonzero):
+            # All max_vals are zero -> any alpha works; return unchanged.
+            alpha = 1.0
+        else:
+            alpha_candidates = targets[nonzero] / max_vals[nonzero]
+            alpha = float(np.min(alpha_candidates))
+        scaled = alpha * max_vals
+        # ensure exact zeros (in case alpha is inf/very large)
+        scaled[~nonzero] = 0.0
+
+    elif mode == "per_point":
+        alpha = np.zeros_like(max_vals)
+        alpha[nonzero] = targets[nonzero] / max_vals[nonzero]
+        scaled = np.where(nonzero, targets, 0.0)
+
+    else:
+        raise ValueError("mode must be 'global' or 'per_point'.")
+
+    if return_alpha:
+        return scaled, alpha
+    return scaled
+
 def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, Any]:
     """Fit envelopes, spline, compute difference and integrals for one dataset."""
     
@@ -267,14 +347,17 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
     y_min = np.min(sigmoid_corrected)
     y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
 
-    y_lor = y_lor / A   # normalize the lorentzian "upper" envelope to 0-1 interval
+    y_lor /= A   # normalize the lorentzian "upper" envelope to 0-1 interval
+    scaled_sigmoid_corrected = scale_max_vals(
+        sigmoid_corrected, zero_corrected_ppm, x_common, y_lor
+        )
 
     lor_env = {"A": A, "gamma": gamma, "x": x_common, "y": y_lor,
                "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
                "fit_successful": True}
 
     # 7. Spline fit on corrected data
-    spline_res = spline_fit(x=zero_corrected_ppm, y=sigmoid_corrected, x_fit=x_common)
+    spline_res = spline_fit(x=zero_corrected_ppm, y=scaled_sigmoid_corrected, x_fit=x_common)
     if not spline_res.get("fit_successful", False):
         return {"integrals": {},
                 "diff_x": None, "diff_y": None,
@@ -295,7 +378,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
         "spline_fit_results": spline_res,
         # ---- intermediate data for later averaging ----
         "zero_corrected_ppm": zero_corrected_ppm,
-        "sigmoid_corrected": sigmoid_corrected,
+        "scaled_sigmoid_corrected": scaled_sigmoid_corrected,
         "A": A,
         "gamma": gamma,
         "y_min": y_min,
@@ -466,7 +549,7 @@ def collect_replicate_differences(
     for key in folder_keys:
         entry = analysis_results[key]
         ppm = np.asarray(entry["zero_corrected_ppm"])
-        sigmoid_corrected = np.asarray(entry["sigmoid_corrected"])
+        scaled_sigmoid_corrected = np.asarray(entry["scaled_sigmoid_corrected"])
         A = entry["A"]
         gamma = entry["gamma"]
         y_min = entry["y_min"]
@@ -475,7 +558,7 @@ def collect_replicate_differences(
         y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
 
         # Re‑fit spline on the replicate's corrected data
-        spline = PchipInterpolator(ppm, sigmoid_corrected)
+        spline = PchipInterpolator(ppm, scaled_sigmoid_corrected)
         y_spline = spline(x_common)
 
         diff = y_lor - y_spline
