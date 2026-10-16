@@ -10,3 +10,4 @@ cache/
 tests/__init__.py
 output/
 data/
+compare*/
