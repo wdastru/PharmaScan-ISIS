@@ -14,6 +14,21 @@ from termcolor import colored
 from constants import get_default_visibility
 from config import METABOLITE_REGIONS
 
+def group_color(group, all_groups):
+    """Colore coerente per ogni gruppo.
+       Reference = nero. Poi group 1 = blu, group 2 = arancione, poi verde, rosso, viola, marrone."""
+    if group.get("is_reference", False):
+        return "black"
+    # trova la posizione di questo gruppo tra i NON-reference
+    non_refs = [g for g in all_groups if not g.get("is_reference", False)]
+    idx = 0
+    for k, g in enumerate(non_refs):
+        if g is group or g.get("label") == group.get("label"):
+            idx = k
+            break
+    palette = ["blue", "orange", "green", "red", "purple", "brown"]
+    return palette[idx % len(palette)]
+
 def plot_z_spectrum(
     x, 
     y, 
@@ -33,24 +48,29 @@ def plot_z_spectrum(
     diff_y=None, 
     diff_label="Difference (Envelope - Spline)",
     visibility: Optional[Dict[str, bool]] = None,
-    window_title: Optional[str] = None
+    window_title: Optional[str] = None,
+    color: Optional[str] = None,
 ) -> Figure:
     # Se non fornito, usa i default globali
     if visibility is None:
         visibility = get_default_visibility()
+            # Colore del gruppo: se fornito lo uso per dati e spline,
+    # altrimenti mantengo i vecchi colori (dati blu, spline rossa)
+    data_color = color if color is not None else "b"
+    spline_color = color if color is not None else "r"
     
     fig = plt.figure(num=window_title, figsize=(8, 5))
 
     # Data points
     if visibility.get("data", True):
         if y_std_data is not None:
-            plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color='b', label='Data')
+            plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color=data_color, label='Data')
         else:
-            plt.plot(x, y, 'o', color='b', label='Data')
+            plt.plot(x, y, 'o', color=data_color, label='Data')
                 
     # Spline fit
     if visibility.get("spline", True):
-        plt.plot(x_fit, y_fit, 'r-', label=fit_label)
+        plt.plot(x_fit, y_fit, '-', color=spline_color, label=fit_label)
 
     # Lorentzian envelope
     if add_lorentz and lorentzian_envelope_results is not None and visibility.get("lorentzian", True):
@@ -377,3 +397,74 @@ def plot_group_difference(
     plt.show(block=False)
     return fig
 
+def plot_all_z_spectra(
+    groups,
+    analysis_results,
+    folder_keys_per_group,
+    visibility=None,
+    title=None,
+    window_title=None,
+):
+    """
+    Un UNICO grafico con TUTTI gli Z-spectra sovrapposti.
+
+    Stile identico a plot_z_spectrum (punti 'o' default, linea continua spessore default).
+    Colore per gruppo: reference nero, group 1 blu, group 2 arancione, ...
+    I dataset singoli sono semitrasparenti (per vedere la sovrapposizione),
+    la curva MEDIA di ogni gruppo è opaca e più spessa.
+    """
+    if visibility is None:
+        visibility = get_default_visibility()
+
+    show_data    = visibility.get("data", True)
+    show_legend  = visibility.get("legend", {}).get("z-spectra", True)
+    show_regions = visibility.get("regions", True)
+
+    fig, ax = plt.subplots(figsize=(10, 6), num=window_title)
+    cmap = plt.get_cmap("tab10")
+
+    for gi, grp in enumerate(groups):
+        label = grp["label"]
+        color = group_color(grp, groups)
+        keys  = folder_keys_per_group[gi] if gi < len(folder_keys_per_group) else []
+
+        # 1) Curve dei singoli dataset del gruppo.
+        #    Stesso stile dello spettro singolo (linea continua default, dots default)
+        #    ma con trasparenza per non accavallarsi confusamente.
+        for key in keys:
+            sf = analysis_results.get(key, {}).get("spline_fit_results", {})
+            if not sf.get("fit_successful"):
+                continue
+            ax.plot(sf["x_fit"], sf["y_fit"], "-",
+                    color=color, linewidth=1.5, alpha=0.4)
+            if show_data:
+                ax.plot(sf["x"], sf["y"], "o",
+                        color=color, markersize=6, alpha=0.35)
+
+        # 2) Curva MEDIA del gruppo: stesso colore, ma più spessa e opaca
+        sf_mean = analysis_results.get(label, {}).get("spline_fit_results", {})
+        if sf_mean.get("fit_successful"):
+            ax.plot(sf_mean["x_fit"], sf_mean["y_fit"], "-",
+                    color=color, linewidth=2.5, label=label)
+            if show_data:
+                ax.plot(sf_mean["x"], sf_mean["y"], "o",
+                        color=color, markersize=6)
+
+    # 3) Regioni dei metaboliti sullo sfondo
+    if show_regions:
+        for idx, (name, region) in enumerate(METABOLITE_REGIONS.items()):
+            if region.get("ppm") and len(region["ppm"]) == 2:
+                start, end = region["ppm"]
+                ax.axvspan(start, end, facecolor=cmap(idx % 10),
+                           alpha=0.15, edgecolor="none")
+
+    ax.invert_xaxis()
+    ax.set_xlabel("Saturation ppm")
+    ax.set_ylabel("Intensity (corrected)")
+    ax.set_title(title or "All Z-spectra (overlay)")
+    ax.grid(True, alpha=0.3)
+    if show_legend:
+        ax.legend()
+    fig.tight_layout()
+    plt.show(block=False)
+    return fig
