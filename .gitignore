@@ -11,3 +11,4 @@ tests/__init__.py
 output/
 data/
 worktree-*/
+.gitignore
