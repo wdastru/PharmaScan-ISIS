@@ -491,6 +491,20 @@ def collect_replicate_differences(
     mean_spline,     _              = _mean_sem(splines_arr)
     mean_corrected,  sem_corrected  = _mean_sem(corrected_arr)
 
+    # --- Experimental data points (original x grid, averaged across replicates) ---
+    # Use the first replicate's corrected ppm grid as reference; interpolate the others.
+    x_data = np.asarray(analysis_results[folder_keys[0]]["zero_corrected_ppm"])
+    corrected_at_data = []
+    for key in folder_keys:
+        ppm = np.asarray(analysis_results[key]["zero_corrected_ppm"])
+        sc = np.asarray(analysis_results[key]["sigmoid_corrected"])
+        if np.array_equal(ppm, x_data):
+            corrected_at_data.append(sc)
+        else:
+            corrected_at_data.append(np.interp(x_data, ppm, sc))
+    corrected_at_data_arr = np.array(corrected_at_data)
+    mean_corrected_at_data, sem_corrected_at_data = _mean_sem(corrected_at_data_arr)
+
     result = {
         "x_common":        x_common,
         "mean_diff":       mean_diff,
@@ -500,6 +514,9 @@ def collect_replicate_differences(
         "mean_corrected":  mean_corrected,
         "sem_corrected":   sem_corrected,
         "individual_diffs": [d for d in diffs],
+        "x_data":                 x_data,
+        "mean_corrected_at_data": mean_corrected_at_data,
+        "sem_corrected_at_data":  sem_corrected_at_data,
     }
     if compute_integrals:
         result["integrals"] = compute_regions_integrals(x_common, mean_diff)

@@ -48,10 +48,6 @@ from utils import (
     ask_user_for_ppm_range, ask_yes_no, get_git_hash
 )
 
-from fitting import (
-    spline_fit
-)
-
 print(f"Using nmrglue version: {ng.__version__}")
 
 CACHE_DIR.mkdir(exist_ok=True)
@@ -501,9 +497,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             mean_sat = np.mean(sat_arr, axis=0).tolist()
             sd_max_vals = np.std(val_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(val_arr[0])
 
-            # Ppm axis for the raw data (mean saturation freq / BF1)
-            mean_zero_ppm = [mean_sat[i] / group_meta[grp_idx]["bf1"] for i in range(len(mean_sat))]
-
             # --- Collect per-replicate differences on a common grid ---
             coll_res = collect_replicate_differences(
                 keys, analysis_results, compute_integrals=True
@@ -519,7 +512,27 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "max_vals": mean_max_vals,
                 "sat_trans_hz": mean_sat,
                 "sd_max_vals": sd_max_vals,
-                "spline_fit_results": spline_fit(x=mean_zero_ppm, y=mean_max_vals, x_fit=x_common),
+                # Spline fit on sigmoid-corrected data (mean of per-replicate Pchip).
+                # Coherent with per-replicate plots and with mean_diff_y.
+                "spline_fit_results": {
+                    "x": x_common,
+                    "y": coll_res["mean_spline"],
+                    "x_fit": x_common,
+                    "y_fit": coll_res["mean_spline"],
+                    "fit_label": "Spline fit (mean of replicates, corrected)",
+                    "fit_successful": True,
+                },
+                # Lorentzian envelope on corrected data (mean of per-replicate).
+                "lorentzian_envelope_results": {
+                    "x": x_common,
+                    "y": coll_res["mean_lorentzian"],
+                    "fit_label": "Lorentzian envelope (mean of replicates)",
+                    "fit_successful": True,
+                },
+                # Sigmoid-corrected z-spectrum, mean ± SEM on the common grid.
+                "x_data":                 coll_res["x_data"],
+                "mean_corrected_at_data": coll_res["mean_corrected_at_data"],
+                "sem_corrected_at_data":  coll_res["sem_corrected_at_data"],
                 "bf1": group_meta[grp_idx]["bf1"],
                 "x_common": x_common,
                 "mean_diff_y": mean_diff,

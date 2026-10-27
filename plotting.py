@@ -329,43 +329,82 @@ def plot_group_difference(
     window_title: Optional[str] = None,
 ) -> Figure:
     """
-    Plot the mean difference curve ± SEM, the raw mean data points, and metabolite regions.
+    Plot the group-averaged z-spectrum, Lorentzian envelope, spline fit,
+    and mean difference curve ± SEM, all on the common ppm grid.
+
+    Data points default to the sigmoid-corrected z-spectrum (mean ± SEM).
+    Set visibility["corrected"] = False to fall back to raw mean (uncorrected).
     """
     if visibility is None:
         visibility = get_default_visibility()
 
     fig, ax = plt.subplots(num=window_title, figsize=(8, 5))
 
-    # Raw mean data with error bars
+    # X-axis for all corrected quantities: the common grid.
+    x_common = np.array(group_data["x_common"])
+
+    # --- Data points ---
     if visibility.get("data", True):
-        raw_ppm = np.array(group_data["sat_trans_hz"]) / group_data["bf1"]
-        raw_vals = np.array(group_data["max_vals"])
-        raw_sd = np.array(group_data.get("sd_max_vals", [0]*len(raw_vals)))
-        ax.errorbar(raw_ppm, raw_vals, yerr=raw_sd, fmt='o', color='b', label='Raw mean')
+        use_corrected = (
+            visibility.get("corrected", True)
+            and "mean_corrected" in group_data
+            and "sem_corrected" in group_data
+        )
+        use_corrected = (
+            visibility.get("corrected", True)
+            and "mean_corrected_at_data" in group_data
+            and "sem_corrected_at_data" in group_data
+        )
+        if use_corrected:
+            x_pts = np.array(group_data["x_data"])
+            y_pts = np.array(group_data["mean_corrected_at_data"])
+            yerr_pts = np.array(group_data["sem_corrected_at_data"])
+            ax.errorbar(x_pts, y_pts, yerr=yerr_pts, fmt='o', color='b',
+                        markersize=5,
+                        label='Z-spectrum corrected (mean ± SEM)')
+        elif "sat_trans_hz" in group_data and "max_vals" in group_data:
+            # Fallback: raw mean z-spectrum, uncorrected.
+            raw_ppm = np.array(group_data["sat_trans_hz"]) / group_data["bf1"]
+            raw_vals = np.array(group_data["max_vals"])
+            raw_sd = np.array(group_data.get("sd_max_vals", [0] * len(raw_vals)))
+            ax.errorbar(raw_ppm, raw_vals, yerr=raw_sd, fmt='o', color='b',
+                        label='Raw mean (uncorrected)')
 
+    # --- Spline fit (mean of per-replicate splines, on corrected data) ---
     if visibility.get("spline", True):
-        ax.plot(group_data.get("spline_fit_results", {}).get("x_fit", []), group_data.get("spline_fit_results", {}).get("y_fit", []), 'r-', linewidth=1.5, label='Spline fit')
+        sp = group_data.get("spline_fit_results", {})
+        if sp.get("fit_successful") and sp.get("y_fit") is not None:
+            ax.plot(sp["x_fit"], sp["y_fit"], 'r-', linewidth=1.5,
+                    label=sp.get("fit_label", "Spline fit"))
 
-    # Mean difference curve
-    x = np.array(group_data["x_common"])
+    # --- Lorentzian envelope (mean of per-replicate envelopes) ---
+    if visibility.get("lorentzian", True):
+        lor = group_data.get("lorentzian_envelope_results")
+        if lor and lor.get("y") is not None:
+            ax.plot(lor["x"], lor["y"], 'g--', linewidth=2,
+                    label=lor.get("fit_label", "Lorentzian envelope"))
+
+    # --- Mean difference curve ± SEM ---
     mean_diff = np.array(group_data["mean_diff_y"])
     sem_diff = np.array(group_data["sem_diff_y"])
 
     if visibility.get("difference", True):
-        ax.plot(x, mean_diff, 'm-', linewidth=1.5, label='Mean diff (Lor−Spline)')
-        ax.fill_between(x, mean_diff - sem_diff, mean_diff + sem_diff,
+        ax.plot(x_common, mean_diff, 'm-', linewidth=1.5,
+                label='Mean diff (Lor−Spline)')
+        ax.fill_between(x_common, mean_diff - sem_diff, mean_diff + sem_diff,
                         color='m', alpha=0.2, label='± SEM')
 
-    # Metabolite regions
+    # --- Metabolite regions ---
     if visibility.get("regions", True):
         cmap = plt.get_cmap('tab10')
         for idx, (name, region) in enumerate(METABOLITE_REGIONS.items()):
             if region["ppm"] is not None and len(region["ppm"]) == 2:
                 start, end = region["ppm"]
-                ax.axvspan(start, end, facecolor=cmap(idx % 10), alpha=0.25, edgecolor='none', label=name)
+                ax.axvspan(start, end, facecolor=cmap(idx % 10),
+                           alpha=0.25, edgecolor='none', label=name)
             else:
                 print(colored(f"Region {name} is not defined properly. Aborting.", "red"))
-                exit(1)    
+                exit(1)
 
     ax.invert_xaxis()
     ax.set_xlabel("Saturation ppm")
@@ -376,4 +415,3 @@ def plot_group_difference(
         ax.legend()
     plt.show(block=False)
     return fig
-
