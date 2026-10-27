@@ -10,18 +10,18 @@ from pathlib import Path
 # Analysis / fitting defaults
 # ----------------------------------------------------------------------
 N_POINTS_FIT: int = 200
-CACHE_VERSION: int = 2
+CACHE_VERSION: int = 3
 
 # ----------------------------------------------------------------------
 # Default metabolite regions (immutable template)
 # ----------------------------------------------------------------------
-DEFAULT_METABOLITE_REGIONS: dict[str, list[float]] = {
-    "Glycolytic PMEs": [5.5, 9.0],
-    "Pi": [4.3, 5.3],
-    "PEP 1,3 BPG": [1.0, 4.3],
-    "GAMMA-ATP": [-3.5, -1.3],
-    "ALPHA,BETA-ADP": [-6, -3],
-    "ALPHA-ATP": [-9, -6]
+DEFAULT_METABOLITE_REGIONS: dict[str, dict] = {
+    "Glycolytic PMEs": {"ppm": [5.5, 9.0],  "width": [1.0, None], "height": [0.0, None]},
+    "Pi":              {"ppm": [4.3, 5.3],  "width": [1.0, None], "height": [0.0, None]},
+    "PEP 1,3 BPG":     {"ppm": [1.0, 4.3],  "width": [1.0, None], "height": [0.0, None]},
+    "GAMMA-ATP":       {"ppm": [-3.5, -1.3],"width": [1.0, None], "height": [0.0, None]},
+    "ALPHA,BETA-ADP":  {"ppm": [-6, -3],    "width": [1.0, None], "height": [0.0, None]},
+    "ALPHA-ATP":       {"ppm": [-9, -6],    "width": [1.0, None], "height": [0.0, None]},
 }
 
 # ----------------------------------------------------------------------
