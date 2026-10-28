@@ -250,14 +250,25 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
                    "fit_successful": True}
 
     # 5. Correct with sigmoid
-    linspace_indices = [np.argmin(np.abs(x_common - v)) for v in zero_corrected_ppm]
-    sigmoid_corrected = []
-    for i, idx in enumerate(linspace_indices):
-        env_val = sigmoid_env["y"][idx]
-        if np.abs(env_val) < 1e-12:
-            sigmoid_corrected.append(max_vals_sorted[i])
-        else:
-            sigmoid_corrected.append(max_vals_sorted[i] / env_val)
+    # Evaluate the sigmoid envelope EXACTLY at the experimental ppm points,
+    # instead of sampling it on x_common (200 points) and mapping each data
+    # point to the nearest grid node. The previous approach introduced a
+    # quantization error: when the number of saturation frequencies exceeded
+    # N_POINTS_FIT, several data points shared the same envelope value, so
+    # sigmoid_corrected was not exactly max_vals / sigmoid(ppm).
+    #
+    # Using the analytical formula at the actual data points guarantees that
+    # sigmoid_corrected[i] == max_vals_sorted[i] / constrained_sigmoid(ppm_i, L, R, tau)
+    # for every i, which is what a manual recomputation would produce.
+    env_at_data = constrained_sigmoid(
+        np.asarray(zero_corrected_ppm), L, R, tau, x0=0.0
+    )
+    sigmoid_corrected = [
+        max_vals_sorted[i] / env_at_data[i]
+        if abs(env_at_data[i]) > 1e-12
+        else max_vals_sorted[i]
+        for i in range(len(max_vals_sorted))
+    ]
 
     # 6. Lorentzian envelope on corrected data
     A, gamma = estimate_constrained_lorentzian(zero_corrected_ppm, sigmoid_corrected)

@@ -10,7 +10,7 @@ from pathlib import Path
 # Analysis / fitting defaults
 # ----------------------------------------------------------------------
 N_POINTS_FIT: int = 200
-CACHE_VERSION: int = 3
+CACHE_VERSION: int = 4
 
 # ----------------------------------------------------------------------
 # Default metabolite regions (immutable template)
