@@ -205,6 +205,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     folder_name_short = f"{base_name}_{counter}"
                     counter += 1
                 analysis_results[folder_name_short] = {}
+                analysis_results[folder_name_short]["source_type"] = "pv"
                 folder_keys_per_group[grp_idx].append(folder_name_short)
 
                 sat_trans_hz, work_offset_hz = extract_parameters(folder, "method")
@@ -310,6 +311,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     folder_name_short = f"{base_name}_{counter}"
                     counter += 1
                 analysis_results[folder_name_short] = {}
+                analysis_results[folder_name_short]["source_type"] = "ts"
                 folder_keys_per_group[grp_idx].append(folder_name_short)
 
                 work_offset_hz = extract_parameters(folder, "acqu2")
@@ -460,7 +462,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 )
                 # No max_indexes, zero_corrected_ppm or sat_trans_hz needed; store what we have
                 analysis_results[key].update({
+                    "bf1": value,
+                    "sat_trans_hz": sat_trans_hz,   # già ordinato insieme a max_vals
                     "max_vals": max_vals,
+                    "source_type": "text",
                 })
                 analysis_results[key].update(res)
                 # --- Store raw data for later group averaging ---
