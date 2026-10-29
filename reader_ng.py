@@ -224,10 +224,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         #return
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
-                analysis_results[folder_name_short]["uc"] = uc
                 analysis_results[folder_name_short]["bf1"] = bf1
-                if group_meta[grp_idx].get("uc") is None:
-                    group_meta[grp_idx]["uc"] = uc
+                if group_meta[grp_idx].get("bf1") is None:
                     group_meta[grp_idx]["bf1"] = bf1
 
                 spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
@@ -332,10 +330,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         #return
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
-                analysis_results[folder_name_short]["uc"] = uc
                 analysis_results[folder_name_short]["bf1"] = bf1
-                if group_meta[grp_idx].get("uc") is None:
-                    group_meta[grp_idx]["uc"] = uc
+                if group_meta[grp_idx].get("bf1") is None:
                     group_meta[grp_idx]["bf1"] = bf1
 
                 spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
