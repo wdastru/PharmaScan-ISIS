@@ -278,7 +278,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     "max_vals": max_vals,
                 })
                 analysis_results[folder_name_short].update(res)
-                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
+                group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
                 # --- Calculate integrals for this individual folder ---
                 
@@ -384,7 +384,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     "max_vals": max_vals,
                 })
                 analysis_results[folder_name_short].update(res)
-                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
+                group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
                 # --- Calculate integrals for this individual folder ---
                 
@@ -445,8 +445,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     print(colored(f"Error reading file {folder}: {e}", "red", attrs=["bold"]))
                     continue
 
-                max_indexes = [0] * len(max_vals)
-
                 # --- Sort by ppm ---
                 combined = list(zip(zero_corrected_ppm, max_vals, sat_trans_hz))
                 combined.sort()
@@ -466,7 +464,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 })
                 analysis_results[key].update(res)
                 # --- Store raw data for later group averaging ---
-                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
+                group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
                 plot_z_spectrum(
                     x=res["spline_fit_results"]["x"],
@@ -491,8 +489,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             keys = folder_keys_per_group[grp_idx]
 
             # --- Raw data for plotting (mean of max_vals) ---
-            val_arr = np.array([d[1] for d in group_raw[grp_idx]])
-            sat_arr = np.array([d[2] for d in group_raw[grp_idx]])
+            val_arr = np.array([d[0] for d in group_raw[grp_idx]])
+            sat_arr = np.array([d[1] for d in group_raw[grp_idx]])
             n = len(group_raw[grp_idx])
             mean_max_vals = np.mean(val_arr, axis=0).tolist()
             mean_sat = np.mean(sat_arr, axis=0).tolist()
@@ -509,7 +507,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # --- Store under the group label ---
             analysis_results[label] = {
-                "max_indexes": np.round(np.mean(np.array([d[0] for d in group_raw[grp_idx]]), axis=0)).tolist(),
                 "max_vals": mean_max_vals,
                 "sat_trans_hz": mean_sat,
                 "sd_max_vals": sd_max_vals,
