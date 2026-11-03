@@ -345,6 +345,8 @@ def plot_group_difference(
 
     # --- Data points ---
     if visibility.get("data", True):
+
+        # TODO: something strange is going on here: the first assignment to use_corrected is immediately overwritten by the second one.
         use_corrected = (
             visibility.get("corrected", True)
             and "mean_corrected" in group_data
