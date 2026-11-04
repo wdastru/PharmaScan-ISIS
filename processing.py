@@ -62,7 +62,7 @@ def find_max_vals(spectra, start_idx, end_idx):
     val: float = 0.0
     idx: int = 0
     for exp_idx, spec in spectra.items():
-        val, idx = find_maximum(spec, start=start_idx, end=end_idx)
+        val, idx = find_maximum(np.real(spec), start=start_idx, end=end_idx)
         if val > global_max:
             global_max = val
         if val < global_min:

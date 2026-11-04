@@ -228,13 +228,21 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
                 else:
-                    if group_meta[grp_idx]["work_offset_hz"] != work_offset_hz:
+                    # Compare with tolerance: SFO1 values differ only in the
+                    # last few decimal digits between replicates of the same
+                    # experiment (float parsing noise, rtol ~ 1e-8). Exact `!=`
+                    # was triggering false positives. rtol=1e-6 is ~30x above
+                    # the observed noise.
+                    if not np.allclose(
+                        group_meta[grp_idx]["work_offset_hz"], work_offset_hz,
+                        rtol=1e-6, atol=1e-6
+                    ):
                         print(colored(
-                            f"Error: different work_offset in group '{label}'", 
-                            "red", 
-                            attrs=["bold"])
-                        )
-                        #return
+                            f"Warning: different work_offset in group '{label}' "
+                            f"(prev={group_meta[grp_idx]['work_offset_hz']}, "
+                            f"new={work_offset_hz})",
+                            "yellow"
+                        ))
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
                 analysis_results[folder_name_short]["bf1"] = bf1
@@ -333,16 +341,24 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
                 analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
 
-                if group_meta[grp_idx].get("work_offset_hz") is None:
+                                if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
                 else:
-                    if group_meta[grp_idx]["work_offset_hz"] != work_offset_hz:
+                    # Compare with tolerance: SFO1 values differ only in the
+                    # last few decimal digits between replicates of the same
+                    # experiment (float parsing noise, rtol ~ 1e-8). Exact `!=`
+                    # was triggering false positives. rtol=1e-6 is ~30x above
+                    # the observed noise.
+                    if not np.allclose(
+                        group_meta[grp_idx]["work_offset_hz"], work_offset_hz,
+                        rtol=1e-6, atol=1e-6
+                    ):
                         print(colored(
-                            f"Error: different work_offset in group '{label}'", 
-                            "red", 
-                            attrs=["bold"])
-                        )
-                        #return
+                            f"Warning: different work_offset in group '{label}' "
+                            f"(prev={group_meta[grp_idx]['work_offset_hz']}, "
+                            f"new={work_offset_hz})",
+                            "yellow"
+                        ))
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
                 analysis_results[folder_name_short]["bf1"] = bf1
