@@ -5,17 +5,21 @@ from pathlib import Path
 from scipy.integrate import simpson
 from scipy.interpolate import PchipInterpolator
 
-from reader_ng import (
+from constants import (
+    N_POINTS_FIT,
+    get_default_metabolite_regions
+)
+from data_io import parameter_extract
+from fitting import (
+    spline_fit,
+    constrained_lorentzian,
+)
+from processing import (
     find_maximum,
     compute_regions_integrals,
-    DEFAULT_METABOLITE_REGIONS,
-    N_POINTS_FIT,
-    parameter_extract,
-    _compute_group_stats,
-    spline_fit,
     build_common_ppm_grid,
     collect_replicate_differences,
-    constrained_lorentzian
+    _compute_group_stats,
 )
 
 # ----------------------------------------------------------------------
@@ -43,15 +47,16 @@ class TestComputeRegionsIntegrals:
         x_fit = np.linspace(-10, 10, N_POINTS_FIT)
         y_fit = np.ones_like(x_fit)
         integrals = compute_regions_integrals(x_fit, y_fit)
-        for region, (start, end) in DEFAULT_METABOLITE_REGIONS.items():
+        for region, spec in get_default_metabolite_regions().items():
+            start, end = spec["ppm"]
             expected = end - start
             assert np.isclose(integrals[region], expected, rtol=1e-6, atol=1e-9), \
-                f"Region {region}: expected {expected}, got {integrals[region]}"
+                f"Region {region}: expected {expected}, got {integrals[region]} "
 
-    @pytest.mark.parametrize("region", list(DEFAULT_METABOLITE_REGIONS.keys()))
+    @pytest.mark.parametrize("region", list(get_default_metabolite_regions().keys()))
     def test_triangle(self, region):
         """Triangle peaking at 1 → integral = width/2."""
-        start, end = DEFAULT_METABOLITE_REGIONS[region]
+        start, end = get_default_metabolite_regions()[region]["ppm"]
         x_fit = np.linspace(start, end, N_POINTS_FIT)
         centre = (start + end) / 2
         width = end - start
@@ -71,7 +76,8 @@ class TestComputeRegionsIntegrals:
         x_full = np.linspace(-10, 10, 2000)
         y_full = oscillatory(x_full)
         reference = {}
-        for region, (start, end) in DEFAULT_METABOLITE_REGIONS.items():
+        for region, spec in get_default_metabolite_regions().items():
+            start, end = spec["ppm"]
             mask = (x_full >= start) & (x_full <= end)
             if np.any(mask):
                 x_reg = x_full[mask]
@@ -86,7 +92,7 @@ class TestComputeRegionsIntegrals:
         y_fit = oscillatory(x_fit)
         computed = compute_regions_integrals(x_fit, y_fit)
 
-        for region in DEFAULT_METABOLITE_REGIONS:
+        for region in get_default_metabolite_regions():
             assert np.isclose(computed[region], reference[region], rtol=1e-2, atol=1e-5), \
                 f"Region {region}: reference {reference[region]:.6f}, got {computed[region]:.6f}"
 
