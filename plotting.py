@@ -347,11 +347,6 @@ def plot_group_difference(
     if visibility.get("data", True):
         use_corrected = (
             visibility.get("corrected", True)
-            and "mean_corrected" in group_data
-            and "sem_corrected" in group_data
-        )
-        use_corrected = (
-            visibility.get("corrected", True)
             and "mean_corrected_at_data" in group_data
             and "sem_corrected_at_data" in group_data
         )
