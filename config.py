@@ -262,6 +262,28 @@ def save_analysis_results(config_name: str, analysis_results: dict) -> None:
     with open(Path(OUTPUT_DIR / f"{config_name}{version}.json"), "w", encoding="utf-8") as f:
         json.dump(analysis_results, f, indent=2, cls=SafeEncoder, ensure_ascii=False)   # indent for human readability
 
+def _resolve_group_source(grp: Dict[str, Any]) -> Tuple[str, list]:
+    """
+    Return (source_type, entries) for a group. source_type is one of
+    "pv", "ts", "text"; entries is the corresponding list.
+
+    ensure_complete_config guarantees that exactly one of
+    folders / topspin_folders / files is populated (via
+    _enforce_pure_group_sources). A group with zero sources reaching
+    this function means the caller bypassed ensure_complete_config;
+    raising is preferable to silently producing an empty group.
+    """
+    if grp.get("folders"):
+        return "pv", grp["folders"]
+    if grp.get("topspin_folders"):
+        return "ts", grp["topspin_folders"]
+    if grp.get("files"):
+        return "text", grp["files"]
+    raise ValueError(
+        f"Group '{grp.get('label', '<unnamed>')}' has no data source. "
+        f"ensure_complete_config should have populated one."
+    )
+
 def _enforce_pure_group_sources(groups: List[Dict[str, Any]]) -> bool:
     """
     Ensure each group has at most one populated data source

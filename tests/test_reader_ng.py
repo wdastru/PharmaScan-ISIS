@@ -5,7 +5,7 @@ from pathlib import Path
 from scipy.integrate import simpson
 from scipy.interpolate import PchipInterpolator
 
-from config import _enforce_pure_group_sources
+from config import _enforce_pure_group_sources, _resolve_group_source
 
 from constants import (
     N_POINTS_FIT,
@@ -533,3 +533,41 @@ class TestEnforcePureGroupSources:
             {"label": "b", "folders": ["/x"]},
         ]
         assert _enforce_pure_group_sources(groups) is False                
+
+class TestResolveGroupSource:
+    def test_pv(self):
+        grp = {"label": "g", "folders": ["/a"], "topspin_folders": [], "files": []}
+        assert _resolve_group_source(grp) == ("pv", ["/a"])
+
+    def test_ts(self):
+        grp = {"label": "g", "folders": [], "topspin_folders": ["/b"], "files": []}
+        assert _resolve_group_source(grp) == ("ts", ["/b"])
+
+    def test_text(self):
+        grp = {"label": "g", "folders": [], "topspin_folders": [], "files": ["/c"]}
+        assert _resolve_group_source(grp) == ("text", ["/c"])
+
+    def test_empty_raises(self):
+        grp = {"label": "g", "folders": [], "topspin_folders": [], "files": []}
+        with pytest.raises(ValueError, match="no data source"):
+            _resolve_group_source(grp)
+
+    def test_missing_keys_raises(self):
+        # Only "label" present: no source keys at all
+        grp = {"label": "g"}
+        with pytest.raises(ValueError, match="no data source"):
+            _resolve_group_source(grp)
+
+    def test_unnamed_group_raises_with_placeholder(self):
+        with pytest.raises(ValueError, match="<unnamed>"):
+            _resolve_group_source({})
+
+    def test_mixed_priority_pv(self):
+        # Should not happen after enforcement, but the helper is still
+        # well-defined on mixed input and documented by its priority order.
+        grp = {"label": "g", "folders": ["/a"], "topspin_folders": ["/b"], "files": ["/c"]}
+        assert _resolve_group_source(grp) == ("pv", ["/a"])
+
+    def test_mixed_priority_ts(self):
+        grp = {"label": "g", "folders": [], "topspin_folders": ["/b"], "files": ["/c"]}
+        assert _resolve_group_source(grp) == ("ts", ["/b"])        

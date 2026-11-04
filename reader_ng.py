@@ -21,8 +21,8 @@ from constants import (
 )
 
 from config import (
-    METABOLITE_REGIONS, save_config, select_or_create_config, 
-    save_analysis_results, ensure_complete_config
+    METABOLITE_REGIONS, _resolve_group_source, save_config, select_or_create_config, 
+    save_analysis_results, ensure_complete_config, _resolve_group_source
 )
 
 from plotting import (
@@ -175,27 +175,12 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     for grp_idx, grp in enumerate(groups):
         label = grp["label"]
 
-        # Determine entry type for this group
-        is_PV_folder = bool(grp.get("folders"))
-        is_TS_folder = bool(grp.get("topspin_folders"))
-        is_file   = bool(grp.get("files"))
-        if is_PV_folder and is_file: # TODO: handle topspin folders if needed
-            print(colored(
-                f"Warning: Group '{label}' has both folders and files. Only folders will be used.",
-                "yellow"
-            ))
-            is_file = False
-            entries = grp["folders"]
-        elif is_PV_folder:
-            entries = grp["folders"]
-        elif is_TS_folder:
-            entries = grp["topspin_folders"]
-        elif is_file:
-            entries = grp["files"]
-        else:
-            pass
+        # ensure_complete_config guarantees exactly one data source per
+        # group (see _enforce_pure_group_sources). A group with no source
+        # here means the caller bypassed ensure_complete_config.
+        source_type, entries = _resolve_group_source(grp)
                     
-        if is_PV_folder:   # Paravision BRUKER data
+        if source_type == "pv":   # Paravision BRUKER data
             folders = entries
             for folder in folders:
                 base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
@@ -300,7 +285,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     visibility=config.get("plot_visibility", get_default_visibility()),
                     window_title=f" {label}: spline fit for {folder_name_short}"
                 )
-        elif is_TS_folder:   # Topspin BRUKER data
+        elif source_type == "ts":   # Topspin BRUKER data
             folders = entries
             for folder in folders:
                 base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
@@ -406,7 +391,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     visibility=config.get("plot_visibility", get_default_visibility()),
                     window_title=f" {label}: spline fit for {folder_name_short}"
                 )
-        else:   # txt data files (sat_trans_hz vs max_vals) 
+        else:   # source_type == "text": txt data files (sat_trans_hz vs max_vals)
             files = entries
             for file_idx, folder in enumerate(files):
                 base_name = folder.stem
