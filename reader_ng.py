@@ -9,6 +9,7 @@ a saturation transfer curve.
 Supports multiple groups (reference + any number of sample groups).
 """
 
+import copy
 import nmrglue as ng
 import numpy as np
 import matplotlib.pyplot as plt
@@ -56,7 +57,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 # ----------------------------------------------------------------------
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     METABOLITE_REGIONS.clear()
-    METABOLITE_REGIONS.update(config.get("metabolite_regions", DEFAULT_METABOLITE_REGIONS))
+    METABOLITE_REGIONS.update(copy.deepcopy(config["metabolite_regions"]))
     plt.ion()
 
     groups = config["groups"]
