@@ -16,7 +16,6 @@ from typing import List, Dict, Any
 from termcolor import colored
 
 from constants import (
-    DEFAULT_METABOLITE_REGIONS, 
     CACHE_DIR, get_default_visibility
 )
 

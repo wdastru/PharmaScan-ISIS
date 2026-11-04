@@ -16,7 +16,7 @@ import os
 from constants import (
     CONFIG_DIR,
     OUTPUT_DIR,
-    DEFAULT_METABOLITE_REGIONS,
+    get_default_metabolite_regions
 )
 
 from data_io import (
@@ -36,7 +36,7 @@ from constants import (
 # ----------------------------------------------------------------------
 # This is the single mutable copy used across the package.
 # To reset to defaults, call reset_metabolite_regions().
-METABOLITE_REGIONS = DEFAULT_METABOLITE_REGIONS.copy()
+METABOLITE_REGIONS = get_default_metabolite_regions()
 
 # ----------------------------------------------------------------------
 # Directory helpers
@@ -468,7 +468,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
 
     # ---------- Metabolite regions defaults ----------
     if "metabolite_regions" not in config_data:
-        config_data["metabolite_regions"] = DEFAULT_METABOLITE_REGIONS
+        config_data["metabolite_regions"] = get_default_metabolite_regions()
         modified = True
 
     else:
