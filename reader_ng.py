@@ -336,8 +336,10 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
                 analysis_results[folder_name_short]["bf1"] = bf1
+
                 # Same fix as the PV branch: check for the KEY, not for an
                 # empty dict (work_offset_hz is already in group_meta here).
+
                 if "bf1" not in group_meta[grp_idx]:
                     group_meta[grp_idx]["bf1"] = bf1
 

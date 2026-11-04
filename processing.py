@@ -461,7 +461,6 @@ def collect_replicate_differences(
     diffs: List[np.ndarray] = []
     lorenzians: List[np.ndarray] = []
     splines: List[np.ndarray] = []
-    corrected_common: List[np.ndarray] = []
 
     for key in folder_keys:
         entry = analysis_results[key]
@@ -470,10 +469,6 @@ def collect_replicate_differences(
         A = entry["A"]
         gamma = entry["gamma"]
         y_min = entry["y_min"]
-
-        # Sigmoid-corrected z-spectrum interpolated on the common grid
-        corrected_interp = PchipInterpolator(ppm, sigmoid_corrected)(x_common)
-        corrected_common.append(corrected_interp)
 
         # Lorentzian envelope on the common grid
         y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
@@ -488,7 +483,6 @@ def collect_replicate_differences(
     diffs_arr      = np.array(diffs)
     lorenzians_arr = np.array(lorenzians)
     splines_arr    = np.array(splines)
-    corrected_arr  = np.array(corrected_common)
 
     n = len(diffs)
 
@@ -500,7 +494,6 @@ def collect_replicate_differences(
     mean_diff,       sem_diff       = _mean_sem(diffs_arr)
     mean_lorentzian, _              = _mean_sem(lorenzians_arr)
     mean_spline,     _              = _mean_sem(splines_arr)
-    mean_corrected,  sem_corrected  = _mean_sem(corrected_arr)
 
     # --- Experimental data points (original x grid, averaged across replicates) ---
     # Use the first replicate's corrected ppm grid as reference; interpolate the others.
@@ -522,8 +515,6 @@ def collect_replicate_differences(
         "sem_diff":        sem_diff,
         "mean_lorentzian": mean_lorentzian,
         "mean_spline":     mean_spline,
-        "mean_corrected":  mean_corrected,
-        "sem_corrected":   sem_corrected,
         "individual_diffs": [d for d in diffs],
         "x_data":                 x_data,
         "mean_corrected_at_data": mean_corrected_at_data,
