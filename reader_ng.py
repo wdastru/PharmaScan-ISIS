@@ -210,7 +210,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
                 sat_trans_hz, work_offset_hz = extract_parameters(folder, "method")
                 analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
-                analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
 
                 if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
@@ -277,10 +276,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
                 res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
-                analysis_results[folder_name_short].update({
-                    "max_indexes": max_indexes,
-                    "max_vals": max_vals,
-                })
+                analysis_results[folder_name_short]["max_vals"] = max_vals
                 analysis_results[folder_name_short].update(res)
                 group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
@@ -321,7 +317,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 sat_trans_hz = extract_parameters(folder, "fq2list")
 
                 analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
-                analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
 
                 if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
@@ -387,10 +382,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
                 res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
-                analysis_results[folder_name_short].update({
-                    "max_indexes": max_indexes,
-                    "max_vals": max_vals,
-                })
+                analysis_results[folder_name_short]["max_vals"] = max_vals                
                 analysis_results[folder_name_short].update(res)
                 group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
@@ -543,8 +535,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "x_common": x_common,
                 "mean_diff_y": mean_diff,
                 "sem_diff_y": sem_diff,
-                "integrals": group_integrals,   # exactly matches mean of per-replicate integrals
-                "per_replicate_diffs": coll_res["individual_diffs"],  # optional
+                "integrals": group_integrals   # exactly matches mean of per-replicate integrals
             }
 
             plot_group_difference(
