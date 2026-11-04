@@ -341,7 +341,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
                 analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
 
-                                if group_meta[grp_idx].get("work_offset_hz") is None:
+                if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
                 else:
                     # Compare with tolerance: SFO1 values differ only in the
