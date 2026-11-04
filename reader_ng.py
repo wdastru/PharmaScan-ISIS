@@ -48,10 +48,6 @@ from utils import (
     ask_user_for_ppm_range, ask_yes_no, get_git_hash
 )
 
-from fitting import (
-    spline_fit
-)
-
 print(f"Using nmrglue version: {ng.__version__}")
 
 CACHE_DIR.mkdir(exist_ok=True)
@@ -223,11 +219,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     folder_name_short = f"{base_name}_{counter}"
                     counter += 1
                 analysis_results[folder_name_short] = {}
+                analysis_results[folder_name_short]["source_type"] = "pv"
                 folder_keys_per_group[grp_idx].append(folder_name_short)
 
                 sat_trans_hz, work_offset_hz = extract_parameters(folder, "method")
                 analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
-                analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
 
                 if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
@@ -241,10 +237,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         #return
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
-                analysis_results[folder_name_short]["uc"] = uc
                 analysis_results[folder_name_short]["bf1"] = bf1
-                if group_meta[grp_idx].get("uc") is None:
-                    group_meta[grp_idx]["uc"] = uc
+
+                # Store bf1 at the GROUP level once, on the first folder.
+                # NOTE: cannot use `if not group_meta[grp_idx]` because
+                # work_offset_hz has already been inserted above (making the
+                # dict truthy). The correct check is "is bf1 missing?".
+                if "bf1" not in group_meta[grp_idx]:
                     group_meta[grp_idx]["bf1"] = bf1
 
                 spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
@@ -291,12 +290,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
                 res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
-                analysis_results[folder_name_short].update({
-                    "max_indexes": max_indexes,
-                    "max_vals": max_vals,
-                })
+                analysis_results[folder_name_short]["max_vals"] = max_vals
                 analysis_results[folder_name_short].update(res)
-                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
+                group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
                 # --- Calculate integrals for this individual folder ---
                 
@@ -329,13 +325,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     folder_name_short = f"{base_name}_{counter}"
                     counter += 1
                 analysis_results[folder_name_short] = {}
+                analysis_results[folder_name_short]["source_type"] = "ts"
                 folder_keys_per_group[grp_idx].append(folder_name_short)
 
                 work_offset_hz = extract_parameters(folder, "acqu2")
                 sat_trans_hz = extract_parameters(folder, "fq2list")
 
                 analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
-                analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
 
                 if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
@@ -349,10 +345,12 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         #return
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
-                analysis_results[folder_name_short]["uc"] = uc
                 analysis_results[folder_name_short]["bf1"] = bf1
-                if group_meta[grp_idx].get("uc") is None:
-                    group_meta[grp_idx]["uc"] = uc
+
+                # Same fix as the PV branch: check for the KEY, not for an
+                # empty dict (work_offset_hz is already in group_meta here).
+
+                if "bf1" not in group_meta[grp_idx]:
                     group_meta[grp_idx]["bf1"] = bf1
 
                 spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
@@ -399,12 +397,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
                 res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
-                analysis_results[folder_name_short].update({
-                    "max_indexes": max_indexes,
-                    "max_vals": max_vals,
-                })
+                analysis_results[folder_name_short]["max_vals"] = max_vals                
                 analysis_results[folder_name_short].update(res)
-                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
+                group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
                 # --- Calculate integrals for this individual folder ---
                 
@@ -466,28 +461,26 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     print(colored(f"Error reading file {folder}: {e}", "red", attrs=["bold"]))
                     continue
 
-                max_indexes = [0] * len(max_vals)
-
                 # --- Sort by ppm ---
                 combined = list(zip(zero_corrected_ppm, max_vals, sat_trans_hz))
                 combined.sort()
                 zero_corrected_ppm[:], max_vals[:], sat_trans_hz[:] = zip(*combined)
-
-                res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
-                # No max_indexes, zero_corrected_ppm or sat_trans_hz needed; store what we have
-                analysis_results[key].update({
-                    "max_vals": max_vals,
-                })
-                analysis_results[key].update(res)
-                # --- Store raw data for later group averaging ---
-                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
 
                 # --- Fit, integrate, and plot (common pipeline) ---
                 res = process_zspectrum_and_integrals(
                     max_vals, 
                     zero_corrected_ppm
                 )
+                # No max_indexes, zero_corrected_ppm or sat_trans_hz needed; store what we have
+                analysis_results[key].update({
+                    "bf1": value,
+                    "sat_trans_hz": sat_trans_hz,   # già ordinato insieme a max_vals
+                    "max_vals": max_vals,
+                    "source_type": "text",
+                })
                 analysis_results[key].update(res)
+                # --- Store raw data for later group averaging ---
+                group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
                 plot_z_spectrum(
                     x=res["spline_fit_results"]["x"],
@@ -513,15 +506,12 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             keys = folder_keys_per_group[grp_idx]
 
             # --- Raw data for plotting (mean of max_vals) ---
-            val_arr = np.array([d[1] for d in group_raw[grp_idx]])
-            sat_arr = np.array([d[2] for d in group_raw[grp_idx]])
+            val_arr = np.array([d[0] for d in group_raw[grp_idx]])
+            sat_arr = np.array([d[1] for d in group_raw[grp_idx]])
             n = len(group_raw[grp_idx])
             mean_max_vals = np.mean(val_arr, axis=0).tolist()
             mean_sat = np.mean(sat_arr, axis=0).tolist()
             sd_max_vals = np.std(val_arr, axis=0, ddof=1).tolist() if n > 1 else [0]*len(val_arr[0])
-
-            # Ppm axis for the raw data (mean saturation freq / BF1)
-            mean_zero_ppm = [mean_sat[i] / group_meta[grp_idx]["bf1"] for i in range(len(mean_sat))]
 
             # --- Collect per-replicate differences on a common grid ---
             coll_res = collect_replicate_differences(
@@ -534,17 +524,35 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # --- Store under the group label ---
             analysis_results[label] = {
-                "max_indexes": np.round(np.mean(np.array([d[0] for d in group_raw[grp_idx]]), axis=0)).tolist(),
                 "max_vals": mean_max_vals,
                 "sat_trans_hz": mean_sat,
                 "sd_max_vals": sd_max_vals,
-                "spline_fit_results": spline_fit(x=mean_zero_ppm, y=mean_max_vals, x_fit=x_common),
+                # Spline fit on sigmoid-corrected data (mean of per-replicate Pchip).
+                # Coherent with per-replicate plots and with mean_diff_y.
+                "spline_fit_results": {
+                    "x": x_common,
+                    "y": coll_res["mean_spline"],
+                    "x_fit": x_common,
+                    "y_fit": coll_res["mean_spline"],
+                    "fit_label": "Spline fit (mean of replicates, corrected)",
+                    "fit_successful": True,
+                },
+                # Lorentzian envelope on corrected data (mean of per-replicate).
+                "lorentzian_envelope_results": {
+                    "x": x_common,
+                    "y": coll_res["mean_lorentzian"],
+                    "fit_label": "Lorentzian envelope (mean of replicates)",
+                    "fit_successful": True,
+                },
+                # Sigmoid-corrected z-spectrum, mean ± SEM on the common grid.
+                "x_data":                 coll_res["x_data"],
+                "mean_corrected_at_data": coll_res["mean_corrected_at_data"],
+                "sem_corrected_at_data":  coll_res["sem_corrected_at_data"],
                 "bf1": group_meta[grp_idx]["bf1"],
                 "x_common": x_common,
                 "mean_diff_y": mean_diff,
                 "sem_diff_y": sem_diff,
-                "integrals": group_integrals,   # exactly matches mean of per-replicate integrals
-                "per_replicate_diffs": coll_res["individual_diffs"],  # optional
+                "integrals": group_integrals   # exactly matches mean of per-replicate integrals
             }
 
             plot_group_difference(
