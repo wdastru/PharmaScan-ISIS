@@ -477,12 +477,19 @@ def plot_all_z_spectra(
                         color=color, markersize=6, alpha=0.35)
 
         # 2) Curva MEDIA del gruppo: stesso colore, ma più spessa e opaca
-        sf_mean = analysis_results.get(label, {}).get("spline_fit_results", {})
+        grp_entry = analysis_results.get(label, {})
+        sf_mean = grp_entry.get("spline_fit_results", {})
         if sf_mean.get("fit_successful"):
             ax.plot(sf_mean["x_fit"], sf_mean["y_fit"], "-",
                     color=color, linewidth=2.5, label=label)
-            if show_data:
-                ax.plot(sf_mean["x"], sf_mean["y"], "o",
+        # I punti della media sono i dati sperimentali corretti, salvati
+        # in x_data / mean_corrected_at_data (non in sf_mean["x"]/["y"],
+        # che per il gruppo sono la griglia comune x_common = 200 punti).
+        if show_data:
+            x_pts = grp_entry.get("x_data")
+            y_pts = grp_entry.get("mean_corrected_at_data")
+            if x_pts is not None and y_pts is not None:
+                ax.plot(x_pts, y_pts, "o",
                         color=color, markersize=6)
 
     # 3) Regioni dei metaboliti sullo sfondo
