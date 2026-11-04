@@ -262,6 +262,35 @@ def save_analysis_results(config_name: str, analysis_results: dict) -> None:
     with open(Path(OUTPUT_DIR / f"{config_name}{version}.json"), "w", encoding="utf-8") as f:
         json.dump(analysis_results, f, indent=2, cls=SafeEncoder, ensure_ascii=False)   # indent for human readability
 
+def _enforce_pure_group_sources(groups: List[Dict[str, Any]]) -> bool:
+    """
+    Ensure each group has at most one populated data source
+    (folders / topspin_folders / files). If more than one, keep the
+    highest-priority one (folders > topspin_folders > files), clear
+    the others, and clear BF1 when the surviving source is not "files".
+
+    Returns True if any group was modified.
+    """
+    modified = False
+    for grp in groups:
+        populated = [k for k in ("folders", "topspin_folders", "files") if grp.get(k)]
+        if len(populated) > 1:
+            keep = populated[0]
+            dropped = populated[1:]
+            print(colored(
+                f"Warning: group '{grp['label']}' has multiple data sources "
+                f"({', '.join(populated)}). This is likely a configuration error. "
+                f"Keeping '{keep}' and clearing {', '.join(dropped)}. "
+                f"Edit the config file to fix the source.",
+                "yellow"
+            ))
+            for k in dropped:
+                grp[k] = []
+            if keep != "files":
+                grp["BF1"] = []
+            modified = True
+    return modified
+
 def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
     modified = False
 
@@ -329,6 +358,10 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                 grp["BF1"] = []
                 modified = True
 
+    # ---------- Enforce a single data source per group (pure groups) ----------
+    if _enforce_pure_group_sources(config_data["groups"]):
+        modified = True
+    
     # ---------- Fill missing data paths for any group ----------
     for grp in config_data["groups"]:
         if not grp.get("folders") and not grp.get("topspin_folders") and not grp.get("files"):
@@ -351,16 +384,11 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                 cnt = ask_int("Number of text files", min_val=1, default=1)
                 for _ in range(cnt):
                     grp.setdefault("files", []).append(select_text_file())
-                    grp.setdefault("BF1", []). append(float(input("Enter BF1 value for this file (MHz): ")))
+                    grp.setdefault("BF1", []).append(float(input("Enter BF1 value for this file (MHz): ")))
             modified = True
-        elif grp.get("folders") and grp.get("files"):
-            # Both provided – warn but keep; the analysis will decide
-            print(colored(
-                f"Warning: Group '{grp['label']}' has both folders and files. "
-                "Folders will be used for analysis.",
-                "yellow"
-            ))
-        elif grp.get("files") and not grp.get("folders") and not grp.get("topspin_folders"):
+        elif grp.get("files"):
+            # Only text groups reach this branch: the enforcement above cleared
+            # folders/topspin_folders. Check that BF1 is present and in sync.
             if "BF1" not in grp or len(grp["BF1"]) != len(grp["files"]):
                 print(f"Group '{grp['label']}' has text files but missing or mismatched BF1 values.")
                 bf1_values = []

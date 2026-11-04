@@ -5,6 +5,8 @@ from pathlib import Path
 from scipy.integrate import simpson
 from scipy.interpolate import PchipInterpolator
 
+from config import _enforce_pure_group_sources
+
 from constants import (
     N_POINTS_FIT,
     get_default_metabolite_regions
@@ -406,3 +408,128 @@ class TestCollectReplicateDifferences:
             assert np.isclose(result["integrals"][reg], mean_integrals_manual[reg],
                             rtol=1e-10, atol=1e-15), \
                 f"Region {reg}: expected {mean_integrals_manual[reg]}, got {result['integrals'][reg]}"        
+
+class TestEnforcePureGroupSources:
+    # ---------- no-op cases ----------
+
+    def test_pure_folders_untouched(self):
+        groups = [{"label": "g", "folders": ["/a"], "topspin_folders": [], "files": []}]
+        assert _enforce_pure_group_sources(groups) is False
+        assert groups[0]["folders"] == ["/a"]
+        assert groups[0]["topspin_folders"] == []
+        assert groups[0]["files"] == []
+
+    def test_pure_topspin_untouched(self):
+        groups = [{"label": "g", "folders": [], "topspin_folders": ["/b"], "files": []}]
+        assert _enforce_pure_group_sources(groups) is False
+        assert groups[0]["topspin_folders"] == ["/b"]
+
+    def test_pure_files_untouched(self):
+        groups = [{"label": "g", "folders": [], "topspin_folders": [], "files": ["/c"]}]
+        assert _enforce_pure_group_sources(groups) is False
+        assert groups[0]["files"] == ["/c"]
+
+    def test_empty_group_untouched(self):
+        groups = [{"label": "g", "folders": [], "topspin_folders": [], "files": []}]
+        assert _enforce_pure_group_sources(groups) is False
+
+    def test_empty_group_list(self):
+        assert _enforce_pure_group_sources([]) is False
+
+    def test_group_without_source_keys(self):
+        # Minimal dict: only "label". No folders/topspin_folders/files at all.
+        groups = [{"label": "g"}]
+        assert _enforce_pure_group_sources(groups) is False
+
+    # ---------- enforcement cases ----------
+
+    def test_folders_beat_files(self, capsys):
+        groups = [{"label": "g", "folders": ["/a"], "files": ["/c"], "BF1": [51.7]}]
+        assert _enforce_pure_group_sources(groups) is True
+        assert groups[0]["folders"] == ["/a"]
+        assert groups[0]["files"] == []
+        assert groups[0]["BF1"] == []
+
+        out = capsys.readouterr().out
+        assert "Warning" in out
+        assert "multiple data sources" in out
+        assert "folders, files" in out
+        assert "Keeping 'folders'" in out
+        assert "clearing files" in out
+
+    def test_folders_beat_topspin(self):
+        groups = [{"label": "g", "folders": ["/a"], "topspin_folders": ["/b"]}]
+        assert _enforce_pure_group_sources(groups) is True
+        assert groups[0]["folders"] == ["/a"]
+        assert groups[0]["topspin_folders"] == []
+
+    def test_topspin_beat_files(self):
+        groups = [{
+            "label": "g",
+            "folders": [],
+            "topspin_folders": ["/b"],
+            "files": ["/c"],
+            "BF1": [51.7],
+        }]
+        assert _enforce_pure_group_sources(groups) is True
+        assert groups[0]["topspin_folders"] == ["/b"]
+        assert groups[0]["files"] == []
+        # BF1 is cleared: surviving source is not "files"
+        assert groups[0]["BF1"] == []
+
+    def test_all_three_populated(self, capsys):
+        groups = [{
+            "label": "g",
+            "folders": ["/a"],
+            "topspin_folders": ["/b"],
+            "files": ["/c"],
+            "BF1": [51.7],
+        }]
+        assert _enforce_pure_group_sources(groups) is True
+        assert groups[0]["folders"] == ["/a"]
+        assert groups[0]["topspin_folders"] == []
+        assert groups[0]["files"] == []
+        assert groups[0]["BF1"] == []
+
+        out = capsys.readouterr().out
+        assert "folders, topspin_folders, files" in out
+
+    def test_bf1_preserved_when_files_wins(self):
+        # files cannot win by priority when another source is present, so this
+        # documents the *absence* of the case: BF1 stays only when nothing
+        # was dropped. Actually, "files" is last in priority, so this case
+        # cannot occur through this function. Kept as a documented no-op.
+        groups = [{"label": "g", "files": ["/c"], "BF1": [51.7]}]
+        assert _enforce_pure_group_sources(groups) is False
+        assert groups[0]["BF1"] == [51.7]
+
+    # ---------- multi-group behaviour ----------
+
+    def test_multiple_groups_independent(self):
+        groups = [
+            {"label": "mixed", "folders": ["/a"], "files": ["/c"], "BF1": [51.7]},
+            {"label": "pure",  "folders": ["/b"], "topspin_folders": [], "files": []},
+        ]
+        assert _enforce_pure_group_sources(groups) is True
+        # mixed cleaned
+        assert groups[0]["files"] == []
+        assert groups[0]["BF1"] == []
+        # pure untouched
+        assert groups[1]["folders"] == ["/b"]
+
+    def test_two_mixed_groups_both_cleaned(self):
+        groups = [
+            {"label": "a", "folders": ["/1"], "files": ["/2"], "BF1": [51.7]},
+            {"label": "b", "topspin_folders": ["/3"], "files": ["/4"], "BF1": [51.7]},
+        ]
+        assert _enforce_pure_group_sources(groups) is True
+        assert groups[0]["folders"] == ["/1"] and groups[0]["files"] == []
+        assert groups[1]["topspin_folders"] == ["/3"] and groups[1]["files"] == []
+
+    def test_no_groups_modified_returns_false_even_if_empty_sources(self):
+        # A group with empty lists everywhere is *not* "mixed".
+        groups = [
+            {"label": "a", "folders": [], "topspin_folders": [], "files": []},
+            {"label": "b", "folders": ["/x"]},
+        ]
+        assert _enforce_pure_group_sources(groups) is False                
