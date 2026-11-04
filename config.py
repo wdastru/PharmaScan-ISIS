@@ -459,7 +459,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                             print(colored("New folder also invalid – skipping.", "yellow"))
                     else:
                         print(colored("Missing folder remains in the list.", "yellow"))
-                        valid_folders.append(folder)
+                        valid_tf.append(folder)
             grp["topspin_folders"] = valid_tf
 
         # Validate "files" key
@@ -484,10 +484,13 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                                 valid_bf1.append(new_bf1)
                             modified = True
                         else:
-                            print(colored("New file also invalid – skipping.", "yellow"))
+                            print(colored("New file also invalid - skipping.", "yellow"))
                     else:
-                        print(colored("Missing folder remains in the list.", "yellow"))
-                        valid_folders.append(folder)
+                        print(colored("Missing file remains in the list.", "yellow"))
+                        valid_files.append(file)
+                        if has_bf1:
+                            valid_bf1.append(grp["BF1"][i])
+
             grp["files"] = valid_files
                     
     # ---------- ppm range handling ----------
