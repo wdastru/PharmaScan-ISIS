@@ -441,18 +441,20 @@ def plot_all_z_spectra(
     window_title=None,
 ):
     """
-    Un UNICO grafico con TUTTI gli Z-spectra sovrapposti.
+    Overlay of the AVERAGED DIFFERENCE curves (mean_diff_y) for each group,
+    one line per group, on a common axis.
 
-    Stile identico a plot_z_spectrum (punti 'o' default, linea continua spessore default).
-    Colore per gruppo: reference nero, group 1 blu, group 2 arancione, ...
-    I dataset singoli sono semitrasparenti (per vedere la sovrapposizione),
-    la curva MEDIA di ogni gruppo è opaca e più spessa.
+    Individual replicates are not shown here (their per-replica plot is
+    produced by plot_group_difference / plot_z_spectrum). The comparison
+    is between group means.
+
+    Note: the function name is kept for backward compatibility with
+    reader_ng.py; it plots averaged differences, not z-spectra.
     """
     if visibility is None:
         visibility = get_default_visibility()
 
-    show_data    = visibility.get("data", True)
-    show_legend  = visibility.get("legend", {}).get("z-spectra", True)
+    show_legend = visibility.get("legend", {}).get("z-spectra", True)
     show_regions = visibility.get("regions", True)
 
     fig, ax = plt.subplots(figsize=(10, 6), num=window_title)
@@ -461,38 +463,18 @@ def plot_all_z_spectra(
     for gi, grp in enumerate(groups):
         label = grp["label"]
         color = group_color(grp, groups)
-        keys  = folder_keys_per_group[gi] if gi < len(folder_keys_per_group) else []
 
-        # 1) Curve dei singoli dataset del gruppo.
-        #    Stesso stile dello spettro singolo (linea continua default, dots default)
-        #    ma con trasparenza per non accavallarsi confusamente.
-        for key in keys:
-            sf = analysis_results.get(key, {}).get("spline_fit_results", {})
-            if not sf.get("fit_successful"):
-                continue
-            ax.plot(sf["x_fit"], sf["y_fit"], "-",
-                    color=color, linewidth=1.5, alpha=0.4)
-            if show_data:
-                ax.plot(sf["x"], sf["y"], "o",
-                        color=color, markersize=6, alpha=0.35)
+        grp_data = analysis_results.get(label, {})
+        x = grp_data.get("x_common")
+        y = grp_data.get("mean_diff_y")
+        if x is None or y is None:
+            # Group had no usable replicates (e.g. empty group): skip silently
+            continue
 
-        # 2) Curva MEDIA del gruppo: stesso colore, ma più spessa e opaca
-        grp_entry = analysis_results.get(label, {})
-        sf_mean = grp_entry.get("spline_fit_results", {})
-        if sf_mean.get("fit_successful"):
-            ax.plot(sf_mean["x_fit"], sf_mean["y_fit"], "-",
-                    color=color, linewidth=2.5, label=label)
-        # I punti della media sono i dati sperimentali corretti, salvati
-        # in x_data / mean_corrected_at_data (non in sf_mean["x"]/["y"],
-        # che per il gruppo sono la griglia comune x_common = 200 punti).
-        if show_data:
-            x_pts = grp_entry.get("x_data")
-            y_pts = grp_entry.get("mean_corrected_at_data")
-            if x_pts is not None and y_pts is not None:
-                ax.plot(x_pts, y_pts, "o",
-                        color=color, markersize=6)
+        ax.plot(np.asarray(x), np.asarray(y), "-",
+                color=color, linewidth=2.0, label=label)
 
-    # 3) Regioni dei metaboliti sullo sfondo
+    # Metabolite regions (background bands)
     if show_regions:
         for idx, (name, region) in enumerate(METABOLITE_REGIONS.items()):
             if region.get("ppm") and len(region["ppm"]) == 2:
@@ -502,8 +484,8 @@ def plot_all_z_spectra(
 
     ax.invert_xaxis()
     ax.set_xlabel("Saturation ppm")
-    ax.set_ylabel("Intensity (corrected)")
-    ax.set_title(title or "All Z-spectra (overlay)")
+    ax.set_ylabel("Averaged difference (Lor − Spline)")
+    ax.set_title(title or "All groups – Averaged Difference")
     ax.grid(True, alpha=0.3)
     if show_legend:
         ax.legend()
