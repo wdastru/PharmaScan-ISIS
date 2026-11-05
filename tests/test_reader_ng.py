@@ -5,17 +5,24 @@ from pathlib import Path
 from scipy.integrate import simpson
 from scipy.interpolate import PchipInterpolator
 
-from reader_ng import (
+from config import _enforce_pure_group_sources, _resolve_group_source
+
+from constants import (
+    N_POINTS_FIT,
+    get_default_metabolite_regions
+)
+from data_io import parameter_extract
+from fitting import (
+    spline_fit,
+    constrained_lorentzian,
+)
+from processing import (
     find_maximum,
     compute_regions_integrals,
-    DEFAULT_METABOLITE_REGIONS,
-    N_POINTS_FIT,
-    parameter_extract,
-    _compute_group_stats,
-    spline_fit,
     build_common_ppm_grid,
     collect_replicate_differences,
-    constrained_lorentzian
+    _compute_group_stats,
+    replace_zero_delta
 )
 
 # ----------------------------------------------------------------------
@@ -43,15 +50,16 @@ class TestComputeRegionsIntegrals:
         x_fit = np.linspace(-10, 10, N_POINTS_FIT)
         y_fit = np.ones_like(x_fit)
         integrals = compute_regions_integrals(x_fit, y_fit)
-        for region, (start, end) in DEFAULT_METABOLITE_REGIONS.items():
+        for region, spec in get_default_metabolite_regions().items():
+            start, end = spec["ppm"]
             expected = end - start
             assert np.isclose(integrals[region], expected, rtol=1e-6, atol=1e-9), \
-                f"Region {region}: expected {expected}, got {integrals[region]}"
+                f"Region {region}: expected {expected}, got {integrals[region]} "
 
-    @pytest.mark.parametrize("region", list(DEFAULT_METABOLITE_REGIONS.keys()))
+    @pytest.mark.parametrize("region", list(get_default_metabolite_regions().keys()))
     def test_triangle(self, region):
         """Triangle peaking at 1 → integral = width/2."""
-        start, end = DEFAULT_METABOLITE_REGIONS[region]
+        start, end = get_default_metabolite_regions()[region]["ppm"]
         x_fit = np.linspace(start, end, N_POINTS_FIT)
         centre = (start + end) / 2
         width = end - start
@@ -71,7 +79,8 @@ class TestComputeRegionsIntegrals:
         x_full = np.linspace(-10, 10, 2000)
         y_full = oscillatory(x_full)
         reference = {}
-        for region, (start, end) in DEFAULT_METABOLITE_REGIONS.items():
+        for region, spec in get_default_metabolite_regions().items():
+            start, end = spec["ppm"]
             mask = (x_full >= start) & (x_full <= end)
             if np.any(mask):
                 x_reg = x_full[mask]
@@ -86,7 +95,7 @@ class TestComputeRegionsIntegrals:
         y_fit = oscillatory(x_fit)
         computed = compute_regions_integrals(x_fit, y_fit)
 
-        for region in DEFAULT_METABOLITE_REGIONS:
+        for region in get_default_metabolite_regions():
             assert np.isclose(computed[region], reference[region], rtol=1e-2, atol=1e-5), \
                 f"Region {region}: reference {reference[region]:.6f}, got {computed[region]:.6f}"
 
@@ -400,3 +409,195 @@ class TestCollectReplicateDifferences:
             assert np.isclose(result["integrals"][reg], mean_integrals_manual[reg],
                             rtol=1e-10, atol=1e-15), \
                 f"Region {reg}: expected {mean_integrals_manual[reg]}, got {result['integrals'][reg]}"        
+
+class TestEnforcePureGroupSources:
+    # ---------- no-op cases ----------
+
+    def test_pure_folders_untouched(self):
+        groups = [{"label": "g", "folders": ["/a"], "topspin_folders": [], "files": []}]
+        assert _enforce_pure_group_sources(groups) is False
+        assert groups[0]["folders"] == ["/a"]
+        assert groups[0]["topspin_folders"] == []
+        assert groups[0]["files"] == []
+
+    def test_pure_topspin_untouched(self):
+        groups = [{"label": "g", "folders": [], "topspin_folders": ["/b"], "files": []}]
+        assert _enforce_pure_group_sources(groups) is False
+        assert groups[0]["topspin_folders"] == ["/b"]
+
+    def test_pure_files_untouched(self):
+        groups = [{"label": "g", "folders": [], "topspin_folders": [], "files": ["/c"]}]
+        assert _enforce_pure_group_sources(groups) is False
+        assert groups[0]["files"] == ["/c"]
+
+    def test_empty_group_untouched(self):
+        groups = [{"label": "g", "folders": [], "topspin_folders": [], "files": []}]
+        assert _enforce_pure_group_sources(groups) is False
+
+    def test_empty_group_list(self):
+        assert _enforce_pure_group_sources([]) is False
+
+    def test_group_without_source_keys(self):
+        # Minimal dict: only "label". No folders/topspin_folders/files at all.
+        groups = [{"label": "g"}]
+        assert _enforce_pure_group_sources(groups) is False
+
+    # ---------- enforcement cases ----------
+
+    def test_folders_beat_files(self, capsys):
+        groups = [{"label": "g", "folders": ["/a"], "files": ["/c"], "BF1": [51.7]}]
+        assert _enforce_pure_group_sources(groups) is True
+        assert groups[0]["folders"] == ["/a"]
+        assert groups[0]["files"] == []
+        assert groups[0]["BF1"] == []
+
+        out = capsys.readouterr().out
+        assert "Warning" in out
+        assert "multiple data sources" in out
+        assert "folders, files" in out
+        assert "Keeping 'folders'" in out
+        assert "clearing files" in out
+
+    def test_folders_beat_topspin(self):
+        groups = [{"label": "g", "folders": ["/a"], "topspin_folders": ["/b"]}]
+        assert _enforce_pure_group_sources(groups) is True
+        assert groups[0]["folders"] == ["/a"]
+        assert groups[0]["topspin_folders"] == []
+
+    def test_topspin_beat_files(self):
+        groups = [{
+            "label": "g",
+            "folders": [],
+            "topspin_folders": ["/b"],
+            "files": ["/c"],
+            "BF1": [51.7],
+        }]
+        assert _enforce_pure_group_sources(groups) is True
+        assert groups[0]["topspin_folders"] == ["/b"]
+        assert groups[0]["files"] == []
+        # BF1 is cleared: surviving source is not "files"
+        assert groups[0]["BF1"] == []
+
+    def test_all_three_populated(self, capsys):
+        groups = [{
+            "label": "g",
+            "folders": ["/a"],
+            "topspin_folders": ["/b"],
+            "files": ["/c"],
+            "BF1": [51.7],
+        }]
+        assert _enforce_pure_group_sources(groups) is True
+        assert groups[0]["folders"] == ["/a"]
+        assert groups[0]["topspin_folders"] == []
+        assert groups[0]["files"] == []
+        assert groups[0]["BF1"] == []
+
+        out = capsys.readouterr().out
+        assert "folders, topspin_folders, files" in out
+
+    def test_bf1_preserved_when_files_wins(self):
+        # files cannot win by priority when another source is present, so this
+        # documents the *absence* of the case: BF1 stays only when nothing
+        # was dropped. Actually, "files" is last in priority, so this case
+        # cannot occur through this function. Kept as a documented no-op.
+        groups = [{"label": "g", "files": ["/c"], "BF1": [51.7]}]
+        assert _enforce_pure_group_sources(groups) is False
+        assert groups[0]["BF1"] == [51.7]
+
+    # ---------- multi-group behaviour ----------
+
+    def test_multiple_groups_independent(self):
+        groups = [
+            {"label": "mixed", "folders": ["/a"], "files": ["/c"], "BF1": [51.7]},
+            {"label": "pure",  "folders": ["/b"], "topspin_folders": [], "files": []},
+        ]
+        assert _enforce_pure_group_sources(groups) is True
+        # mixed cleaned
+        assert groups[0]["files"] == []
+        assert groups[0]["BF1"] == []
+        # pure untouched
+        assert groups[1]["folders"] == ["/b"]
+
+    def test_two_mixed_groups_both_cleaned(self):
+        groups = [
+            {"label": "a", "folders": ["/1"], "files": ["/2"], "BF1": [51.7]},
+            {"label": "b", "topspin_folders": ["/3"], "files": ["/4"], "BF1": [51.7]},
+        ]
+        assert _enforce_pure_group_sources(groups) is True
+        assert groups[0]["folders"] == ["/1"] and groups[0]["files"] == []
+        assert groups[1]["topspin_folders"] == ["/3"] and groups[1]["files"] == []
+
+    def test_no_groups_modified_returns_false_even_if_empty_sources(self):
+        # A group with empty lists everywhere is *not* "mixed".
+        groups = [
+            {"label": "a", "folders": [], "topspin_folders": [], "files": []},
+            {"label": "b", "folders": ["/x"]},
+        ]
+        assert _enforce_pure_group_sources(groups) is False                
+
+class TestResolveGroupSource:
+    def test_pv(self):
+        grp = {"label": "g", "folders": ["/a"], "topspin_folders": [], "files": []}
+        assert _resolve_group_source(grp) == ("pv", ["/a"])
+
+    def test_ts(self):
+        grp = {"label": "g", "folders": [], "topspin_folders": ["/b"], "files": []}
+        assert _resolve_group_source(grp) == ("ts", ["/b"])
+
+    def test_text(self):
+        grp = {"label": "g", "folders": [], "topspin_folders": [], "files": ["/c"]}
+        assert _resolve_group_source(grp) == ("text", ["/c"])
+
+    def test_empty_raises(self):
+        grp = {"label": "g", "folders": [], "topspin_folders": [], "files": []}
+        with pytest.raises(ValueError, match="no data source"):
+            _resolve_group_source(grp)
+
+    def test_missing_keys_raises(self):
+        # Only "label" present: no source keys at all
+        grp = {"label": "g"}
+        with pytest.raises(ValueError, match="no data source"):
+            _resolve_group_source(grp)
+
+    def test_unnamed_group_raises_with_placeholder(self):
+        with pytest.raises(ValueError, match="<unnamed>"):
+            _resolve_group_source({})
+
+    def test_mixed_priority_pv(self):
+        # Should not happen after enforcement, but the helper is still
+        # well-defined on mixed input and documented by its priority order.
+        grp = {"label": "g", "folders": ["/a"], "topspin_folders": ["/b"], "files": ["/c"]}
+        assert _resolve_group_source(grp) == ("pv", ["/a"])
+
+    def test_mixed_priority_ts(self):
+        grp = {"label": "g", "folders": [], "topspin_folders": ["/b"], "files": ["/c"]}
+        assert _resolve_group_source(grp) == ("ts", ["/b"])        
+
+class TestReplaceZeroDelta:
+    def test_exact_zero(self):
+        sat   = [-100.0, -50.0, 0.0, 50.0, 100.0]
+        delta = [   1.0,   2.0, 99.0,  4.0,   5.0]
+        result = replace_zero_delta(sat, delta)
+        # mean of neighbour deltas: (delta[3] + delta[1]) / 2 = (4 + 2) / 2 = 3
+        # zero position gets 3, then all shifted by -3:
+        #   [1-3, 2-3, 3-3, 4-3, 5-3] = [-2, -1, 0, 1, 2]
+        assert result == [-2.0, -1.0, 0.0, 1.0, 2.0]
+        
+    def test_almost_zero(self):
+        sat = [-100.0, -50.0, 1e-15, 50.0, 100.0]
+        delta = [1.0, 2.0, 99.0, 4.0, 5.0]
+        result = replace_zero_delta(sat, delta)
+        # Same as exact_zero: 1e-15 is treated as 0
+        assert result == [-2.0, -1.0, 0.0, 1.0, 2.0]
+
+    def test_near_zero_warns(self, capsys):
+        sat = [-100.0, -50.0, 0.5, 50.0, 100.0]
+        delta = [1.0, 2.0, 99.0, 4.0, 5.0]
+        replace_zero_delta(sat, delta)
+        out = capsys.readouterr().out
+        assert "Warning" in out
+        assert "no saturation frequency near 0 Hz" in out
+
+    def test_length_mismatch_raises(self):
+        with pytest.raises(ValueError, match="same length"):
+            replace_zero_delta([1.0, 2.0], [1.0])        

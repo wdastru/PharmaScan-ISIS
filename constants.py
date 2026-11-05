@@ -3,19 +3,24 @@ constants.py
 Global defaults and paths used across the saturation analysis package.
 No side effects at import time.
 """
-
+import copy
 from pathlib import Path
 
 # ----------------------------------------------------------------------
 # Analysis / fitting defaults
 # ----------------------------------------------------------------------
 N_POINTS_FIT: int = 200
-CACHE_VERSION: int = 4
+CACHE_VERSION: int = 7
 
 # ----------------------------------------------------------------------
 # Default metabolite regions (immutable template)
 # ----------------------------------------------------------------------
-DEFAULT_METABOLITE_REGIONS: dict[str, dict] = {
+# This is a template, not a working copy. Never mutate in place —
+# consumers must obtain an independent copy via copy.deepcopy() before
+# any modification. The mutable working copy used by the analysis lives
+# in config.METABOLITE_REGIONS and is (re)initialized from
+# config["metabolite_regions"] at every run_analysis().
+_DEFAULT_METABOLITE_REGIONS: dict[str, dict] = {
     "Glycolytic PMEs": {"ppm": [5.5, 9.0],  "width": [1.0, None], "height": [0.0, None]},
     "Pi":              {"ppm": [4.3, 5.3],  "width": [1.0, None], "height": [0.0, None]},
     "PEP 1,3 BPG":     {"ppm": [1.0, 4.3],  "width": [1.0, None], "height": [0.0, None]},
@@ -23,6 +28,10 @@ DEFAULT_METABOLITE_REGIONS: dict[str, dict] = {
     "ALPHA,BETA-ADP":  {"ppm": [-6, -3],    "width": [1.0, None], "height": [0.0, None]},
     "ALPHA-ATP":       {"ppm": [-9, -6],    "width": [1.0, None], "height": [0.0, None]},
 }
+
+def get_default_metabolite_regions() -> dict:
+    """Return an independent deep copy of the default metabolite regions."""
+    return copy.deepcopy(_DEFAULT_METABOLITE_REGIONS)
 
 # ----------------------------------------------------------------------
 # Directory paths (relative to the package root)

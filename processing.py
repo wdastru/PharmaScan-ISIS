@@ -112,16 +112,27 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
 # ----------------------------------------------------------------------
 def replace_zero_delta(sat_trans_hz, delta):
     """
-    Replaces the delta value at the position where sat_trans_hz is 0.0
-    with the mean of delta values corresponding to the smallest positive
-    and smallest negative sat_trans_hz values.
+    Replaces the delta value at the position whose sat_trans_hz is
+    closest to 0.0 with the mean of delta values corresponding to the
+    smallest positive and smallest negative sat_trans_hz values.
     """
     if len(sat_trans_hz) != len(delta):
         raise ValueError("Both lists must have the same length")
     
-    # Find the index of 0.0
-    zero_idx = sat_trans_hz.index(0.0)
-    
+    # Find the index of the value closest to 0.0. Exact 0.0 is not
+    # guaranteed: the on-resonance frequency depends on how the
+    # acquisition parameters express the offset, and floating-point
+    # round-trips can leave it as e.g. 1e-15 or 1e-3.
+    abs_vals = np.abs(np.asarray(sat_trans_hz, dtype=float))
+    zero_idx = int(np.argmin(abs_vals))
+    if abs_vals[zero_idx] > 1e-6:
+        print(colored(
+            f"Warning: no saturation frequency near 0 Hz "
+            f"(closest is {sat_trans_hz[zero_idx]:.6f} Hz). "
+            f"Using the closest point as the on-resonance reference.",
+            "yellow"
+        ))
+
     # Find smallest positive and smallest negative values (excluding 0.0)
     min_positive_val = float('inf')
     min_negative_val = float('-inf')
@@ -461,7 +472,6 @@ def collect_replicate_differences(
     diffs: List[np.ndarray] = []
     lorenzians: List[np.ndarray] = []
     splines: List[np.ndarray] = []
-    corrected_common: List[np.ndarray] = []
 
     for key in folder_keys:
         entry = analysis_results[key]
@@ -470,10 +480,6 @@ def collect_replicate_differences(
         A = entry["A"]
         gamma = entry["gamma"]
         y_min = entry["y_min"]
-
-        # Sigmoid-corrected z-spectrum interpolated on the common grid
-        corrected_interp = PchipInterpolator(ppm, sigmoid_corrected)(x_common)
-        corrected_common.append(corrected_interp)
 
         # Lorentzian envelope on the common grid
         y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
@@ -488,7 +494,6 @@ def collect_replicate_differences(
     diffs_arr      = np.array(diffs)
     lorenzians_arr = np.array(lorenzians)
     splines_arr    = np.array(splines)
-    corrected_arr  = np.array(corrected_common)
 
     n = len(diffs)
 
@@ -500,7 +505,6 @@ def collect_replicate_differences(
     mean_diff,       sem_diff       = _mean_sem(diffs_arr)
     mean_lorentzian, _              = _mean_sem(lorenzians_arr)
     mean_spline,     _              = _mean_sem(splines_arr)
-    mean_corrected,  sem_corrected  = _mean_sem(corrected_arr)
 
     # --- Experimental data points (original x grid, averaged across replicates) ---
     # Use the first replicate's corrected ppm grid as reference; interpolate the others.
@@ -522,8 +526,6 @@ def collect_replicate_differences(
         "sem_diff":        sem_diff,
         "mean_lorentzian": mean_lorentzian,
         "mean_spline":     mean_spline,
-        "mean_corrected":  mean_corrected,
-        "sem_corrected":   sem_corrected,
         "individual_diffs": [d for d in diffs],
         "x_data":                 x_data,
         "mean_corrected_at_data": mean_corrected_at_data,

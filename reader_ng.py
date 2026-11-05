@@ -9,6 +9,7 @@ a saturation transfer curve.
 Supports multiple groups (reference + any number of sample groups).
 """
 
+import copy
 import nmrglue as ng
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,13 +17,12 @@ from typing import List, Dict, Any
 from termcolor import colored
 
 from constants import (
-    DEFAULT_METABOLITE_REGIONS, 
     CACHE_DIR, get_default_visibility
 )
 
 from config import (
-    METABOLITE_REGIONS, save_config, select_or_create_config, 
-    save_analysis_results, ensure_complete_config
+    METABOLITE_REGIONS, _resolve_group_source, save_config, select_or_create_config, 
+    save_analysis_results, ensure_complete_config, _resolve_group_source
 )
 
 from plotting import (
@@ -57,7 +57,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 # ----------------------------------------------------------------------
 def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     METABOLITE_REGIONS.clear()
-    METABOLITE_REGIONS.update(config.get("metabolite_regions", DEFAULT_METABOLITE_REGIONS))
+    METABOLITE_REGIONS.update(copy.deepcopy(config["metabolite_regions"]))
     plt.ion()
 
     groups = config["groups"]
@@ -175,27 +175,12 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     for grp_idx, grp in enumerate(groups):
         label = grp["label"]
 
-        # Determine entry type for this group
-        is_PV_folder = bool(grp.get("folders"))
-        is_TS_folder = bool(grp.get("topspin_folders"))
-        is_file   = bool(grp.get("files"))
-        if is_PV_folder and is_file: # TODO: handle topspin folders if needed
-            print(colored(
-                f"Warning: Group '{label}' has both folders and files. Only folders will be used.",
-                "yellow"
-            ))
-            is_file = False
-            entries = grp["folders"]
-        elif is_PV_folder:
-            entries = grp["folders"]
-        elif is_TS_folder:
-            entries = grp["topspin_folders"]
-        elif is_file:
-            entries = grp["files"]
-        else:
-            pass
+        # ensure_complete_config guarantees exactly one data source per
+        # group (see _enforce_pure_group_sources). A group with no source
+        # here means the caller bypassed ensure_complete_config.
+        source_type, entries = _resolve_group_source(grp)
                     
-        if is_PV_folder:   # Paravision BRUKER data
+        if source_type == "pv":   # Paravision BRUKER data
             folders = entries
             for folder in folders:
                 base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
@@ -205,11 +190,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     folder_name_short = f"{base_name}_{counter}"
                     counter += 1
                 analysis_results[folder_name_short] = {}
+                analysis_results[folder_name_short]["source_type"] = "pv"
                 folder_keys_per_group[grp_idx].append(folder_name_short)
 
                 sat_trans_hz, work_offset_hz = extract_parameters(folder, "method")
                 analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
-                analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
 
                 if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
@@ -223,10 +208,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         #return
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
-                analysis_results[folder_name_short]["uc"] = uc
                 analysis_results[folder_name_short]["bf1"] = bf1
-                if group_meta[grp_idx].get("uc") is None:
-                    group_meta[grp_idx]["uc"] = uc
+
+                # Store bf1 at the GROUP level once, on the first folder.
+                # NOTE: cannot use `if not group_meta[grp_idx]` because
+                # work_offset_hz has already been inserted above (making the
+                # dict truthy). The correct check is "is bf1 missing?".
+                if "bf1" not in group_meta[grp_idx]:
                     group_meta[grp_idx]["bf1"] = bf1
 
                 spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
@@ -273,12 +261,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
                 res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
-                analysis_results[folder_name_short].update({
-                    "max_indexes": max_indexes,
-                    "max_vals": max_vals,
-                })
+                analysis_results[folder_name_short]["max_vals"] = max_vals
                 analysis_results[folder_name_short].update(res)
-                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
+                group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
                 # --- Calculate integrals for this individual folder ---
                 
@@ -300,7 +285,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     visibility=config.get("plot_visibility", get_default_visibility()),
                     window_title=f" {label}: spline fit for {folder_name_short}"
                 )
-        elif is_TS_folder:   # Topspin BRUKER data
+        elif source_type == "ts":   # Topspin BRUKER data
             folders = entries
             for folder in folders:
                 base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
@@ -310,13 +295,13 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     folder_name_short = f"{base_name}_{counter}"
                     counter += 1
                 analysis_results[folder_name_short] = {}
+                analysis_results[folder_name_short]["source_type"] = "ts"
                 folder_keys_per_group[grp_idx].append(folder_name_short)
 
                 work_offset_hz = extract_parameters(folder, "acqu2")
                 sat_trans_hz = extract_parameters(folder, "fq2list")
 
                 analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
-                analysis_results[folder_name_short]["work_offset_hz"] = work_offset_hz
 
                 if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
@@ -330,10 +315,12 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         #return
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
-                analysis_results[folder_name_short]["uc"] = uc
                 analysis_results[folder_name_short]["bf1"] = bf1
-                if group_meta[grp_idx].get("uc") is None:
-                    group_meta[grp_idx]["uc"] = uc
+
+                # Same fix as the PV branch: check for the KEY, not for an
+                # empty dict (work_offset_hz is already in group_meta here).
+
+                if "bf1" not in group_meta[grp_idx]:
                     group_meta[grp_idx]["bf1"] = bf1
 
                 spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
@@ -380,12 +367,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 sat_trans_hz[:], max_indexes[:], max_vals[:], zero_corrected_ppm[:] = zip(*combined)
 
                 res = process_zspectrum_and_integrals(max_vals, zero_corrected_ppm)
-                analysis_results[folder_name_short].update({
-                    "max_indexes": max_indexes,
-                    "max_vals": max_vals,
-                })
+                analysis_results[folder_name_short]["max_vals"] = max_vals                
                 analysis_results[folder_name_short].update(res)
-                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
+                group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
                 # --- Calculate integrals for this individual folder ---
                 
@@ -407,7 +391,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     visibility=config.get("plot_visibility", get_default_visibility()),
                     window_title=f" {label}: spline fit for {folder_name_short}"
                 )
-        else:   # txt data files (sat_trans_hz vs max_vals) 
+        else:   # source_type == "text": txt data files (sat_trans_hz vs max_vals)
             files = entries
             for file_idx, folder in enumerate(files):
                 base_name = folder.stem
@@ -446,8 +430,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     print(colored(f"Error reading file {folder}: {e}", "red", attrs=["bold"]))
                     continue
 
-                max_indexes = [0] * len(max_vals)
-
                 # --- Sort by ppm ---
                 combined = list(zip(zero_corrected_ppm, max_vals, sat_trans_hz))
                 combined.sort()
@@ -460,12 +442,14 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 )
                 # No max_indexes, zero_corrected_ppm or sat_trans_hz needed; store what we have
                 analysis_results[key].update({
+                    "bf1": value,
+                    "sat_trans_hz": sat_trans_hz,   # già ordinato insieme a max_vals
                     "max_vals": max_vals,
+                    "source_type": "text",
                 })
                 analysis_results[key].update(res)
                 # --- Store raw data for later group averaging ---
-                group_raw[grp_idx].append((max_indexes, max_vals, sat_trans_hz))
-
+                group_raw[grp_idx].append((max_vals, sat_trans_hz))
 
                 plot_z_spectrum(
                     x=res["spline_fit_results"]["x"],
@@ -490,8 +474,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             keys = folder_keys_per_group[grp_idx]
 
             # --- Raw data for plotting (mean of max_vals) ---
-            val_arr = np.array([d[1] for d in group_raw[grp_idx]])
-            sat_arr = np.array([d[2] for d in group_raw[grp_idx]])
+            val_arr = np.array([d[0] for d in group_raw[grp_idx]])
+            sat_arr = np.array([d[1] for d in group_raw[grp_idx]])
             n = len(group_raw[grp_idx])
             mean_max_vals = np.mean(val_arr, axis=0).tolist()
             mean_sat = np.mean(sat_arr, axis=0).tolist()
@@ -508,7 +492,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
             # --- Store under the group label ---
             analysis_results[label] = {
-                "max_indexes": np.round(np.mean(np.array([d[0] for d in group_raw[grp_idx]]), axis=0)).tolist(),
                 "max_vals": mean_max_vals,
                 "sat_trans_hz": mean_sat,
                 "sd_max_vals": sd_max_vals,
@@ -537,8 +520,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 "x_common": x_common,
                 "mean_diff_y": mean_diff,
                 "sem_diff_y": sem_diff,
-                "integrals": group_integrals,   # exactly matches mean of per-replicate integrals
-                "per_replicate_diffs": coll_res["individual_diffs"],  # optional
+                "integrals": group_integrals   # exactly matches mean of per-replicate integrals
             }
 
             plot_group_difference(

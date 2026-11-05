@@ -16,7 +16,7 @@ import os
 from constants import (
     CONFIG_DIR,
     OUTPUT_DIR,
-    DEFAULT_METABOLITE_REGIONS,
+    get_default_metabolite_regions
 )
 
 from data_io import (
@@ -36,7 +36,7 @@ from constants import (
 # ----------------------------------------------------------------------
 # This is the single mutable copy used across the package.
 # To reset to defaults, call reset_metabolite_regions().
-METABOLITE_REGIONS = DEFAULT_METABOLITE_REGIONS.copy()
+METABOLITE_REGIONS = get_default_metabolite_regions()
 
 # ----------------------------------------------------------------------
 # Directory helpers
@@ -262,6 +262,57 @@ def save_analysis_results(config_name: str, analysis_results: dict) -> None:
     with open(Path(OUTPUT_DIR / f"{config_name}{version}.json"), "w", encoding="utf-8") as f:
         json.dump(analysis_results, f, indent=2, cls=SafeEncoder, ensure_ascii=False)   # indent for human readability
 
+def _resolve_group_source(grp: Dict[str, Any]) -> Tuple[str, list]:
+    """
+    Return (source_type, entries) for a group. source_type is one of
+    "pv", "ts", "text"; entries is the corresponding list.
+
+    ensure_complete_config guarantees that exactly one of
+    folders / topspin_folders / files is populated (via
+    _enforce_pure_group_sources). A group with zero sources reaching
+    this function means the caller bypassed ensure_complete_config;
+    raising is preferable to silently producing an empty group.
+    """
+    if grp.get("folders"):
+        return "pv", grp["folders"]
+    if grp.get("topspin_folders"):
+        return "ts", grp["topspin_folders"]
+    if grp.get("files"):
+        return "text", grp["files"]
+    raise ValueError(
+        f"Group '{grp.get('label', '<unnamed>')}' has no data source. "
+        f"ensure_complete_config should have populated one."
+    )
+
+def _enforce_pure_group_sources(groups: List[Dict[str, Any]]) -> bool:
+    """
+    Ensure each group has at most one populated data source
+    (folders / topspin_folders / files). If more than one, keep the
+    highest-priority one (folders > topspin_folders > files), clear
+    the others, and clear BF1 when the surviving source is not "files".
+
+    Returns True if any group was modified.
+    """
+    modified = False
+    for grp in groups:
+        populated = [k for k in ("folders", "topspin_folders", "files") if grp.get(k)]
+        if len(populated) > 1:
+            keep = populated[0]
+            dropped = populated[1:]
+            print(colored(
+                f"Warning: group '{grp['label']}' has multiple data sources "
+                f"({', '.join(populated)}). This is likely a configuration error. "
+                f"Keeping '{keep}' and clearing {', '.join(dropped)}. "
+                f"Edit the config file to fix the source.",
+                "yellow"
+            ))
+            for k in dropped:
+                grp[k] = []
+            if keep != "files":
+                grp["BF1"] = []
+            modified = True
+    return modified
+
 def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
     modified = False
 
@@ -329,6 +380,10 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                 grp["BF1"] = []
                 modified = True
 
+    # ---------- Enforce a single data source per group (pure groups) ----------
+    if _enforce_pure_group_sources(config_data["groups"]):
+        modified = True
+    
     # ---------- Fill missing data paths for any group ----------
     for grp in config_data["groups"]:
         if not grp.get("folders") and not grp.get("topspin_folders") and not grp.get("files"):
@@ -351,16 +406,11 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                 cnt = ask_int("Number of text files", min_val=1, default=1)
                 for _ in range(cnt):
                     grp.setdefault("files", []).append(select_text_file())
-                    grp.setdefault("BF1", []). append(float(input("Enter BF1 value for this file (MHz): ")))
+                    grp.setdefault("BF1", []).append(float(input("Enter BF1 value for this file (MHz): ")))
             modified = True
-        elif grp.get("folders") and grp.get("files"):
-            # Both provided – warn but keep; the analysis will decide
-            print(colored(
-                f"Warning: Group '{grp['label']}' has both folders and files. "
-                "Folders will be used for analysis.",
-                "yellow"
-            ))
-        elif grp.get("files") and not grp.get("folders") and not grp.get("topspin_folders"):
+        elif grp.get("files"):
+            # Only text groups reach this branch: the enforcement above cleared
+            # folders/topspin_folders. Check that BF1 is present and in sync.
             if "BF1" not in grp or len(grp["BF1"]) != len(grp["files"]):
                 print(f"Group '{grp['label']}' has text files but missing or mismatched BF1 values.")
                 bf1_values = []
@@ -409,7 +459,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                             print(colored("New folder also invalid – skipping.", "yellow"))
                     else:
                         print(colored("Missing folder remains in the list.", "yellow"))
-                        valid_folders.append(folder)
+                        valid_tf.append(folder)
             grp["topspin_folders"] = valid_tf
 
         # Validate "files" key
@@ -434,10 +484,13 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                                 valid_bf1.append(new_bf1)
                             modified = True
                         else:
-                            print(colored("New file also invalid – skipping.", "yellow"))
+                            print(colored("New file also invalid - skipping.", "yellow"))
                     else:
-                        print(colored("Missing folder remains in the list.", "yellow"))
-                        valid_folders.append(folder)
+                        print(colored("Missing file remains in the list.", "yellow"))
+                        valid_files.append(file)
+                        if has_bf1:
+                            valid_bf1.append(grp["BF1"][i])
+
             grp["files"] = valid_files
                     
     # ---------- ppm range handling ----------
@@ -468,7 +521,7 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
 
     # ---------- Metabolite regions defaults ----------
     if "metabolite_regions" not in config_data:
-        config_data["metabolite_regions"] = DEFAULT_METABOLITE_REGIONS
+        config_data["metabolite_regions"] = get_default_metabolite_regions()
         modified = True
 
     else:

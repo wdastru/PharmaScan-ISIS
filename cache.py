@@ -32,13 +32,16 @@ def _build_cache_key(config: Dict[str, Any]) -> str:
     groups = config.get("groups", [])
     # Dati delle cartelle: percorso e timestamp dell'ultima modifica
     folder_info = []
+    
     for grp in groups:
-        for f in grp.get("folders", []):
-            try:
-                mtime = os.path.getmtime(f)
-            except OSError:
-                mtime = 0
-            folder_info.append((str(f), mtime))
+        for key in ("folders", "topspin_folders", "files"):
+            for f in grp.get(key, []):
+                try:
+                    mtime = os.path.getmtime(f)
+                except OSError:
+                    mtime = 0
+                folder_info.append((str(f), mtime))
+
     key_data = {
         "cache_version": CACHE_VERSION,
         "groups": [{"label": g["label"], "is_reference": g.get("is_reference", False)}
