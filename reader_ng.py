@@ -162,7 +162,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 # ------------------------------------------------------------
         # 6. Tutti gli Z-spectra raggruppati (da cache)
         # ------------------------------------------------------------
-        title_zs = "All Z-spectra by group (da cache)"
+        title_zs = "All groups - Averaged Difference (da cache)"
         plot_all_z_spectra(
             groups=groups,
             analysis_results=analysis_results,
@@ -643,7 +643,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
     # --- Saving ---
         # ---- Tutti gli Z-spectra raggruppati (ricalcolati) ----
-    title_zs = "All Z-spectra by group (ricalcolati)"
+    title_zs = "All groups - Averaged Difference (ricalcolati)"
     plot_all_z_spectra(
         groups=groups,
         analysis_results=analysis_results,
