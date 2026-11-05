@@ -67,18 +67,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     ppm_missing = config.get("ppm_missing", False)
     analysis_results: dict = {}
 
-    # ============================================================
-    # PLOT MODE
-    # True  -> mostra SOLO il grafico "Averaged Difference" di ogni gruppo
-    # False -> riabilita tutti gli altri plot (spectra, z-spectra singoli,
-    #          group breakdown, groups comparison, all z-spectra overlay)
-    #
-    # Tutti i calcoli (group_stats, p_values, integrali, ...) restano
-    # invariati e vengono salvati in cache/JSON a prescindere da questo flag.
-    # Il flag controlla solo QUALI funzioni di plotting vengono chiamate.
-    # ============================================================
-    PLOT_ONLY_GROUP_DIFFERENCE = True
-
     # --- Cache ---
     cached = load_cache(config_name, config)
     use_cache = False
