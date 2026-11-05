@@ -320,18 +320,17 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
 # ----------------------------------------------------------------------
 # Statistiche di gruppo e p-value
 # ----------------------------------------------------------------------
-def _compute_group_stats(folder_keys: List[str], analysis_results: Dict[str, Any]) -> Dict[str, Any]:
-    integrals_list = []
-    for key in folder_keys:
-        entry = analysis_results.get(key, {})
-        integrals = entry.get("integrals", {})
-        if integrals:
-            integrals_list.append(integrals)
+def _compute_group_stats(experiments: Dict[str, Any]) -> Dict[str, Any]:
+    """Statistiche (mean/std) degli integrali su tutti gli esperimenti di un gruppo."""
+    integrals_list = [
+        exp["integrals"]
+        for exp in experiments.values()
+        if exp.get("integrals")
+    ]
     if not integrals_list:
         return {"mean": {}, "std": {}}
     regions = list(integrals_list[0].keys())
-    mean_dict = {}
-    std_dict = {}
+    mean_dict, std_dict = {}, {}
     for reg in regions:
         vals = [d[reg] for d in integrals_list if reg in d]
         n = len(vals)
@@ -346,18 +345,17 @@ def _compute_group_stats(folder_keys: List[str], analysis_results: Dict[str, Any
             std_dict[reg] = 0.0
     return {"mean": mean_dict, "std": std_dict}
 
-def _compute_pvalues(ref_keys: List[str], sample_keys: List[str],
-                     analysis_results: Dict[str, Any], test='t-test') -> Dict[str, Optional[float]]:
-    ref_integrals = []
-    for key in ref_keys:
-        integr = analysis_results.get(key, {}).get("integrals")
-        if integr:
-            ref_integrals.append(integr)
-    sample_integrals = []
-    for key in sample_keys:
-        integr = analysis_results.get(key, {}).get("integrals")
-        if integr:
-            sample_integrals.append(integr)
+def _compute_pvalues(
+    ref_experiments: Dict[str, Any],
+    sample_experiments: Dict[str, Any],
+    test: str = 't-test',
+) -> Dict[str, Optional[float]]:
+    ref_integrals = [
+        exp["integrals"] for exp in ref_experiments.values() if exp.get("integrals")
+    ]
+    sample_integrals = [
+        exp["integrals"] for exp in sample_experiments.values() if exp.get("integrals")
+    ]
     if not ref_integrals or not sample_integrals:
         print("Not enough data for p-value calculation.")
         return {}
@@ -382,66 +380,49 @@ def _compute_pvalues(ref_keys: List[str], sample_keys: List[str],
 # Differenze replicate e griglia comune
 # ----------------------------------------------------------------------
 def build_common_ppm_grid(
-    folder_keys: List[str],
-    analysis_results: Dict[str, Any],
-    n_points: int = N_POINTS_FIT
+    experiments: Dict[str, Any],
+    n_points: int = N_POINTS_FIT,
 ) -> np.ndarray:
     """
-    Build a common ppm axis covering all replicates in a group.
-
-    The function retrieves the 'zero_corrected_ppm' array from each
-    replicate's entry in analysis_results, finds the global minimum
-    and maximum, and returns a linearly spaced grid with `n_points`.
+    Build a common ppm axis covering all experiments in a group.
 
     Parameters
     ----------
-    folder_keys : List[str]
-        Keys into `analysis_results` corresponding to the replicates
-        (e.g., 'folder_name_short' for Bruker data or 'file_stem' for text files).
-    analysis_results : Dict[str, Any]
-        The main results dictionary. Each replicate must already contain
-        the key 'zero_corrected_ppm' (list of floats).
+    experiments : Dict[str, Any]
+        Dizionario degli esperimenti del gruppo. Ogni esperimento deve
+        contenere la chiave 'zero_corrected_ppm' (lista di float).
     n_points : int, optional
-        Number of points in the output grid (default = N_POINTS_FIT).
+        Numero di punti della griglia (default = N_POINTS_FIT).
 
     Returns
     -------
     x_common : np.ndarray
-        1D array of ppm values from the overall min to the overall max,
-        equally spaced.
+        1D array di ppm da min globale a max globale, equispaziato.
 
     Raises
     ------
     ValueError
-        If any replicate lacks 'zero_corrected_ppm' or if the range is invalid.
+        Se un esperimento manca di 'zero_corrected_ppm' o se il range è invalido.
     """
+
     global_min = float('inf')
     global_max = -float('inf')
-
-    for key in folder_keys:
-        entry = analysis_results.get(key, {})
+    for key, entry in experiments.items():
         ppm_list = entry.get("zero_corrected_ppm")
         if ppm_list is None:
-            raise ValueError(
-                f"Missing 'zero_corrected_ppm' for replicate '{key}' in analysis_results."
-            )
-        # Handle both list and numpy array
+            raise ValueError(f"Missing 'zero_corrected_ppm' for experiment '{key}'.")
         ppm_arr = np.asarray(ppm_list)
         if ppm_arr.size == 0:
             raise ValueError(f"'zero_corrected_ppm' for '{key}' is empty.")
         global_min = min(global_min, ppm_arr.min())
         global_max = max(global_max, ppm_arr.max())
-
     if global_min >= global_max:
-        raise ValueError(
-            f"Invalid ppm range: min={global_min}, max={global_max}."
-        )
-
+        raise ValueError(f"Invalid ppm range: min={global_min}, max={global_max}.")
+    
     return np.linspace(global_min, global_max, n_points)
 
 def collect_replicate_differences(
-    folder_keys: List[str],
-    analysis_results: Dict[str, Any],
+    experiments: Dict[str, Any],
     x_common: Optional[np.ndarray] = None,
     n_points: int = N_POINTS_FIT,
     compute_integrals: bool = True,
@@ -467,37 +448,26 @@ def collect_replicate_differences(
     """
 
     if x_common is None:
-        x_common = build_common_ppm_grid(folder_keys, analysis_results, n_points=n_points)
+        x_common = build_common_ppm_grid(experiments, n_points=n_points)
 
-    diffs: List[np.ndarray] = []
-    lorenzians: List[np.ndarray] = []
-    splines: List[np.ndarray] = []
-
-    for key in folder_keys:
-        entry = analysis_results[key]
+    diffs, lorenzians, splines, corrected_common = [], [], [], []
+    for key, entry in experiments.items():
         ppm = np.asarray(entry["zero_corrected_ppm"])
-        sigmoid_corrected = np.asarray(entry["sigmoid_corrected"])
-        A = entry["A"]
-        gamma = entry["gamma"]
-        y_min = entry["y_min"]
+        sig = np.asarray(entry["sigmoid_corrected"])
+        A, gamma, y_min = entry["A"], entry["gamma"], entry["y_min"]
 
-        # Lorentzian envelope on the common grid
-        y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
-        lorenzians.append(y_lor)
-
-        # Spline fit on the replicate's corrected data, evaluated on the common grid
-        y_spline = PchipInterpolator(ppm, sigmoid_corrected)(x_common)
-        splines.append(y_spline)
-
-        diffs.append(y_lor - y_spline)
+        corrected_common.append(PchipInterpolator(ppm, sig)(x_common))
+        lorenzians.append(constrained_lorentzian(x_common, A, gamma, y_min))
+        splines.append(PchipInterpolator(ppm, sig)(x_common))
+        diffs.append(lorenzians[-1] - splines[-1])
 
     diffs_arr      = np.array(diffs)
     lorenzians_arr = np.array(lorenzians)
     splines_arr    = np.array(splines)
-
+    corrected_arr  = np.array(corrected_common)
     n = len(diffs)
 
-    def _mean_sem(a: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _mean_sem(a):
         m = np.mean(a, axis=0)
         s = np.std(a, axis=0, ddof=1) / np.sqrt(n) if n > 1 else np.zeros_like(m)
         return m, s
@@ -505,20 +475,18 @@ def collect_replicate_differences(
     mean_diff,       sem_diff       = _mean_sem(diffs_arr)
     mean_lorentzian, _              = _mean_sem(lorenzians_arr)
     mean_spline,     _              = _mean_sem(splines_arr)
+    mean_corrected,  sem_corrected  = _mean_sem(corrected_arr)
 
-    # --- Experimental data points (original x grid, averaged across replicates) ---
-    # Use the first replicate's corrected ppm grid as reference; interpolate the others.
-    x_data = np.asarray(analysis_results[folder_keys[0]]["zero_corrected_ppm"])
+    # punti dati originali (media sui replicati)
+    first_key = next(iter(experiments))
+    x_data = np.asarray(experiments[first_key]["zero_corrected_ppm"])
     corrected_at_data = []
-    for key in folder_keys:
-        ppm = np.asarray(analysis_results[key]["zero_corrected_ppm"])
-        sc = np.asarray(analysis_results[key]["sigmoid_corrected"])
-        if np.array_equal(ppm, x_data):
-            corrected_at_data.append(sc)
-        else:
-            corrected_at_data.append(np.interp(x_data, ppm, sc))
-    corrected_at_data_arr = np.array(corrected_at_data)
-    mean_corrected_at_data, sem_corrected_at_data = _mean_sem(corrected_at_data_arr)
+    for entry in experiments.values():
+        ppm = np.asarray(entry["zero_corrected_ppm"])
+        sc  = np.asarray(entry["sigmoid_corrected"])
+        corrected_at_data.append(sc if np.array_equal(ppm, x_data)
+                                 else np.interp(x_data, ppm, sc))
+    mean_corrected_at_data, sem_corrected_at_data = _mean_sem(np.array(corrected_at_data))
 
     result = {
         "x_common":        x_common,
@@ -526,14 +494,15 @@ def collect_replicate_differences(
         "sem_diff":        sem_diff,
         "mean_lorentzian": mean_lorentzian,
         "mean_spline":     mean_spline,
-        "individual_diffs": [d for d in diffs],
+        "mean_corrected":  mean_corrected,
+        "sem_corrected":   sem_corrected,
         "x_data":                 x_data,
         "mean_corrected_at_data": mean_corrected_at_data,
         "sem_corrected_at_data":  sem_corrected_at_data,
     }
     if compute_integrals:
         result["integrals"] = compute_regions_integrals(x_common, mean_diff)
-
+    
     return result
 
 # ----------------------------------------------------------------------
