@@ -112,16 +112,27 @@ def ppm_to_index(uc: Any, user_ppm: float) -> int:
 # ----------------------------------------------------------------------
 def replace_zero_delta(sat_trans_hz, delta):
     """
-    Replaces the delta value at the position where sat_trans_hz is 0.0
-    with the mean of delta values corresponding to the smallest positive
-    and smallest negative sat_trans_hz values.
+    Replaces the delta value at the position whose sat_trans_hz is
+    closest to 0.0 with the mean of delta values corresponding to the
+    smallest positive and smallest negative sat_trans_hz values.
     """
     if len(sat_trans_hz) != len(delta):
         raise ValueError("Both lists must have the same length")
     
-    # Find the index of 0.0
-    zero_idx = sat_trans_hz.index(0.0)
-    
+    # Find the index of the value closest to 0.0. Exact 0.0 is not
+    # guaranteed: the on-resonance frequency depends on how the
+    # acquisition parameters express the offset, and floating-point
+    # round-trips can leave it as e.g. 1e-15 or 1e-3.
+    abs_vals = np.abs(np.asarray(sat_trans_hz, dtype=float))
+    zero_idx = int(np.argmin(abs_vals))
+    if abs_vals[zero_idx] > 1e-6:
+        print(colored(
+            f"Warning: no saturation frequency near 0 Hz "
+            f"(closest is {sat_trans_hz[zero_idx]:.6f} Hz). "
+            f"Using the closest point as the on-resonance reference.",
+            "yellow"
+        ))
+
     # Find smallest positive and smallest negative values (excluding 0.0)
     min_positive_val = float('inf')
     min_negative_val = float('-inf')

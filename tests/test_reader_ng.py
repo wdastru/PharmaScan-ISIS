@@ -22,6 +22,7 @@ from processing import (
     build_common_ppm_grid,
     collect_replicate_differences,
     _compute_group_stats,
+    replace_zero_delta
 )
 
 # ----------------------------------------------------------------------
@@ -571,3 +572,32 @@ class TestResolveGroupSource:
     def test_mixed_priority_ts(self):
         grp = {"label": "g", "folders": [], "topspin_folders": ["/b"], "files": ["/c"]}
         assert _resolve_group_source(grp) == ("ts", ["/b"])        
+
+class TestReplaceZeroDelta:
+    def test_exact_zero(self):
+        sat   = [-100.0, -50.0, 0.0, 50.0, 100.0]
+        delta = [   1.0,   2.0, 99.0,  4.0,   5.0]
+        result = replace_zero_delta(sat, delta)
+        # mean of neighbour deltas: (delta[3] + delta[1]) / 2 = (4 + 2) / 2 = 3
+        # zero position gets 3, then all shifted by -3:
+        #   [1-3, 2-3, 3-3, 4-3, 5-3] = [-2, -1, 0, 1, 2]
+        assert result == [-2.0, -1.0, 0.0, 1.0, 2.0]
+        
+    def test_almost_zero(self):
+        sat = [-100.0, -50.0, 1e-15, 50.0, 100.0]
+        delta = [1.0, 2.0, 99.0, 4.0, 5.0]
+        result = replace_zero_delta(sat, delta)
+        # Same as exact_zero: 1e-15 is treated as 0
+        assert result == [-2.0, -1.0, 0.0, 1.0, 2.0]
+
+    def test_near_zero_warns(self, capsys):
+        sat = [-100.0, -50.0, 0.5, 50.0, 100.0]
+        delta = [1.0, 2.0, 99.0, 4.0, 5.0]
+        replace_zero_delta(sat, delta)
+        out = capsys.readouterr().out
+        assert "Warning" in out
+        assert "no saturation frequency near 0 Hz" in out
+
+    def test_length_mismatch_raises(self):
+        with pytest.raises(ValueError, match="same length"):
+            replace_zero_delta([1.0, 2.0], [1.0])        
