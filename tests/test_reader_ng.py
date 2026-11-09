@@ -308,7 +308,7 @@ class TestCollectReplicateDifferences:
         }
         x_common = np.linspace(0.0, 2.0, 20)
         result = collect_replicate_differences(
-            ["rep1", "rep2"], analysis_results, x_common=x_common, compute_integrals=False
+            ["rep1", "rep2"], analysis_results, x_fit_ppm=x_common, compute_integrals=False
         )
         assert np.allclose(result["sem_diff"], 0.0)
         assert len(result["individual_diffs"]) == 2
@@ -328,7 +328,7 @@ class TestCollectReplicateDifferences:
         }
         x_common = np.linspace(0.0, 2.0, 5)
         result = collect_replicate_differences(
-            ["rep"], analysis_results, x_common=x_common, compute_integrals=False
+            ["rep"], analysis_results, x_fit_ppm=x_common, compute_integrals=False
         )
         assert np.allclose(result["sem_diff"], 0.0)
         assert result["mean_diff"].shape == (5,)
@@ -345,7 +345,7 @@ class TestCollectReplicateDifferences:
         }
         x_common = np.linspace(0.0, 1.0, 100)
         result = collect_replicate_differences(
-            ["rep"], analysis_results, x_common=x_common, compute_integrals=True
+            ["rep"], analysis_results, x_fit_ppm=x_common, compute_integrals=True
         )
         assert "integrals" in result
         # Verify that integral is exactly the mean of per‑replicate integrals?
@@ -401,7 +401,7 @@ class TestCollectReplicateDifferences:
 
         # Now use collect_replicate_differences
         result = collect_replicate_differences(
-            keys, analysis_results, x_common=x_common, compute_integrals=True
+            keys, analysis_results, x_fit_ppm=x_common, compute_integrals=True
         )
 
         # Compare

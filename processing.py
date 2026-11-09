@@ -245,18 +245,18 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
     # 2. Sort
     combined = list(zip(zero_corrected_ppm, max_vals))
     combined.sort()
-    zero_corrected_ppm, max_vals_sorted = zip(*combined)
+    zero_corrected_ppm, y_raw_sorted = zip(*combined)
     zero_corrected_ppm = list(zero_corrected_ppm)
-    max_vals_sorted = list(max_vals_sorted)
+    y_raw_sorted = list(y_raw_sorted)
 
     # 3. Common grid
-    x_common = np.linspace(min(zero_corrected_ppm), max(zero_corrected_ppm), N_POINTS_FIT)
+    x_fit_ppm = np.linspace(min(zero_corrected_ppm), max(zero_corrected_ppm), N_POINTS_FIT)
 
     # 4. Sigmoid envelope
-    L, R, tau = estimate_constrained_sigmoid(zero_corrected_ppm, max_vals_sorted,
+    L, R, tau = estimate_constrained_sigmoid(zero_corrected_ppm, y_raw_sorted,
                                              fix_center=True, x0_fixed=0.0)
-    y_sig = constrained_sigmoid(x_common, L, R, tau)
-    sigmoid_env = {"L": L, "R": R, "tau": tau, "x": x_common, "y": y_sig,
+    y_sigmoid = constrained_sigmoid(x_fit_ppm, L, R, tau)
+    sigmoid_env = {"L": L, "R": R, "tau": tau, "x": x_fit_ppm, "y": y_sigmoid,
                    "fit_label": f'Sigmoid (L={L:.3f}, R={R:.3f}, τ={tau:.3f})',
                    "fit_successful": True}
 
@@ -266,31 +266,31 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
     # point to the nearest grid node. The previous approach introduced a
     # quantization error: when the number of saturation frequencies exceeded
     # N_POINTS_FIT, several data points shared the same envelope value, so
-    # sigmoid_corrected was not exactly max_vals / sigmoid(ppm).
+    # y_corrected was not exactly max_vals / sigmoid(ppm).
     #
     # Using the analytical formula at the actual data points guarantees that
-    # sigmoid_corrected[i] == max_vals_sorted[i] / constrained_sigmoid(ppm_i, L, R, tau)
+    # y_corrected[i] == max_vals_sorted[i] / constrained_sigmoid(ppm_i, L, R, tau)
     # for every i, which is what a manual recomputation would produce.
     env_at_data = constrained_sigmoid(
         np.asarray(zero_corrected_ppm), L, R, tau, x0=0.0
     )
-    sigmoid_corrected = [
-        max_vals_sorted[i] / env_at_data[i]
+    y_corrected = [
+        y_raw_sorted[i] / env_at_data[i]
         if abs(env_at_data[i]) > 1e-12
-        else max_vals_sorted[i]
-        for i in range(len(max_vals_sorted))
+        else y_raw_sorted[i]
+        for i in range(len(y_raw_sorted))
     ]
 
     # 6. Lorentzian envelope on corrected data
-    A, gamma = estimate_constrained_lorentzian(zero_corrected_ppm, sigmoid_corrected)
-    y_min = np.min(sigmoid_corrected)
-    y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
-    lor_env = {"A": A, "gamma": gamma, "x": x_common, "y": y_lor,
+    A, gamma = estimate_constrained_lorentzian(zero_corrected_ppm, y_corrected)
+    y_min = np.min(y_corrected)
+    y_lorentzian = constrained_lorentzian(x_fit_ppm, A, gamma, y_min)
+    lor_env = {"A": A, "gamma": gamma, "x": x_fit_ppm, "y": y_lorentzian,
                "fit_label": f'Lorentzian (A={A:.3f}, γ={gamma:.3f})',
                "fit_successful": True}
 
     # 7. Spline fit on corrected data
-    spline_res = spline_fit(x=zero_corrected_ppm, y=sigmoid_corrected, x_fit=x_common)
+    spline_res = spline_fit(x=zero_corrected_ppm, y=y_corrected, x_fit=x_fit_ppm)
     if not spline_res.get("fit_successful", False):
         return {"integrals": {},
                 "diff_x": None, "diff_y": None,
@@ -299,19 +299,19 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
                 "spline_fit_results": spline_res}
 
     # 8. Difference and integrals
-    diff_y = lor_env["y"] - spline_res["y_fit"]
-    integrals = compute_regions_integrals(x_common, diff_y)
+    y_diff = lor_env["y"] - spline_res["y_fit"]
+    integrals = compute_regions_integrals(x_fit_ppm, y_diff)
 
     return {
         "integrals": integrals,
-        "diff_x": x_common,
-        "diff_y": diff_y,
+        "diff_x": x_fit_ppm,
+        "diff_y": y_diff,
         "sigmoidal_envelope_results": sigmoid_env,
         "lorentzian_envelope_results": lor_env,
         "spline_fit_results": spline_res,
         # ---- intermediate data for later averaging ----
         "zero_corrected_ppm": zero_corrected_ppm,
-        "sigmoid_corrected": sigmoid_corrected,
+        "sigmoid_corrected": y_corrected,
         "A": A,
         "gamma": gamma,
         "y_min": y_min,
@@ -423,7 +423,7 @@ def build_common_ppm_grid(
 
 def collect_replicate_differences(
     experiments: Dict[str, Any],
-    x_common: Optional[np.ndarray] = None,
+    x_fit_ppm: Optional[np.ndarray] = None,
     n_points: int = N_POINTS_FIT,
     compute_integrals: bool = True,
 ) -> Dict[str, Any]:
@@ -439,69 +439,69 @@ def collect_replicate_differences(
     Returns
     -------
     dict with keys:
-        "x_common" : np.ndarray
-        "mean_diff", "sem_diff" : np.ndarray
+        "x_fit_ppm" : np.ndarray
+        "y_diff_mean", "sem_diff" : np.ndarray
         "mean_lorentzian", "mean_spline" : np.ndarray
         "mean_corrected", "sem_corrected" : np.ndarray
         "individual_diffs" : list of np.ndarray
         "integrals" : dict (if compute_integrals=True)
     """
 
-    if x_common is None:
-        x_common = build_common_ppm_grid(experiments, n_points=n_points)
+    if x_fit_ppm is None:
+        x_fit_ppm = build_common_ppm_grid(experiments, n_points=n_points)
 
-    diffs, lorenzians, splines, corrected_common = [], [], [], []
+    y_diff_common, y_lorentzian_common, y_spline_common, y_corrected_common = [], [], [], []
     for key, entry in experiments.items():
         ppm = np.asarray(entry["zero_corrected_ppm"])
         sig = np.asarray(entry["sigmoid_corrected"])
         A, gamma, y_min = entry["A"], entry["gamma"], entry["y_min"]
 
-        corrected_common.append(PchipInterpolator(ppm, sig)(x_common))
-        lorenzians.append(constrained_lorentzian(x_common, A, gamma, y_min))
-        splines.append(PchipInterpolator(ppm, sig)(x_common))
-        diffs.append(lorenzians[-1] - splines[-1])
+        y_corrected_common.append(PchipInterpolator(ppm, sig)(x_fit_ppm))
+        y_lorentzian_common.append(constrained_lorentzian(x_fit_ppm, A, gamma, y_min))
+        y_spline_common.append(PchipInterpolator(ppm, sig)(x_fit_ppm))
+        y_diff_common.append(y_lorentzian_common[-1] - y_spline_common[-1])
 
-    diffs_arr      = np.array(diffs)
-    lorenzians_arr = np.array(lorenzians)
-    splines_arr    = np.array(splines)
-    corrected_arr  = np.array(corrected_common)
-    n = len(diffs)
+    y_diff_arr      = np.array(y_diff_common)
+    y_lorentzian_arr = np.array(y_lorentzian_common)
+    y_spline_arr    = np.array(y_spline_common)
+    y_corrected_arr  = np.array(y_corrected_common)
+    n = len(y_diff_common)
 
     def _mean_sem(a):
         m = np.mean(a, axis=0)
         s = np.std(a, axis=0, ddof=1) / np.sqrt(n) if n > 1 else np.zeros_like(m)
         return m, s
 
-    mean_diff,       sem_diff       = _mean_sem(diffs_arr)
-    mean_lorentzian, _              = _mean_sem(lorenzians_arr)
-    mean_spline,     _              = _mean_sem(splines_arr)
-    mean_corrected,  sem_corrected  = _mean_sem(corrected_arr)
+    y_diff_mean,       y_diff_sem       = _mean_sem(y_diff_arr)
+    y_lorentzian_mean, _              = _mean_sem(y_lorentzian_arr)
+    y_spline_mean,     _              = _mean_sem(y_spline_arr)
+    mean_corrected,  sem_corrected  = _mean_sem(y_corrected_arr)
 
     # punti dati originali (media sui replicati)
     first_key = next(iter(experiments))
-    x_data = np.asarray(experiments[first_key]["zero_corrected_ppm"])
-    corrected_at_data = []
+    x_zero_corrected_ppm = np.asarray(experiments[first_key]["zero_corrected_ppm"])
+    y_corrected_at_data = []
     for entry in experiments.values():
         ppm = np.asarray(entry["zero_corrected_ppm"])
         sc  = np.asarray(entry["sigmoid_corrected"])
-        corrected_at_data.append(sc if np.array_equal(ppm, x_data)
-                                 else np.interp(x_data, ppm, sc))
-    mean_corrected_at_data, sem_corrected_at_data = _mean_sem(np.array(corrected_at_data))
+        y_corrected_at_data.append(sc if np.array_equal(ppm, x_zero_corrected_ppm)
+                                 else np.interp(x_zero_corrected_ppm, ppm, sc))
+    y_corrected_mean, y_corrected_sem = _mean_sem(np.array(y_corrected_at_data))
 
     result = {
-        "x_common":        x_common,
-        "mean_diff":       mean_diff,
-        "sem_diff":        sem_diff,
-        "mean_lorentzian": mean_lorentzian,
-        "mean_spline":     mean_spline,
+        "x_common":        x_fit_ppm,
+        "mean_diff":       y_diff_mean,
+        "sem_diff":        y_diff_sem,
+        "mean_lorentzian": y_lorentzian_mean,
+        "mean_spline":     y_spline_mean,
         "mean_corrected":  mean_corrected,
         "sem_corrected":   sem_corrected,
-        "x_data":                 x_data,
-        "mean_corrected_at_data": mean_corrected_at_data,
-        "sem_corrected_at_data":  sem_corrected_at_data,
+        "x_data":                 x_zero_corrected_ppm,
+        "mean_corrected_at_data": y_corrected_mean,
+        "sem_corrected_at_data":  y_corrected_sem,
     }
     if compute_integrals:
-        result["integrals"] = compute_regions_integrals(x_common, mean_diff)
+        result["integrals"] = compute_regions_integrals(x_fit_ppm, y_diff_mean)
     
     return result
 
