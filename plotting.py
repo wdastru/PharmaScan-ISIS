@@ -14,6 +14,21 @@ from termcolor import colored
 from constants import get_default_visibility
 from config import METABOLITE_REGIONS
 
+def group_color(group, all_groups):
+    """Colore coerente per ogni gruppo.
+       Reference = nero. Poi group 1 = blu, group 2 = arancione, poi verde, rosso, viola, marrone."""
+    if group.get("is_reference", False):
+        return "black"
+    # trova la posizione di questo gruppo tra i NON-reference
+    non_refs = [g for g in all_groups if not g.get("is_reference", False)]
+    idx = 0
+    for k, g in enumerate(non_refs):
+        if g is group or g.get("label") == group.get("label"):
+            idx = k
+            break
+    palette = ["blue", "orange", "green", "red", "purple", "brown"]
+    return palette[idx % len(palette)]
+
 def plot_z_spectrum(
     x, 
     y, 
@@ -33,24 +48,29 @@ def plot_z_spectrum(
     diff_y=None, 
     diff_label="Difference (Envelope - Spline)",
     visibility: Optional[Dict[str, bool]] = None,
-    window_title: Optional[str] = None
+    window_title: Optional[str] = None,
+    color: Optional[str] = None,
 ) -> Figure:
     # Se non fornito, usa i default globali
     if visibility is None:
         visibility = get_default_visibility()
+            # Colore del gruppo: se fornito lo uso per dati e spline,
+    # altrimenti mantengo i vecchi colori (dati blu, spline rossa)
+    data_color = color if color is not None else "b"
+    spline_color = color if color is not None else "r"
     
     fig = plt.figure(num=window_title, figsize=(8, 5))
 
     # Data points
     if visibility.get("data", True):
         if y_std_data is not None:
-            plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color='b', label='Data')
+            plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color=data_color, label='Data')
         else:
-            plt.plot(x, y, 'o', color='b', label='Data')
+            plt.plot(x, y, 'o', color=data_color, label='Data')
                 
     # Spline fit
     if visibility.get("spline", True):
-        plt.plot(x_fit, y_fit, 'r-', label=fit_label)
+        plt.plot(x_fit, y_fit, '-', color=spline_color, label=fit_label)
 
     # Lorentzian envelope
     if add_lorentz and lorentzian_envelope_results is not None and visibility.get("lorentzian", True):
@@ -409,5 +429,141 @@ def plot_group_difference(
     ax.grid(True)
     if visibility["legend"].get("z-spectra", True):
         ax.legend()
+    plt.show(block=False)
+    return fig
+
+def plot_all_z_spectra(
+    groups,
+    analysis_results,
+    folder_keys_per_group,
+    visibility=None,
+    title=None,
+    window_title=None,
+):
+    """
+    Overlay of the group-level 'Averaged Difference' panels.
+
+    For every group, replicates the same visual elements as
+    plot_group_difference -- experimental corrected points ± SEM, mean
+    spline, mean Lorentzian, mean difference ± SEM -- on a single shared
+    axis, each group drawn in its own color.
+
+    Two legends are shown:
+      - main legend: one entry per group (color)
+      - style legend: one entry per visual element (points, spline,
+        Lorentzian, mean difference)
+
+    Parameters
+    ----------
+    groups, analysis_results :
+        Same semantics as in plot_group_difference.
+    folder_keys_per_group :
+        Unused; kept only for backward compatibility with the caller.
+    visibility : dict, optional
+        Toggles: "data", "spline", "lorentzian", "difference", "regions",
+        and "legend" -> "z-spectra".
+    """
+    if visibility is None:
+        visibility = get_default_visibility()
+
+    show_data       = visibility.get("data", True)
+    show_spline     = visibility.get("spline", True)
+    show_lorentzian = visibility.get("lorentzian", True)
+    show_diff       = visibility.get("difference", True)
+    show_regions    = visibility.get("regions", True)
+    show_legend     = visibility.get("legend", {}).get("z-spectra", True)
+
+    fig, ax = plt.subplots(figsize=(10, 6), num=window_title)
+    cmap = plt.get_cmap("tab10")
+
+    for grp in groups:
+        label = grp["label"]
+        color = group_color(grp, groups)
+        grp_data = analysis_results.get(label, {})
+        if not grp_data:
+            continue
+
+        x_common = grp_data.get("x_common")
+        if x_common is None:
+            continue
+        x_common = np.asarray(x_common)
+
+        # --- 1) Experimental corrected points ± SEM ---
+        x_pts = grp_data.get("x_data")
+        y_pts = grp_data.get("mean_corrected_at_data")
+        y_err = grp_data.get("sem_corrected_at_data")
+        if show_data and x_pts is not None and y_pts is not None:
+            ax.errorbar(
+                np.asarray(x_pts), np.asarray(y_pts),
+                yerr=np.asarray(y_err) if y_err is not None else None,
+                fmt='o', color=color, markersize=4, alpha=0.5,
+                capsize=2, elinewidth=0.8,
+                # No label: style entries live in the style legend below
+            )
+
+        # --- 2) Spline fit (mean of replicates) ---
+        #     The spline carries the per-group label so it populates
+        #     the MAIN legend (one entry per group).
+        sp = grp_data.get("spline_fit_results", {})
+        if show_spline and sp.get("fit_successful") and sp.get("y_fit") is not None:
+            ax.plot(sp["x_fit"], sp["y_fit"], "-",
+                    color=color, linewidth=2.0, label=label)
+
+        # --- 3) Lorentzian envelope (mean of replicates) ---
+        lor = grp_data.get("lorentzian_envelope_results")
+        if show_lorentzian and lor and lor.get("y") is not None:
+            ax.plot(lor["x"], lor["y"], "--",
+                    color=color, linewidth=1.5, alpha=0.8)
+
+        # --- 4) Mean difference curve ± SEM ---
+        mean_diff = grp_data.get("mean_diff_y")
+        sem_diff  = grp_data.get("sem_diff_y")
+        if show_diff and mean_diff is not None:
+            mean_diff_arr = np.asarray(mean_diff)
+            ax.plot(x_common, mean_diff_arr, ":",
+                    color=color, linewidth=2.0)
+            if sem_diff is not None:
+                sem_diff_arr = np.asarray(sem_diff)
+                ax.fill_between(
+                    x_common,
+                    mean_diff_arr - sem_diff_arr,
+                    mean_diff_arr + sem_diff_arr,
+                    color=color, alpha=0.10, linewidth=0,
+                )
+
+    # --- Metabolite regions ---
+    if show_regions:
+        for idx, (name, region) in enumerate(METABOLITE_REGIONS.items()):
+            if region.get("ppm") and len(region["ppm"]) == 2:
+                start, end = region["ppm"]
+                ax.axvspan(start, end, facecolor=cmap(idx % 10),
+                           alpha=0.15, edgecolor="none")
+
+    ax.invert_xaxis()
+    ax.set_xlabel("Saturation ppm")
+    ax.set_ylabel("Intensity / Difference")
+    ax.set_title(title or "All groups – Averaged Difference")
+    ax.grid(True, alpha=0.3)
+
+    if show_legend:
+        # MAIN legend: one entry per group (via the spline lines)
+        leg_main = ax.legend(loc="upper right", title="Groups")
+        ax.add_artist(leg_main)   # keep it when we build the second legend
+
+        # STYLE legend: one entry per visual element (gray, no group color)
+        style_handles = [
+            Line2D([0], [0], color="k", marker="o", linestyle="",
+                   markersize=6, alpha=0.6,
+                   label="Experimental (mean ± SEM)"),
+            Line2D([0], [0], color="k", linewidth=2.0,
+                   label="Spline (mean)"),
+            Line2D([0], [0], color="k", linewidth=1.5, linestyle="--",
+                   label="Lorentzian (mean)"),
+            Line2D([0], [0], color="k", linewidth=2.0, linestyle=":",
+                   label="Mean diff (Lor − Spline)"),
+        ]
+        ax.legend(handles=style_handles, loc="lower left", title="Style")
+
+    fig.tight_layout()
     plt.show(block=False)
     return fig

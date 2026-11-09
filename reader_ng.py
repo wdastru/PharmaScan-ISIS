@@ -27,7 +27,7 @@ from config import (
 
 from plotting import (
     plot_group_difference, plot_group_breakdown, plot_spectra,
-    plot_groups_comparison, plot_z_spectrum
+        plot_groups_comparison, plot_z_spectrum, plot_all_z_spectra, group_color
 )
 
 from cache import (
@@ -66,7 +66,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     end_ppm = config.get("end_ppm")
     ppm_missing = config.get("ppm_missing", False)
     analysis_results: dict = {}
-    
+
     # --- Cache ---
     cached = load_cache(config_name, config)
     use_cache = False
@@ -112,6 +112,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         diff_y=res.get("diff_y"),
                         diff_label="Lorentzian envelope - Spline fit",
                         visibility=config.get("plot_visibility", get_default_visibility()),
+                        color=group_color(groups[grp_idx], groups),
                         window_title=f"Spline fit: {key} (da cache)"
                     )
 
@@ -158,6 +159,19 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                                   title=title,
                                   window_title=title)
 
+                # ------------------------------------------------------------
+        # 6. Tutti gli Z-spectra raggruppati (da cache)
+        # ------------------------------------------------------------
+        title_zs = "All groups - Averaged Difference (da cache)"
+        plot_all_z_spectra(
+            groups=groups,
+            analysis_results=analysis_results,
+            folder_keys_per_group=folder_keys_per_group_cached,
+            visibility=config.get("plot_visibility", get_default_visibility()),
+            title=title_zs,
+            window_title=title_zs,
+        )
+
         # --- Saving ---
         save_analysis_results(analysis_results=analysis_results, config_name=config_name)
     
@@ -199,13 +213,21 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
                 else:
-                    if group_meta[grp_idx]["work_offset_hz"] != work_offset_hz:
+                    # Compare with tolerance: SFO1 values differ only in the
+                    # last few decimal digits between replicates of the same
+                    # experiment (float parsing noise, rtol ~ 1e-8). Exact `!=`
+                    # was triggering false positives. rtol=1e-6 is ~30x above
+                    # the observed noise.
+                    if not np.allclose(
+                        group_meta[grp_idx]["work_offset_hz"], work_offset_hz,
+                        rtol=1e-6, atol=1e-6
+                    ):
                         print(colored(
-                            f"Error: different work_offset in group '{label}'", 
-                            "red", 
-                            attrs=["bold"])
-                        )
-                        #return
+                            f"Warning: different work_offset in group '{label}' "
+                            f"(prev={group_meta[grp_idx]['work_offset_hz']}, "
+                            f"new={work_offset_hz})",
+                            "yellow"
+                        ))
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
                 analysis_results[folder_name_short]["bf1"] = bf1
@@ -283,6 +305,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_y=res["diff_y"],
                     diff_label="Lorentzian envelope - Spline fit",
                     visibility=config.get("plot_visibility", get_default_visibility()),
+                    color=group_color(grp, groups),
                     window_title=f" {label}: spline fit for {folder_name_short}"
                 )
         elif source_type == "ts":   # Topspin BRUKER data
@@ -306,13 +329,21 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 if group_meta[grp_idx].get("work_offset_hz") is None:
                     group_meta[grp_idx]["work_offset_hz"] = work_offset_hz
                 else:
-                    if group_meta[grp_idx]["work_offset_hz"] != work_offset_hz:
+                    # Compare with tolerance: SFO1 values differ only in the
+                    # last few decimal digits between replicates of the same
+                    # experiment (float parsing noise, rtol ~ 1e-8). Exact `!=`
+                    # was triggering false positives. rtol=1e-6 is ~30x above
+                    # the observed noise.
+                    if not np.allclose(
+                        group_meta[grp_idx]["work_offset_hz"], work_offset_hz,
+                        rtol=1e-6, atol=1e-6
+                    ):
                         print(colored(
-                            f"Error: different work_offset in group '{label}'", 
-                            "red", 
-                            attrs=["bold"])
-                        )
-                        #return
+                            f"Warning: different work_offset in group '{label}' "
+                            f"(prev={group_meta[grp_idx]['work_offset_hz']}, "
+                            f"new={work_offset_hz})",
+                            "yellow"
+                        ))
 
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
                 analysis_results[folder_name_short]["bf1"] = bf1
@@ -389,6 +420,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_y=res["diff_y"],
                     diff_label="Lorentzian envelope - Spline fit",
                     visibility=config.get("plot_visibility", get_default_visibility()),
+                    color=group_color(grp, groups),
                     window_title=f" {label}: spline fit for {folder_name_short}"
                 )
         else:   # source_type == "text": txt data files (sat_trans_hz vs max_vals)
@@ -466,6 +498,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_y=res["diff_y"],
                     diff_label="Lorentzian envelope - Spline fit",
                     visibility=config.get("plot_visibility", get_default_visibility()),
+                    color=group_color(grp, groups),
                     window_title=f"{label}: spline fit for file {key}"
                 )
 
@@ -594,6 +627,16 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         )
 
     # --- Saving ---
+        # ---- Tutti gli Z-spectra raggruppati (ricalcolati) ----
+    title_zs = "All groups - Averaged Difference (ricalcolati)"
+    plot_all_z_spectra(
+        groups=groups,
+        analysis_results=analysis_results,
+        folder_keys_per_group=folder_keys_per_group,
+        visibility=config.get("plot_visibility", get_default_visibility()),
+        title=title_zs,
+        window_title=title_zs,
+    )
     analysis_results["__script_version__"] = get_git_hash(short=True)
     save_cache(config_name, config, analysis_results)
     save_analysis_results(analysis_results=analysis_results, config_name=config_name)
