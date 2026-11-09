@@ -223,7 +223,12 @@ def plot_groups_comparison(group_stats, p_values, groups,
                 if p is None:
                     continue
                 txt = None
-                for thr in sorted(significance, reverse=True):
+                # Iterate from the most stringent threshold (0.001 -> '***')
+                # to the least (0.05 -> '*'). The FIRST match is the correct
+                # significance label. Without `reverse=False` (the default),
+                # any p < 0.05 would be labelled '*' and '**'/'***' would
+                # never appear.
+                for thr in sorted(significance):     # [0.001, 0.01, 0.05]
                     if p < thr:
                         txt = significance[thr]
                         break
