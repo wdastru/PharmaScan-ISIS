@@ -105,8 +105,13 @@ def plot_z_spectrum(
                 start, end = region["ppm"]
                 ax.axvspan(start, end, facecolor=colors[idx], alpha=0.25, edgecolor='none', label=name)
             else:
-                print(colored(f"Region {name} is not defined properly. Aborting.", "red"))
-                exit(1)
+                # Do not terminate the whole application from a plotting
+                # helper: skip the malformed region and keep drawing the rest.
+                print(colored(
+                    f"Warning: region '{name}' is not defined properly; skipping.",
+                    "yellow"
+                ))
+                continue
     
     if invert_x:
         plt.gca().invert_xaxis()
@@ -424,8 +429,13 @@ def plot_group_difference(
                 ax.axvspan(start, end, facecolor=cmap(idx % 10),
                            alpha=0.25, edgecolor='none', label=name)
             else:
-                print(colored(f"Region {name} is not defined properly. Aborting.", "red"))
-                exit(1)
+                # Same as plot_z_spectrum: do not abort the app from a
+                # plotting helper. Skip the malformed region.
+                print(colored(
+                    f"Warning: region '{name}' is not defined properly; skipping.",
+                    "yellow"
+                ))
+                continue
 
     ax.invert_xaxis()
     ax.set_xlabel("Saturation ppm")
