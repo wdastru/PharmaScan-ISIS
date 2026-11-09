@@ -72,7 +72,10 @@ def _dedup_x_experiment(exp: dict) -> None:
     lor    = exp.get("lorentzian_envelope_results", {})
 
     # La griglia comune (200 pt) è la stessa in 4 posti: prendine una
-    fit_x = exp.get("diff_x") or spline.get("x_fit")
+    fit_x = exp.get("diff_x")
+    if fit_x is None:
+        fit_x = spline.get("x_fit")
+
     if fit_x is not None:
         exp["fit_x"] = fit_x
 

@@ -20,9 +20,13 @@ from constants import (
     CACHE_DIR, get_default_visibility
 )
 
+from export import ( 
+    save_analysis_results, SafeEncoder
+)
+
 from config import (
     METABOLITE_REGIONS, _resolve_group_source, save_config, select_or_create_config,
-    save_analysis_results, ensure_complete_config,
+    ensure_complete_config,
 )
 
 from plotting import (

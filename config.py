@@ -24,7 +24,7 @@ from data_io import (
 )
 
 from utils import (
-    ask_yes_no, ask_user_for_ppm_range, ask_int, ask_float, ask_choice
+    ask_yes_no, ask_int, ask_float, ask_choice
 )
 
 from constants import (
@@ -59,6 +59,10 @@ def merge_config_defaults(defaults: Dict[str, Any], current: Dict[str, Any]) -> 
 # ----------------------------------------------------------------------
 # Config listing, loading, saving
 # ----------------------------------------------------------------------
+def ensure_config_dir() -> None:
+    """Crea la cartella delle config se non esiste."""
+    CONFIG_DIR.mkdir(exist_ok=True)
+
 def list_configs() -> List[Path]:
     """Restituisce la lista dei file di configurazione (.json) nella cartella configs."""
     ensure_config_dir()
