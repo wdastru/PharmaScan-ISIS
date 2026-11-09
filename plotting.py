@@ -456,40 +456,41 @@ def plot_all_z_spectra(
     window_title=None,
 ):
     """
-    Overlay of the group-level 'Averaged Difference' panels.
+    Overlay of the group-level 'Averaged Difference' panels, with
+    per-element and per-group interactive visibility toggles.
 
-    For every group, replicates the same visual elements as
-    plot_group_difference -- experimental corrected points ± SEM, mean
-    spline, mean Lorentzian, mean difference ± SEM -- on a single shared
-    axis, each group drawn in its own color.
+    Toggles (right side of the figure):
+      * Style: Points ± SEM / Spline / Lorentzian / Mean diff ± SEM /
+               Regions / Legend
+      * Groups: one checkbox per group (hides all elements of that group)
 
-    Two legends are shown:
-      - main legend: one entry per group (color)
-      - style legend: one entry per visual element (points, spline,
-        Lorentzian, mean difference)
+    Visibility rule: element is shown iff its STYLE checkbox is on AND
+    the corresponding GROUP checkbox is on.
 
-    Parameters
-    ----------
-    groups, analysis_results :
-        Same semantics as in plot_group_difference.
-    folder_keys_per_group :
-        Unused; kept only for backward compatibility with the caller.
-    visibility : dict, optional
-        Toggles: "data", "spline", "lorentzian", "difference", "regions",
-        and "legend" -> "z-spectra".
+    Toggles are session-only; they do not modify the config or the cache.
     """
     if visibility is None:
         visibility = get_default_visibility()
 
-    show_data       = visibility.get("data", True)
-    show_spline     = visibility.get("spline", True)
-    show_lorentzian = visibility.get("lorentzian", True)
-    show_diff       = visibility.get("difference", True)
-    show_regions    = visibility.get("regions", True)
-    show_legend     = visibility.get("legend", {}).get("z-spectra", True)
+    # ---- initial states, seeded from config visibility ----
+    style_state = {
+        "points":     bool(visibility.get("data", True)),
+        "spline":     bool(visibility.get("spline", True)),
+        "lorentzian": bool(visibility.get("lorentzian", True)),
+        "diff":       bool(visibility.get("difference", True)),
+    }
+    group_state = {grp["label"]: True for grp in groups}
+    regions_state = bool(visibility.get("regions", True))
+    legend_state = bool(visibility.get("legend", {}).get("z-spectra", True))
 
-    fig, ax = plt.subplots(figsize=(10, 6), num=window_title)
+    fig, ax = plt.subplots(figsize=(11, 6), num=window_title)
     cmap = plt.get_cmap("tab10")
+
+    # Reference holders: artists[(group_label, element_name)] = [art, ...]
+    artists = {}
+
+    def _register(label, element, *arts):
+        artists.setdefault((label, element), []).extend(arts)
 
     for grp in groups:
         label = grp["label"]
@@ -497,62 +498,62 @@ def plot_all_z_spectra(
         grp_data = analysis_results.get(label, {})
         if not grp_data:
             continue
-
         x_common = grp_data.get("x_common")
         if x_common is None:
             continue
         x_common = np.asarray(x_common)
 
-        # --- 1) Experimental corrected points ± SEM ---
+        # 1) Experimental points ± SEM
         x_pts = grp_data.get("x_data")
         y_pts = grp_data.get("mean_corrected_at_data")
         y_err = grp_data.get("sem_corrected_at_data")
-        if show_data and x_pts is not None and y_pts is not None:
-            ax.errorbar(
+        if x_pts is not None and y_pts is not None:
+            eb = ax.errorbar(
                 np.asarray(x_pts), np.asarray(y_pts),
                 yerr=np.asarray(y_err) if y_err is not None else None,
                 fmt='o', color=color, markersize=4, alpha=0.5,
                 capsize=2, elinewidth=0.8,
-                # No label: style entries live in the style legend below
             )
+            _register(label, "points", eb)
 
-        # --- 2) Spline fit (mean of replicates) ---
-        #     The spline carries the per-group label so it populates
-        #     the MAIN legend (one entry per group).
+        # 2) Spline (mean). Carries the per-group label -> main legend.
         sp = grp_data.get("spline_fit_results", {})
-        if show_spline and sp.get("fit_successful") and sp.get("y_fit") is not None:
-            ax.plot(sp["x_fit"], sp["y_fit"], "-",
-                    color=color, linewidth=2.0, label=label)
+        if sp.get("fit_successful") and sp.get("y_fit") is not None:
+            ln, = ax.plot(sp["x_fit"], sp["y_fit"], "-",
+                          color=color, linewidth=2.0, label=label)
+            _register(label, "spline", ln)
 
-        # --- 3) Lorentzian envelope (mean of replicates) ---
+        # 3) Lorentzian (mean)
         lor = grp_data.get("lorentzian_envelope_results")
-        if show_lorentzian and lor and lor.get("y") is not None:
-            ax.plot(lor["x"], lor["y"], "--",
-                    color=color, linewidth=1.5, alpha=0.8)
+        if lor and lor.get("y") is not None:
+            ln, = ax.plot(lor["x"], lor["y"], "--",
+                          color=color, linewidth=1.5, alpha=0.85)
+            _register(label, "lorentzian", ln)
 
-        # --- 4) Mean difference curve ± SEM ---
+        # 4) Mean diff ± SEM (band tied to the same toggle as the curve)
         mean_diff = grp_data.get("mean_diff_y")
-        sem_diff  = grp_data.get("sem_diff_y")
-        if show_diff and mean_diff is not None:
-            mean_diff_arr = np.asarray(mean_diff)
-            ax.plot(x_common, mean_diff_arr, ":",
-                    color=color, linewidth=2.0)
+        sem_diff = grp_data.get("sem_diff_y")
+        if mean_diff is not None:
+            mean_arr = np.asarray(mean_diff)
+            ln, = ax.plot(x_common, mean_arr, ":",
+                          color=color, linewidth=2.0)
+            _register(label, "diff", ln)
             if sem_diff is not None:
-                sem_diff_arr = np.asarray(sem_diff)
-                ax.fill_between(
-                    x_common,
-                    mean_diff_arr - sem_diff_arr,
-                    mean_diff_arr + sem_diff_arr,
+                sem_arr = np.asarray(sem_diff)
+                band = ax.fill_between(
+                    x_common, mean_arr - sem_arr, mean_arr + sem_arr,
                     color=color, alpha=0.10, linewidth=0,
                 )
+                _register(label, "diff", band)
 
-    # --- Metabolite regions ---
-    if show_regions:
-        for idx, (name, region) in enumerate(METABOLITE_REGIONS.items()):
-            if region.get("ppm") and len(region["ppm"]) == 2:
-                start, end = region["ppm"]
-                ax.axvspan(start, end, facecolor=cmap(idx % 10),
+    # Metabolite regions
+    region_patches = []
+    for idx, (name, region) in enumerate(METABOLITE_REGIONS.items()):
+        if region.get("ppm") and len(region["ppm"]) == 2:
+            s, e = region["ppm"]
+            p = ax.axvspan(s, e, facecolor=cmap(idx % 10),
                            alpha=0.15, edgecolor="none")
+            region_patches.append(p)
 
     ax.invert_xaxis()
     ax.set_xlabel("Saturation ppm")
@@ -560,25 +561,119 @@ def plot_all_z_spectra(
     ax.set_title(title or "All groups – Averaged Difference")
     ax.grid(True, alpha=0.3)
 
-    if show_legend:
-        # MAIN legend: one entry per group (via the spline lines)
-        leg_main = ax.legend(loc="upper right", title="Groups")
-        ax.add_artist(leg_main)   # keep it when we build the second legend
+    # Two legends: groups (upper right) + style (lower left)
+    leg_groups = ax.legend(loc="upper right", title="Groups")
+    ax.add_artist(leg_groups)
+    style_handles = [
+        Line2D([0], [0], color="k", marker="o", linestyle="",
+               markersize=6, alpha=0.6, label="Points ± SEM"),
+        Line2D([0], [0], color="k", linewidth=2.0, label="Spline"),
+        Line2D([0], [0], color="k", linewidth=1.5, linestyle="--",
+               label="Lorentzian"),
+        Line2D([0], [0], color="k", linewidth=2.0, linestyle=":",
+               label="Mean diff ± SEM"),
+    ]
+    leg_style = ax.legend(handles=style_handles, loc="lower left", title="Style")
 
-        # STYLE legend: one entry per visual element (gray, no group color)
-        style_handles = [
-            Line2D([0], [0], color="k", marker="o", linestyle="",
-                   markersize=6, alpha=0.6,
-                   label="Experimental (mean ± SEM)"),
-            Line2D([0], [0], color="k", linewidth=2.0,
-                   label="Spline (mean)"),
-            Line2D([0], [0], color="k", linewidth=1.5, linestyle="--",
-                   label="Lorentzian (mean)"),
-            Line2D([0], [0], color="k", linewidth=2.0, linestyle=":",
-                   label="Mean diff (Lor − Spline)"),
-        ]
-        ax.legend(handles=style_handles, loc="lower left", title="Style")
+    # ---- visibility helpers ----
+    def _set_artist_visible(art, visible):
+        if hasattr(art, "set_visible"):
+            art.set_visible(visible)
+        else:
+            # Container (ErrorbarContainer): iterate children
+            for child in art:
+                if isinstance(child, (list, tuple)):
+                    for c in child:
+                        if hasattr(c, "set_visible"):
+                            c.set_visible(visible)
+                elif hasattr(child, "set_visible"):
+                    child.set_visible(visible)
 
-    fig.tight_layout()
+    def _apply():
+        for (label, element), arts in artists.items():
+            vis = style_state[element] and group_state.get(label, True)
+            for a in arts:
+                _set_artist_visible(a, vis)
+        for p in region_patches:
+            p.set_visible(regions_state)
+        leg_groups.set_visible(legend_state)
+        leg_style.set_visible(legend_state)
+        fig.canvas.draw_idle()
+
+    _apply()
+
+    # ---- checkbox widgets ----
+    style_labels = ["Points ± SEM", "Spline", "Lorentzian",
+                    "Mean diff ± SEM", "Regions", "Legend"]
+    style_keys   = ["points", "spline", "lorentzian", "diff", None, None]
+    style_init   = [style_state["points"], style_state["spline"],
+                    style_state["lorentzian"], style_state["diff"],
+                    regions_state, legend_state]
+
+    group_labels = [grp["label"] for grp in groups]
+    n_group = len(group_labels)
+
+    right = 0.76
+    cb_style_ax = fig.add_axes([right, 0.50, 0.22, 0.04 * len(style_labels) + 0.03])
+    cb_style = CheckButtons(cb_style_ax, style_labels, style_init)
+
+    cb_group_ax = fig.add_axes([right, 0.10, 0.22, 0.04 * n_group + 0.03])
+    cb_group = CheckButtons(cb_group_ax, group_labels, [True] * n_group)
+
+    _silent = False
+
+    def _on_style(label):
+        nonlocal _silent, regions_state, legend_state
+        if _silent:
+            return
+        idx = style_labels.index(label)
+        key = style_keys[idx]
+        if key is not None:
+            style_state[key] = not style_state[key]
+        elif label == "Regions":
+            regions_state = not regions_state
+        elif label == "Legend":
+            legend_state = not legend_state
+        _apply()
+
+    def _on_group(label):
+        nonlocal _silent
+        if _silent:
+            return
+        group_state[label] = not group_state[label]
+        _apply()
+
+    cb_style.on_clicked(_on_style)
+    cb_group.on_clicked(_on_group)
+
+    btn_check_ax = fig.add_axes([right, 0.89, 0.11, 0.04])
+    btn_check = Button(btn_check_ax, "Check all")
+    btn_uncheck_ax = fig.add_axes([right + 0.12, 0.89, 0.11, 0.04])
+    btn_uncheck = Button(btn_uncheck_ax, "Uncheck all")
+
+    def _set_all(state):
+        nonlocal _silent, regions_state, legend_state
+        _silent = True
+        for i, (lab, key) in enumerate(zip(style_labels, style_keys)):
+            if key is not None:
+                style_state[key] = state
+            elif lab == "Regions":
+                regions_state = state
+            elif lab == "Legend":
+                legend_state = state
+            if cb_style.get_status()[i] != state:
+                cb_style.set_active(i)
+        for i, lab in enumerate(group_labels):
+            group_state[lab] = state
+            if cb_group.get_status()[i] != state:
+                cb_group.set_active(i)
+        _silent = False
+        _apply()
+
+    btn_check.on_clicked(lambda ev: _set_all(True))
+    btn_uncheck.on_clicked(lambda ev: _set_all(False))
+
+    fig.subplots_adjust(left=0.06, right=right - 0.01, top=0.95, bottom=0.08)
+    fig._widgets = (cb_style, cb_group, btn_check, btn_uncheck)
     plt.show(block=False)
     return fig
