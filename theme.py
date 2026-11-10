@@ -126,3 +126,69 @@ def apply_theme() -> None:
         # ---- errorbar ----
         "errorbar.capsize": 3,
     })
+
+# ----------------------------------------------------------------------
+# Widget styling (CheckButtons / Button)
+# ----------------------------------------------------------------------
+def style_checkbuttons(cb):
+    """
+    Apply the PharmaScan-ISIS theme to a matplotlib CheckButtons widget:
+      * transparent axes with no spines (the widget floats over the figure)
+      * soft rounded-look boxes (filled white with light gray edge)
+      * thicker check marks in the theme's "points" color
+      * slightly larger label font
+
+    Compatible with both legacy (matplotlib < 3.7) and current
+    (matplotlib >= 3.7) CheckButtons APIs: the later versions renamed
+    `rectangles`, `lines`, `labels` to `_rectangles`, `_lines`, `_labels`.
+    """
+    # The widget axes: no frame, transparent
+    cb.ax.set_facecolor("none")
+    for spine in cb.ax.spines.values():
+        spine.set_visible(False)
+    cb.ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+
+    # --- Access internals across matplotlib versions ---
+    rects  = getattr(cb, "rectangles", None)
+    if rects is None:
+        rects = getattr(cb, "_rectangles", [])
+    lines  = getattr(cb, "lines", None)
+    if lines is None:
+        lines = getattr(cb, "_lines", [])
+    labels = getattr(cb, "labels", None)
+    if labels is None:
+        labels = getattr(cb, "_labels", [])
+
+    # Boxes and check marks
+    box_face    = "#FFFFFF"
+    box_edge    = "#C7CDD4"
+    check_color = ELEMENT_COLORS["points"]
+
+    for rect in rects:
+        rect.set_facecolor(box_face)
+        rect.set_edgecolor(box_edge)
+        rect.set_linewidth(1.0)
+
+    for line in lines:
+        line.set_color(check_color)
+        line.set_linewidth(1.6)
+
+    # Labels
+    for text in labels:
+        text.set_fontsize(9)
+        text.set_color("#2C3E50")
+
+
+def style_button(btn):
+    """
+    Apply the PharmaScan-ISIS theme to a matplotlib Button widget:
+      * light gray fill, subtle hover, no border
+      * bolder, slightly larger label
+    """
+    btn.color      = "#F4F6F8"
+    btn.hovercolor = "#E4E8EC"
+    if btn.ax is not None:
+        for spine in btn.ax.spines.values():
+            spine.set_visible(False)
+    btn.label.set_fontsize(9)
+    btn.label.set_color("#2C3E50")

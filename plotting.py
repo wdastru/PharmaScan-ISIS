@@ -13,7 +13,13 @@ from termcolor import colored
 
 from constants import get_default_visibility
 from config import METABOLITE_REGIONS
-from theme import BIO_PALETTE, REFERENCE_COLOR, ELEMENT_COLORS
+from theme import (
+    BIO_PALETTE,
+    REFERENCE_COLOR,
+    ELEMENT_COLORS,
+    style_checkbuttons,
+    style_button,
+)
 
 def group_color(group, all_groups):
     """
@@ -198,6 +204,11 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None,
     # collected, their callbacks are disconnected, and the checkboxes/
     # buttons stop responding even though they're still visible on screen.
     fig._widgets = (checks, btn_all, btn_none)
+
+     # Apply the global widget theme (defined in theme.py)
+    style_checkbuttons(checks)
+    style_button(btn_all)
+    style_button(btn_none)
     plt.show(block=False)
     return fig
 
@@ -686,5 +697,11 @@ def plot_all_z_spectra(
 
     fig.subplots_adjust(left=0.06, right=right - 0.01, top=0.95, bottom=0.08)
     fig._widgets = (cb_style, cb_group, btn_check, btn_uncheck)
+
+    # Apply the global widget theme (defined in theme.py)
+    style_checkbuttons(cb_style)
+    style_checkbuttons(cb_group)
+    style_button(btn_check)
+    style_button(btn_uncheck)
     plt.show(block=False)
     return fig
