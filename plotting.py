@@ -13,7 +13,7 @@ from termcolor import colored
 
 from constants import get_default_visibility
 from config import METABOLITE_REGIONS
-from theme import BIO_PALETTE, REFERENCE_COLOR
+from theme import BIO_PALETTE, REFERENCE_COLOR, ELEMENT_COLORS
 
 def group_color(group, all_groups):
     """
@@ -65,8 +65,10 @@ def plot_z_spectrum(
         visibility = get_default_visibility()
             # Colore del gruppo: se fornito lo uso per dati e spline,
     # altrimenti mantengo i vecchi colori (dati blu, spline rossa)
-    data_color = color if color is not None else "b"
-    spline_color = color if color is not None else "r"
+    # Data/spline color: use the per-group color if provided (from
+    # group_color), otherwise fall back to the theme defaults.
+    data_color = color if color is not None else ELEMENT_COLORS["points"]
+    spline_color = color if color is not None else ELEMENT_COLORS["spline"]
     
     fig = plt.figure(num=window_title, figsize=(8, 5))
 
@@ -87,7 +89,7 @@ def plot_z_spectrum(
         gamma = lorentzian_envelope_results.get("gamma")
         x_lor = lorentzian_envelope_results["x"]
         y_lor = lorentzian_envelope_results["y"]
-        plt.plot(x_lor, y_lor, 'g--', linewidth=2,
+        plt.plot(x_lor, y_lor, '--', color=ELEMENT_COLORS["lorentzian"], linewidth=2,
                 label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
 
     # Sigmoid envelope
@@ -97,12 +99,12 @@ def plot_z_spectrum(
         tau = sigmoidal_envelope_results.get("tau")
         x_sig = sigmoidal_envelope_results["x"]
         y_sig = sigmoidal_envelope_results["y"]
-        plt.plot(x_sig, y_sig, 'c--', linewidth=2,
+        plt.plot(x_sig, y_sig, '-.', color=ELEMENT_COLORS["sigmoid"], linewidth=2,
                     label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')                
 
     # Difference curve
     if diff_x is not None and diff_y is not None and visibility.get("difference", True):
-        plt.plot(diff_x, diff_y, 'm-', linewidth=1.5, label=diff_label)
+        plt.plot(diff_x, diff_y, '-', color=ELEMENT_COLORS["diff"], linewidth=1.5, label=diff_label)
 
     # Metabolite regions
     if visibility.get("regions", True):
@@ -384,7 +386,6 @@ def plot_group_difference(
 
     # --- Data points ---
     if visibility.get("data", True):
-
         use_corrected = (
             visibility.get("corrected", True)
             and "mean_corrected_at_data" in group_data
@@ -394,7 +395,7 @@ def plot_group_difference(
             x_pts = np.array(group_data["x_data"])
             y_pts = np.array(group_data["mean_corrected_at_data"])
             yerr_pts = np.array(group_data["sem_corrected_at_data"])
-            ax.errorbar(x_pts, y_pts, yerr=yerr_pts, fmt='o', color='b',
+            ax.errorbar(x_pts, y_pts, yerr=yerr_pts, fmt='o', color=ELEMENT_COLORS["points"],
                         markersize=5,
                         label='Z-spectrum corrected (mean ± SEM)')
         elif "sat_trans_hz" in group_data and "max_vals" in group_data:
@@ -402,21 +403,21 @@ def plot_group_difference(
             raw_ppm = np.array(group_data["sat_trans_hz"]) / group_data["bf1"]
             raw_vals = np.array(group_data["max_vals"])
             raw_sd = np.array(group_data.get("sd_max_vals", [0] * len(raw_vals)))
-            ax.errorbar(raw_ppm, raw_vals, yerr=raw_sd, fmt='o', color='b',
+            ax.errorbar(raw_ppm, raw_vals, yerr=raw_sd, fmt='o', color=ELEMENT_COLORS["points"],
                         label='Raw mean (uncorrected)')
 
     # --- Spline fit (mean of per-replicate splines, on corrected data) ---
     if visibility.get("spline", True):
         sp = group_data.get("spline_fit_results", {})
         if sp.get("fit_successful") and sp.get("y_fit") is not None:
-            ax.plot(sp["x_fit"], sp["y_fit"], 'r-', linewidth=1.5,
+            ax.plot(sp["x_fit"], sp["y_fit"], '-', color=ELEMENT_COLORS["spline"], linewidth=1.5,
                     label=sp.get("fit_label", "Spline fit"))
 
     # --- Lorentzian envelope (mean of per-replicate envelopes) ---
     if visibility.get("lorentzian", True):
         lor = group_data.get("lorentzian_envelope_results")
         if lor and lor.get("y") is not None:
-            ax.plot(lor["x"], lor["y"], 'g--', linewidth=2,
+            ax.plot(lor["x"], lor["y"], '--', color=ELEMENT_COLORS["lorentzian"], linewidth=2,
                     label=lor.get("fit_label", "Lorentzian envelope"))
 
     # --- Mean difference curve ± SEM ---
@@ -424,10 +425,10 @@ def plot_group_difference(
     sem_diff = np.array(group_data["sem_diff_y"])
 
     if visibility.get("difference", True):
-        ax.plot(x_common, mean_diff, 'm-', linewidth=1.5,
+        ax.plot(x_common, mean_diff, '-', color=ELEMENT_COLORS["diff"], linewidth=1.5,
                 label='Mean diff (Lor−Spline)')
         ax.fill_between(x_common, mean_diff - sem_diff, mean_diff + sem_diff,
-                        color='m', alpha=0.2, label='± SEM')
+                        color=ELEMENT_COLORS["diff"], alpha=0.15, label='± SEM')
 
     # --- Metabolite regions ---
     if visibility.get("regions", True):
