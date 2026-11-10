@@ -26,13 +26,11 @@ def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     return CACHE_DIR / f"analysis_{name}.joblib"
 
 def _build_cache_key(config: Dict[str, Any]) -> str:
-    """
-    Crea una chiave univoca basata sui parametri e sulle cartelle (compresa la data di modifica).
-    """
     groups = config.get("groups", [])
-    # Dati delle cartelle: percorso e timestamp dell'ultima modifica
+
+    # Dati delle cartelle/file: percorso e timestamp dell'ultima modifica.
+    # Copre sia Bruker (folders, topspin_folders) sia file txt (files).
     folder_info = []
-    
     for grp in groups:
         for key in ("folders", "topspin_folders", "files"):
             for f in grp.get(key, []):
@@ -44,10 +42,22 @@ def _build_cache_key(config: Dict[str, Any]) -> str:
 
     key_data = {
         "cache_version": CACHE_VERSION,
-        "groups": [{"label": g["label"], "is_reference": g.get("is_reference", False)}
-                   for g in groups],
+        # BF1 e' per-gruppo (lista allineata ai file txt). Includerlo qui
+        # cattura il caso in cui l'utente cambia la frequenza di lavoro
+        # senza toccare nessun file di input.
+        "groups": [
+            {
+                "label": g["label"],
+                "is_reference": g.get("is_reference", False),
+                "BF1": list(g.get("BF1", [])),
+            }
+            for g in groups
+        ],
         "start_ppm": config.get("start_ppm"),
         "end_ppm": config.get("end_ppm"),
+        # lb_Hz cambia l'apodizzazione FFT -> spettri -> massimi -> fit.
+        # Senza questo campo, modificare lb_Hz non invalidava la cache.
+        "lb_Hz": config.get("lb_Hz"),
         "folders_info": folder_info,
         "metabolite_regions": METABOLITE_REGIONS,
     }
