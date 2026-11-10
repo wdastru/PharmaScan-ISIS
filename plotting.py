@@ -130,7 +130,7 @@ def plot_z_spectrum(
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    plt.grid(True)
+    plt.grid(False)
     if visibility["legend"].get("z-spectra", True):
         plt.legend()
     plt.show(block=False)
@@ -149,7 +149,7 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None,
     ax.invert_xaxis()
     ax.set_xlabel("ppm")
     ax.set_ylabel("Intensity")
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
     ax.set_title(title)
     rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])
     visibility_states: List = [line.get_visible() for line in lines]
@@ -266,7 +266,7 @@ def plot_groups_comparison(group_stats, p_values, groups,
     ax.set_title(title)
     if visibility["legend"].get("integrals", True):
         ax.legend()
-    ax.grid(axis='y', alpha=0.3)
+    ax.grid(False)
     fig.tight_layout()
     plt.show(block=False)
     return fig
@@ -359,7 +359,7 @@ def plot_group_breakdown(group_label, group_stats, per_folder_integrals,
     ax.set_title(title)
     if visibility["legend"].get("integrals", True):
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(axis='y', alpha=0.3)
+    ax.grid(False)
     fig.tight_layout()
     plt.show(block=False)
     return fig
@@ -452,7 +452,7 @@ def plot_group_difference(
     ax.set_xlabel("Saturation ppm")
     ax.set_ylabel("Intensity / Difference")
     ax.set_title(f"Group {group_label} – Averaged Difference")
-    ax.grid(True)
+    ax.grid(False)
     if visibility["legend"].get("z-spectra", True):
         ax.legend()
     plt.show(block=False)
@@ -570,7 +570,7 @@ def plot_all_z_spectra(
     ax.set_xlabel("Saturation ppm")
     ax.set_ylabel("Intensity / Difference")
     ax.set_title(title or "All groups – Averaged Difference")
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
 
     # Two legends: groups (upper right) + style (lower left)
     leg_groups = ax.legend(loc="upper right", title="Groups")
