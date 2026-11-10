@@ -488,18 +488,26 @@ def plot_all_z_spectra(
     for grp in groups:
         label = grp["label"]
         color = group_color(grp, groups)
-        grp_data = analysis_results.get(label, {})
+        grp_data = (
+            analysis_results.get("groups", {})
+                        .get(label, {})
+                        .get("summary")
+        ) or {}
         if not grp_data:
             continue
-        x_common = grp_data.get("x_common")
-        if x_common is None:
-            continue
-        x_common = np.asarray(x_common)
 
-        # 1) Experimental points ± SEM
+        fit_x = grp_data.get("fit_x")
+        if fit_x is None:
+            # fallback per dati non deduplicati
+            fit_x = grp_data.get("spline_fit_results", {}).get("x_fit")
+        if fit_x is None:
+            continue
+        fit_x = np.asarray(fit_x)
+
+        # 1) Punti sperimentali ± SEM
         x_pts = grp_data.get("x_data")
-        y_pts = grp_data.get("mean_corrected_at_data")
-        y_err = grp_data.get("sem_corrected_at_data")
+        y_pts = grp_data.get("y_corrected_at_data_mean")
+        y_err = grp_data.get("y_corrected_at_data_sem")
         if x_pts is not None and y_pts is not None:
             eb = ax.errorbar(
                 np.asarray(x_pts), np.asarray(y_pts),
@@ -509,32 +517,32 @@ def plot_all_z_spectra(
             )
             _register(label, "points", eb)
 
-        # 2) Spline (mean). Carries the per-group label -> main legend.
+        # 2) Spline (media)
         sp = grp_data.get("spline_fit_results", {})
         if sp.get("fit_successful") and sp.get("y_fit") is not None:
-            ln, = ax.plot(sp["x_fit"], sp["y_fit"], "-",
-                          color=color, linewidth=2.0, label=label)
+            ln, = ax.plot(fit_x, sp["y_fit"], "-",
+                        color=color, linewidth=2.0, label=label)
             _register(label, "spline", ln)
 
-        # 3) Lorentzian (mean)
+        # 3) Lorentziana (media)
         lor = grp_data.get("lorentzian_envelope_results")
         if lor and lor.get("y") is not None:
-            ln, = ax.plot(lor["x"], lor["y"], "--",
-                          color=color, linewidth=1.5, alpha=0.85)
+            ln, = ax.plot(fit_x, lor["y"], "--",
+                        color=color, linewidth=1.5, alpha=0.85)
             _register(label, "lorentzian", ln)
 
-        # 4) Mean diff ± SEM (band tied to the same toggle as the curve)
-        mean_diff = grp_data.get("mean_diff_y")
-        sem_diff = grp_data.get("sem_diff_y")
+        # 4) Differenza media ± SEM
+        mean_diff = grp_data.get("y_diff_mean")
+        sem_diff  = grp_data.get("y_diff_sem")
         if mean_diff is not None:
             mean_arr = np.asarray(mean_diff)
-            ln, = ax.plot(x_common, mean_arr, ":",
-                          color=color, linewidth=2.0)
+            ln, = ax.plot(fit_x, mean_arr, ":",
+                        color=color, linewidth=2.0)
             _register(label, "diff", ln)
             if sem_diff is not None:
                 sem_arr = np.asarray(sem_diff)
                 band = ax.fill_between(
-                    x_common, mean_arr - sem_arr, mean_arr + sem_arr,
+                    fit_x, mean_arr - sem_arr, mean_arr + sem_arr,
                     color=color, alpha=0.10, linewidth=0,
                 )
                 _register(label, "diff", band)
