@@ -24,7 +24,7 @@ from data_io import (
 )
 
 from utils import (
-    ask_yes_no, ask_user_for_ppm_range, ask_int, ask_float, ask_choice
+    ask_yes_no, ask_int, ask_float, ask_choice
 )
 
 from constants import (
@@ -37,17 +37,6 @@ from constants import (
 # This is the single mutable copy used across the package.
 # To reset to defaults, call reset_metabolite_regions().
 METABOLITE_REGIONS = get_default_metabolite_regions()
-
-# ----------------------------------------------------------------------
-# Directory helpers
-# ----------------------------------------------------------------------
-def ensure_config_dir() -> None:
-    """Crea la cartella delle configurazioni se non esiste."""
-    CONFIG_DIR.mkdir(exist_ok=True)
-
-def ensure_output_dir() -> None:
-    """Crea la cartella degli output se non esiste."""
-    OUTPUT_DIR.mkdir(exist_ok=True)
 
 # ----------------------------------------------------------------------
 # Utility: merge default values into a configuration dictionary
@@ -70,6 +59,10 @@ def merge_config_defaults(defaults: Dict[str, Any], current: Dict[str, Any]) -> 
 # ----------------------------------------------------------------------
 # Config listing, loading, saving
 # ----------------------------------------------------------------------
+def ensure_config_dir() -> None:
+    """Crea la cartella delle config se non esiste."""
+    CONFIG_DIR.mkdir(exist_ok=True)
+
 def list_configs() -> List[Path]:
     """Restituisce la lista dei file di configurazione (.json) nella cartella configs."""
     ensure_config_dir()
@@ -192,75 +185,6 @@ def select_or_create_config() -> Tuple[str, Dict[str, Any]]:
                 print("Scelta non valida.")
         except ValueError:
             print("Inserisci un numero valido.")
-
-# ----------------------------------------------------------------------
-# Serialization helpers
-# ----------------------------------------------------------------------
-class SafeEncoder(json.JSONEncoder):
-    def default(self, obj):
-        # Handle methods / functions
-        if callable(obj):
-            return repr(obj)               # or str(obj)
-        # Handle numpy arrays & scalars
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        if isinstance(obj, (np.floating,)):
-            return float(obj)
-        # For any other object with a __dict__, try that
-        if hasattr(obj, '__dict__'):
-            return obj.__dict__
-        # Last resort
-        try:
-            return str(obj)
-        except Exception:
-            return f"<{type(obj).__name__}>"
-        
-def _safe_get_attr(obj, attr, default=None):
-    """Return attribute value. If it's a callable (method), call it first."""
-    val = getattr(obj, attr, default)
-    if callable(val):
-        try:
-            return val()
-        except TypeError:
-            # Fallback if call fails
-            return str(val) if default is None else default
-    return val
-
-def replace_uc_objects(obj):
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            if key == "uc" and value.__class__.__name__ == "unit_conversion":
-                uc = value
-                obj[key] = {
-                    "size": uc._size,
-                    "complex": uc._cplx,
-                    "sw": uc._sw,
-                    "obs_freq": uc._obs,
-                    "carrier": uc._car,
-                    "delta": uc._delta,
-                    "first_ppm": uc._first,
-                    # Use the safe getter for unit – it may be a method
-                    "unit": _safe_get_attr(uc, "unit", "unknown"),
-                    "ppm": list(uc.ppm) if hasattr(uc.ppm, '__iter__') else uc.ppm,
-                    "hz": list(uc.hz) if hasattr(uc.hz, '__iter__') else uc.hz,
-                }
-            else:
-                replace_uc_objects(value)
-    elif isinstance(obj, list):
-        for i, item in enumerate(obj):
-            if isinstance(item, dict):
-                replace_uc_objects(item)
-    return obj
-
-def save_analysis_results(config_name: str, analysis_results: dict) -> None:
-
-    ensure_output_dir()
-    analysis_results = replace_uc_objects(analysis_results)  # Convert uc objects to dicts for JSON serialization
-    version = f"-{analysis_results.get('__script_version__', '')}" if analysis_results.get('__script_version__') else ''
-    with open(Path(OUTPUT_DIR / f"{config_name}{version}.json"), "w", encoding="utf-8") as f:
-        json.dump(analysis_results, f, indent=2, cls=SafeEncoder, ensure_ascii=False)   # indent for human readability
 
 def _resolve_group_source(grp: Dict[str, Any]) -> Tuple[str, list]:
     """
