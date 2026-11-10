@@ -218,8 +218,9 @@ def plot_groups_comparison(group_stats, p_values, groups,
     x = np.arange(n_regions)
     bar_width = 0.8 / n_groups
     fig, ax = plt.subplots(num=window_title, figsize=figsize)
-    cmap = plt.get_cmap('tab10')
-    colors = [cmap(i % 10) for i in range(n_groups)]
+    # Use group_color so the bar chart respects the same palette
+    # (and the reference near-black) as the z-spectra plots.
+    colors = [group_color(grp, groups) for grp in groups]
     for i, grp in enumerate(groups):
         label = grp["label"]
         means = [group_stats[label]["mean"][reg] for reg in regions]
@@ -327,10 +328,10 @@ def plot_group_breakdown(group_label, group_stats, per_folder_integrals,
 
     fig, ax = plt.subplots(num=window_title, figsize=figsize)
 
-    # Colormap per le cartelle
-    cmap = plt.get_cmap('tab10')
-    folder_colors = [cmap(i % 10) for i in range(n_folders)]
-    color_avg = '#2c3e50'  # blu scuro per la media
+    # Folder colors from the global BIO_PALETTE; the average bar
+    # uses the theme's "mean" color (dark slate) for consistency.
+    folder_colors = [BIO_PALETTE[i % len(BIO_PALETTE)] for i in range(n_folders)]
+    color_avg = ELEMENT_COLORS["mean"]
 
     for j, reg in enumerate(regions):
         start_x = x[j] - total_width / 2
