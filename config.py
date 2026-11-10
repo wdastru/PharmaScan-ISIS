@@ -458,8 +458,10 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                         else:
                             print(colored("New folder also invalid – skipping.", "yellow"))
                     else:
-                        print(colored("Missing folder remains in the list.", "yellow"))
+                        # Keep the missing TopSpin folder in `valid_tf`, not
+                        # in `valid_folders` (which belongs to the block above).
                         valid_tf.append(folder)
+
             grp["topspin_folders"] = valid_tf
 
         # Validate "files" key
@@ -486,10 +488,11 @@ def ensure_complete_config(config_name: str, config_data: Dict[str, Any]) -> Dic
                         else:
                             print(colored("New file also invalid - skipping.", "yellow"))
                     else:
+                        # Keep the missing file in `valid_files`, not in
+                        # `valid_folders`. Note: the loop variable here is
+                        # `file`, not `folder` (the previous code was doubly wrong).
                         print(colored("Missing file remains in the list.", "yellow"))
                         valid_files.append(file)
-                        if has_bf1:
-                            valid_bf1.append(grp["BF1"][i])
 
             grp["files"] = valid_files
                     
