@@ -71,7 +71,7 @@ def apply_theme() -> None:
         "font.family":       "sans-serif",
         "font.sans-serif":   ["Inter", "Helvetica", "Arial", "DejaVu Sans"],
         "font.size":         10,
-        "axes.titlesize":    12,
+        "axes.titlesize":    13,
         "axes.titleweight":  "semibold",
         "axes.labelsize":    10,
         "axes.labelweight":  "medium",
@@ -105,7 +105,7 @@ def apply_theme() -> None:
         # ---- lines: thin, solid, markers with thin white edge ----
         "lines.linewidth":        1.5,
         "lines.markersize":       5,
-        "lines.markeredgewidth":  0.8,
+        "lines.markeredgewidth":  1.2,
         "lines.markeredgecolor":  "white",
 
         # ---- legend: no frame, tight ----
@@ -125,6 +125,10 @@ def apply_theme() -> None:
 
         # ---- errorbar ----
         "errorbar.capsize": 3,
+        # Suppress the "More than 20 figures" warning. The analysis can
+        # legitimately produce many figures (one per replicate); the user
+        # is expected to close them when done.
+        "figure.max_open_warning": 50,
     })
 
 # ----------------------------------------------------------------------

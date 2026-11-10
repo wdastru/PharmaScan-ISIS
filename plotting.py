@@ -408,7 +408,7 @@ def plot_group_difference(
             y_pts = np.array(group_data["mean_corrected_at_data"])
             yerr_pts = np.array(group_data["sem_corrected_at_data"])
             ax.errorbar(x_pts, y_pts, yerr=yerr_pts, fmt='o', color=ELEMENT_COLORS["points"],
-                        markersize=5,
+                        markersize=6,
                         label='Z-spectrum corrected (mean ± SEM)')
         elif "sat_trans_hz" in group_data and "max_vals" in group_data:
             # Fallback: raw mean z-spectrum, uncorrected.
@@ -635,7 +635,7 @@ def plot_all_z_spectra(
     group_labels = [grp["label"] for grp in groups]
     n_group = len(group_labels)
 
-    right = 0.76
+    right = 0.74
     cb_style_ax = fig.add_axes([right, 0.50, 0.22, 0.04 * len(style_labels) + 0.03])
     cb_style = CheckButtons(cb_style_ax, style_labels, style_init)
 
