@@ -116,9 +116,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             for key, res in gd.get("experiments", {}).items():
                 if res.get("spline_fit_results", {}).get("fit_successful"):
                     plot_z_spectrum(
-                        x=res["spline_fit_results"]["x"],
-                        y=res["spline_fit_results"]["y"],
-                        x_fit=res["spline_fit_results"]["x_fit"],
+                        x=res["zero_corrected_ppm"],
+                        y=res["sigmoid_corrected"],
+                        x_fit=res["fit_x"],
                         y_fit=res["spline_fit_results"]["y_fit"],
                         title=f"Spline: {key}",
                         invert_x=True,
@@ -126,8 +126,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         lorentzian_envelope_results=res.get("lorentzian_envelope_results"),
                         add_sigmoid=True,
                         sigmoidal_envelope_results=res.get("sigmoidal_envelope_results"),
-                        diff_x=res.get("diff_x"),
-                        diff_y=res.get("diff_y"),
+                        diff_x=res["fit_x"],
+                        diff_y=res["diff_y"],
                         diff_label="Lorentzian envelope - Spline fit",
                         visibility=config.get("plot_visibility", get_default_visibility()),
                         window_title=f"Spline fit: {key} (da cache)",
@@ -428,38 +428,39 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
             n = len(experiments)
             mean_max_vals = np.mean(val_arr, axis=0).tolist()
             mean_sat      = np.mean(sat_arr, axis=0).tolist()
-            sd_max_vals   = (
+            y_raw_sd = (
                 np.std(val_arr, axis=0, ddof=1).tolist() if n > 1
                 else [0] * len(val_arr[0])
             )
 
             coll_res = collect_replicate_differences(experiments, compute_integrals=True)
-            x_common = coll_res["x_common"]
+            fit_x = coll_res["fit_x"]
             first_bf1 = next(iter(experiments.values())).get("bf1")
 
             groups_data[label]["summary"] = {
-                "max_vals":     mean_max_vals,
-                "sat_trans_hz": mean_sat,
-                "sd_max_vals":  sd_max_vals,
+                "y_raw_mean":    mean_max_vals,
+                "x_raw_mean_hz": mean_sat,
+                "y_raw_sd":      y_raw_sd,
                 "spline_fit_results": {
-                    "x": x_common, "y": coll_res["mean_spline"],
-                    "x_fit": x_common, "y_fit": coll_res["mean_spline"],
+                    "x_fit": fit_x,
+                    "y_fit": coll_res["y_spline_mean"],
                     "fit_label": "Spline fit (mean of replicates, corrected)",
                     "fit_successful": True,
                 },
                 "lorentzian_envelope_results": {
-                    "x": x_common, "y": coll_res["mean_lorentzian"],
+                    "x": fit_x,
+                    "y": coll_res["y_lorentzian_mean"],
                     "fit_label": "Lorentzian envelope (mean of replicates)",
                     "fit_successful": True,
                 },
-                "x_data":                 coll_res["x_data"],
-                "mean_corrected_at_data": coll_res["mean_corrected_at_data"],
-                "sem_corrected_at_data":  coll_res["sem_corrected_at_data"],
-                "bf1":      first_bf1,
-                "x_common": x_common,
-                "mean_diff_y": coll_res["mean_diff"],
-                "sem_diff_y":  coll_res["sem_diff"],
-                "integrals":   coll_res["integrals"],
+                "x_data":                    coll_res["x_data"],
+                "y_corrected_at_data_mean":  coll_res["y_corrected_at_data_mean"],
+                "y_corrected_at_data_sem":   coll_res["y_corrected_at_data_sem"],
+                "bf1":       first_bf1,
+                "fit_x":     fit_x,
+                "y_diff_mean": coll_res["y_diff_mean"],
+                "y_diff_sem":  coll_res["y_diff_sem"],
+                "integrals_of_mean_curve": coll_res["integrals_of_mean_curve"],
             }
 
             plot_group_difference(

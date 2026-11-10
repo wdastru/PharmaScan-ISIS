@@ -52,28 +52,29 @@ def plot_z_spectrum(
     if visibility.get("spline", True):
         plt.plot(x_fit, y_fit, 'r-', label=fit_label)
 
-    # Lorentzian envelope
+    # Lorentzian envelope: usa la stessa griglia del fit (x_fit),
+    # non leggere lorentzian_envelope_results["x"] (rimosso dal dedup).
     if add_lorentz and lorentzian_envelope_results is not None and visibility.get("lorentzian", True):
         A = lorentzian_envelope_results.get("A")
         gamma = lorentzian_envelope_results.get("gamma")
-        x_lor = lorentzian_envelope_results["x"]
         y_lor = lorentzian_envelope_results["y"]
-        plt.plot(x_lor, y_lor, 'g--', linewidth=2,
+        plt.plot(x_fit, y_lor, 'g--', linewidth=2,
                 label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
 
-    # Sigmoid envelope
+    # Sigmoid envelope: usa x_fit, non sigmoidal_envelope_results["x"].
     if add_sigmoid and sigmoidal_envelope_results is not None and visibility.get("sigmoid", True):
         L = sigmoidal_envelope_results.get("L")
         R = sigmoidal_envelope_results.get("R")
         tau = sigmoidal_envelope_results.get("tau")
-        x_sig = sigmoidal_envelope_results["x"]
         y_sig = sigmoidal_envelope_results["y"]
-        plt.plot(x_sig, y_sig, 'c--', linewidth=2,
-                    label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')                
+        plt.plot(x_fit, y_sig, 'c--', linewidth=2,
+                    label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')
 
-    # Difference curve
-    if diff_x is not None and diff_y is not None and visibility.get("difference", True):
-        plt.plot(diff_x, diff_y, 'm-', linewidth=1.5, label=diff_label)
+    # Difference curve: se diff_x non è fornito (cache deduplicata),
+    # usa x_fit, che è la stessa griglia per costruzione.
+    if diff_y is not None and visibility.get("difference", True):
+        x_diff = diff_x if diff_x is not None else x_fit
+        plt.plot(x_diff, diff_y, 'm-', linewidth=1.5, label=diff_label)
 
     # Metabolite regions
     if visibility.get("regions", True):
@@ -176,7 +177,7 @@ def plot_groups_comparison(group_stats, p_values, groups,
     if not group_stats:
         return None
     first_label = groups[0]["label"]
-    regions = list(group_stats[first_label]["mean"].keys())
+    regions = list(group_stats[first_label]["integrals_mean"].keys())
     n_regions = len(regions)
     n_groups = len(groups)
     x = np.arange(n_regions)
@@ -186,8 +187,8 @@ def plot_groups_comparison(group_stats, p_values, groups,
     colors = [cmap(i % 10) for i in range(n_groups)]
     for i, grp in enumerate(groups):
         label = grp["label"]
-        means = [group_stats[label]["mean"][reg] for reg in regions]
-        stds  = [group_stats[label]["std"][reg] for reg in regions]
+        means = [group_stats[label]["integrals_mean"][reg] for reg in regions]
+        stds  = [group_stats[label]["integrals_std"][reg]  for reg in regions]
         offset = (i - n_groups/2 + 0.5) * bar_width
         ax.bar(x + offset, means, bar_width, yerr=stds, capsize=4,
                label=label, color=colors[i], edgecolor='black')
@@ -212,8 +213,10 @@ def plot_groups_comparison(group_stats, p_values, groups,
                     #txt = f"p={p:.3f}"
                     pass
                 ref_idx = next(k for k, g in enumerate(groups) if g["label"] == ref_label)
-                y_ref = group_stats[ref_label]["mean"][reg] + group_stats[ref_label]["std"][reg]
-                y_this = group_stats[grp["label"]]["mean"][reg] + group_stats[grp["label"]]["std"][reg]
+                y_ref = (group_stats[ref_label]["integrals_mean"][reg]
+                         + group_stats[ref_label]["integrals_std"][reg])
+                y_this = (group_stats[grp["label"]]["integrals_mean"][reg]
+                          + group_stats[grp["label"]]["integrals_std"][reg])                
                 y_max = max(y_ref, y_this) * 1.05
                 x_pos = x[j] + (i - n_groups/2 + 0.5) * bar_width
                 ax.text(x_pos, y_max, txt, ha='center', va='bottom',
@@ -248,10 +251,10 @@ def plot_group_breakdown(group_label, group_stats, per_folder_integrals,
         print(f"Dati insufficienti per il gruppo '{group_label}'")
         return None
 
-    regions = list(stats["mean"].keys())
-    means = [stats["mean"][r] for r in regions]
-    stds  = [stats["std"][r] for r in regions]
-
+    regions = list(stats["integrals_mean"].keys())
+    means   = [stats["integrals_mean"][r] for r in regions]
+    stds    = [stats["integrals_std"][r]  for r in regions]
+    
     first_region = regions[0]
     n_folders = len(folder_vals.get(first_region, []))
     if n_folders == 0:
@@ -328,41 +331,32 @@ def plot_group_difference(
     visibility: Optional[Dict[str, bool]] = None,
     window_title: Optional[str] = None,
 ) -> Figure:
-    """
-    Plot the group-averaged z-spectrum, Lorentzian envelope, spline fit,
-    and mean difference curve ± SEM, all on the common ppm grid.
-
-    Data points default to the sigmoid-corrected z-spectrum (mean ± SEM).
-    Set visibility["corrected"] = False to fall back to raw mean (uncorrected).
-    """
     if visibility is None:
         visibility = get_default_visibility()
 
     fig, ax = plt.subplots(num=window_title, figsize=(8, 5))
 
-    # X-axis for all corrected quantities: the common grid.
-    x_fit_ppm = np.array(group_data["x_common"])
+    # X-axis for all corrected quantities: the common fit grid.
+    x_fit_ppm = np.array(group_data["fit_x"])
 
     # --- Data points ---
     if visibility.get("data", True):
-
         use_corrected = (
             visibility.get("corrected", True)
-            and "mean_corrected_at_data" in group_data
-            and "sem_corrected_at_data" in group_data
+            and "y_corrected_at_data_mean" in group_data
+            and "y_corrected_at_data_sem" in group_data
         )
         if use_corrected:
-            x_pts = np.array(group_data["x_data"])
-            y_pts = np.array(group_data["mean_corrected_at_data"])
-            yerr_pts = np.array(group_data["sem_corrected_at_data"])
+            x_pts   = np.array(group_data["x_data"])
+            y_pts   = np.array(group_data["y_corrected_at_data_mean"])
+            yerr_pts = np.array(group_data["y_corrected_at_data_sem"])
             ax.errorbar(x_pts, y_pts, yerr=yerr_pts, fmt='o', color='b',
                         markersize=5,
                         label='Z-spectrum corrected (mean ± SEM)')
-        elif "sat_trans_hz" in group_data and "max_vals" in group_data:
-            # Fallback: raw mean z-spectrum, uncorrected.
-            raw_ppm = np.array(group_data["sat_trans_hz"]) / group_data["bf1"]
-            raw_vals = np.array(group_data["max_vals"])
-            raw_sd = np.array(group_data.get("sd_max_vals", [0] * len(raw_vals)))
+        elif "x_raw_mean_hz" in group_data and "y_raw_mean" in group_data:
+            raw_ppm = np.array(group_data["x_raw_mean_hz"]) / group_data["bf1"]
+            raw_vals = np.array(group_data["y_raw_mean"])
+            raw_sd = np.array(group_data.get("y_raw_sd", [0] * len(raw_vals)))
             ax.errorbar(raw_ppm, raw_vals, yerr=raw_sd, fmt='o', color='b',
                         label='Raw mean (uncorrected)')
 
@@ -370,19 +364,19 @@ def plot_group_difference(
     if visibility.get("spline", True):
         spline_res = group_data.get("spline_fit_results", {})
         if spline_res.get("fit_successful") and spline_res.get("y_fit") is not None:
-            ax.plot(spline_res["x_fit"], spline_res["y_fit"], 'r-', linewidth=1.5,
+            ax.plot(x_fit_ppm, spline_res["y_fit"], 'r-', linewidth=1.5,
                     label=spline_res.get("fit_label", "Spline fit"))
 
     # --- Lorentzian envelope (mean of per-replicate envelopes) ---
     if visibility.get("lorentzian", True):
         lorentz_res = group_data.get("lorentzian_envelope_results")
         if lorentz_res and lorentz_res.get("y") is not None:
-            ax.plot(lorentz_res["x"], lorentz_res["y"], 'g--', linewidth=2,
+            ax.plot(x_fit_ppm, lorentz_res["y"], 'g--', linewidth=2,
                     label=lorentz_res.get("fit_label", "Lorentzian envelope"))
 
     # --- Mean difference curve ± SEM ---
-    y_diff_mean = np.array(group_data["mean_diff_y"])
-    y_diff_sem = np.array(group_data["sem_diff_y"])
+    y_diff_mean = np.array(group_data["y_diff_mean"])
+    y_diff_sem  = np.array(group_data["y_diff_sem"])
 
     if visibility.get("difference", True):
         ax.plot(x_fit_ppm, y_diff_mean, 'm-', linewidth=1.5,

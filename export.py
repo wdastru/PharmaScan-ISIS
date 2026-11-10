@@ -1,9 +1,10 @@
+import copy
 import json
 import numpy as np
 from pathlib import Path
 
 from termcolor import colored
-from constants import OUTPUT_DIR
+from constants import OUTPUT_DIR, CACHE_VERSION
 
 # ----------------------------------------------------------------------
 # Serialization helpers
@@ -80,17 +81,17 @@ def _dedup_x_experiment(exp: dict) -> None:
         exp["fit_x"] = fit_x
 
     exp.pop("diff_x", None)
-    spline.pop("x", None)       # era = zero_corrected_ppm
-    spline.pop("x_fit", None)   # era = fit_x
+    spline.pop("x", None)
+    spline.pop("x_fit", None)
     sig.pop("x", None)
     lor.pop("x", None)
 
 def _dedup_x_summary(summary: dict) -> None:
     spline = summary.get("spline_fit_results", {})
     lor    = summary.get("lorentzian_envelope_results", {})
-    spline.pop("x", None)       # era = x_common
-    spline.pop("x_fit", None)   # era = x_common
-    lor.pop("x", None)          # era = x_common
+    spline.pop("x", None)
+    spline.pop("x_fit", None)
+    lor.pop("x", None)
 
 def dedup_x(analysis_results: dict) -> None:
     for gd in analysis_results.get("groups", {}).values():
@@ -104,13 +105,21 @@ def ensure_output_dir() -> None:
     OUTPUT_DIR.mkdir(exist_ok=True)
 
 def save_analysis_results(config_name: str, analysis_results: dict) -> None:
-
     ensure_output_dir()
-    analysis_results = replace_uc_objects(analysis_results)  # Convert uc objects to dicts for JSON serialization
-    analysis_results["__schema__"] = "dedup_x_v1"
-    dedup_x(analysis_results)
-    version = f"-{analysis_results.get('__script_version__', '')}" if analysis_results.get('__script_version__') else ''
-    with open(Path(OUTPUT_DIR / f"{config_name}{version}.json"), "w", encoding="utf-8") as f:
-        json.dump(analysis_results, f, indent=2, cls=SafeEncoder, ensure_ascii=False)   # indent for human readability
 
+    # Lavora su una copia: analysis_results in memoria resta intatto.
+    # Questo rende il salvataggio indipendente dall'ordine delle chiamate
+    # (save_cache / save_analysis_results) e impedisce che il dedup
+    # distrugga i dati usati dal ramo cache.
+    to_save = copy.deepcopy(replace_uc_objects(analysis_results))
+    to_save["__schema__"] = "dedup_x_v3"
+    to_save["__cache_version__"] = CACHE_VERSION
+    dedup_x(to_save)
 
+    version = (
+        f"-{to_save.get('__script_version__', '')}"
+        if to_save.get('__script_version__') else ''
+    )
+    with open(Path(OUTPUT_DIR / f"{config_name}{version}.json"),
+              "w", encoding="utf-8") as f:
+        json.dump(to_save, f, indent=2, cls=SafeEncoder, ensure_ascii=False)

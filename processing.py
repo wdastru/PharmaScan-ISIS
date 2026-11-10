@@ -262,7 +262,7 @@ def process_zspectrum_and_integrals(max_vals, zero_corrected_ppm) -> Dict[str, A
 
     # 5. Correct with sigmoid
     # Evaluate the sigmoid envelope EXACTLY at the experimental ppm points,
-    # instead of sampling it on x_common (200 points) and mapping each data
+    # instead of sampling it on x_fit_ppm (200 points) and mapping each data
     # point to the nearest grid node. The previous approach introduced a
     # quantization error: when the number of saturation frequencies exceeded
     # N_POINTS_FIT, several data points shared the same envelope value, so
@@ -343,7 +343,7 @@ def _compute_group_stats(experiments: Dict[str, Any]) -> Dict[str, Any]:
         else:
             mean_dict[reg] = 0.0
             std_dict[reg] = 0.0
-    return {"mean": mean_dict, "std": std_dict}
+    return {"integrals_mean": mean_dict, "integrals_std": std_dict}
 
 def _compute_pvalues(
     ref_experiments: Dict[str, Any],
@@ -396,7 +396,7 @@ def build_common_ppm_grid(
 
     Returns
     -------
-    x_common : np.ndarray
+    x_fit_ppm : np.ndarray
         1D array di ppm da min globale a max globale, equispaziato.
 
     Raises
@@ -432,7 +432,7 @@ def collect_replicate_differences(
     on a common ppm grid, then compute the mean and SEM.
 
     Also returns the mean ± SEM of the Lorentzian envelope, of the spline fit,
-    and of the sigmoid-corrected z-spectrum, all sampled on the same x_common
+    and of the sigmoid-corrected z-spectrum, all sampled on the same x_fit_ppm
     grid. These are the quantities to be used when plotting group-level
     z-spectra and fits, so that everything stays on the corrected scale.
 
@@ -489,20 +489,20 @@ def collect_replicate_differences(
     y_corrected_mean, y_corrected_sem = _mean_sem(np.array(y_corrected_at_data))
 
     result = {
-        "x_common":        x_fit_ppm,
-        "mean_diff":       y_diff_mean,
-        "sem_diff":        y_diff_sem,
-        "mean_lorentzian": y_lorentzian_mean,
-        "mean_spline":     y_spline_mean,
-        "mean_corrected":  mean_corrected,
-        "sem_corrected":   sem_corrected,
-        "x_data":                 x_zero_corrected_ppm,
-        "mean_corrected_at_data": y_corrected_mean,
-        "sem_corrected_at_data":  y_corrected_sem,
+        "fit_x":                    x_fit_ppm,
+        "y_diff_mean":              y_diff_mean,
+        "y_diff_sem":               y_diff_sem,
+        "y_lorentzian_mean":        y_lorentzian_mean,
+        "y_spline_mean":            y_spline_mean,
+        "y_corrected_mean":         mean_corrected,
+        "y_corrected_sem":          sem_corrected,
+        "x_data":                   x_zero_corrected_ppm,
+        "y_corrected_at_data_mean": y_corrected_mean,
+        "y_corrected_at_data_sem":  y_corrected_sem,
     }
     if compute_integrals:
-        result["integrals"] = compute_regions_integrals(x_fit_ppm, y_diff_mean)
-    
+        result["integrals_of_mean_curve"] = compute_regions_integrals(x_fit_ppm, y_diff_mean)
+
     return result
 
 # ----------------------------------------------------------------------

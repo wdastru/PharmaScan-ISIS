@@ -169,24 +169,23 @@ class TestParameterExtract:
 # ----------------------------------------------------------------------
 class TestStatistics:
     def test_compute_integrals_stats(self):
-        analysis_results = {
+        experiments = {
             "s1": {"integrals": {"regionA": 1.0, "regionB": 2.0}},
             "s2": {"integrals": {"regionA": 2.0, "regionB": 4.0}},
             "s3": {"integrals": {"regionA": 3.0, "regionB": 6.0}},
         }
-        keys = ["s1", "s2", "s3"]
-        stats = _compute_group_stats(keys, analysis_results) 
-        mean, std = stats["mean"], stats["std"]
-        
+        stats = _compute_group_stats(experiments)
+        mean, std = stats["integrals_mean"], stats["integrals_std"]
+
         assert np.isclose(mean["regionA"], 2.0)
         assert np.isclose(mean["regionB"], 4.0)
         assert np.isclose(std["regionA"], 1.0)   # sample std of 1,2,3
         assert np.isclose(std["regionB"], 2.0)   # sample std of 2,4,6
 
         # Single sample → std = 0
-        single = _compute_group_stats(["s1"], analysis_results)
-        assert single["mean"]["regionA"] == 1.0
-        assert single["std"]["regionA"] == 0.0
+        single = _compute_group_stats({"s1": experiments["s1"]})
+        assert single["integrals_mean"]["regionA"] == 1.0
+        assert single["integrals_std"]["regionA"] == 0.0
 
 # ----------------------------------------------------------------------
 # Tests for Spline fit
@@ -228,11 +227,11 @@ class TestSplineFit:
 class TestBuildCommonPpmGrid:
     def test_basic(self):
         """Two replicates with overlapping ppm ranges."""
-        analysis_results = {
+        experiments = {
             "rep1": {"zero_corrected_ppm": [-2.0, 1.0, 5.0]},
-            "rep2": {"zero_corrected_ppm": [ 0.0, 3.0, 6.0]}
+            "rep2": {"zero_corrected_ppm": [ 0.0, 3.0, 6.0]},
         }
-        x = build_common_ppm_grid(["rep1", "rep2"], analysis_results, n_points=5)
+        x = build_common_ppm_grid(experiments, n_points=5)
         assert x.min() == -2.0
         assert x.max() ==  6.0
         assert len(x) == 5
@@ -240,10 +239,10 @@ class TestBuildCommonPpmGrid:
 
     def test_single_replicate(self):
         """Only one replicate: range = its own min/max."""
-        analysis_results = {
+        experiments = {
             "only": {"zero_corrected_ppm": [10.0, 20.0]}
         }
-        x = build_common_ppm_grid(["only"], analysis_results, n_points=3)
+        x = build_common_ppm_grid(experiments, n_points=3)
         assert x.min() == 10.0
         assert x.max() == 20.0
         assert len(x) == 3
@@ -251,54 +250,46 @@ class TestBuildCommonPpmGrid:
 
     def test_multiple_replicates_different_lengths(self):
         """Different number of points per replicate."""
-        analysis_results = {
+        experiments = {
             "a": {"zero_corrected_ppm": [1.0, 4.0]},
-            "b": {"zero_corrected_ppm": [2.0, 3.0, 5.0]}
+            "b": {"zero_corrected_ppm": [2.0, 3.0, 5.0]},
         }
-        x = build_common_ppm_grid(["a", "b"], analysis_results, n_points=10)
+        x = build_common_ppm_grid(experiments, n_points=10)
         assert x.min() == 1.0
         assert x.max() == 5.0
         assert len(x) == 10
 
     def test_missing_zero_corrected_ppm(self):
         """Missing 'zero_corrected_ppm' raises ValueError."""
-        analysis_results = {
+        experiments = {
             "bad": {"max_vals": [0.5]}  # no zero_corrected_ppm
         }
         with pytest.raises(ValueError, match="Missing 'zero_corrected_ppm'"):
-            build_common_ppm_grid(["bad"], analysis_results)
+            build_common_ppm_grid(experiments)
 
     def test_empty_ppm_list(self):
         """Empty list raises ValueError."""
-        analysis_results = {
+        experiments = {
             "rep": {"zero_corrected_ppm": []}
         }
         with pytest.raises(ValueError, match="empty"):
-            build_common_ppm_grid(["rep"], analysis_results)
+            build_common_ppm_grid(experiments)
 
     def test_invalid_range(self):
-        """If min == max (all same ppm), the grid would have zero range,
-           but linspace(5.0, 5.0, 5) returns all 5.0s, which is fine.
-           However, we check that min < max is enforced (if not, it raises
-           because global_min >= global_max)."""
-        analysis_results = {
+        """min == max raises (Invalid ppm range)."""
+        experiments = {
             "a": {"zero_corrected_ppm": [5.0, 5.0]}
         }
-        # This should actually succeed because min==max is allowed by linspace,
-        # but our code currently raises if min >= max. We should test the
-        # intended behaviour. If you later decide to allow min==max (grid of
-        # constant value), you can adjust the code. For now, test the current
-        # behaviour (raises ValueError).
         with pytest.raises(ValueError, match="Invalid ppm range"):
-            build_common_ppm_grid(["a"], analysis_results)        
+            build_common_ppm_grid(experiments)
 
 class TestCollectReplicateDifferences:
     def test_two_replicates_same(self):
-        """Two identical replicates -> diff curves are identical, SEM=0."""
+        """Two identical replicates -> y_diff_sem = 0 and diff = lor - spline."""
         x_data = np.array([0.0, 1.0, 2.0])
         sigmoid_corrected = np.array([0.8, 1.0, 0.9])
         A, gamma, y_min = 1.2, 1.0, 0.5
-        analysis_results = {
+        experiments = {
             "rep1": {"zero_corrected_ppm": x_data.tolist(),
                      "sigmoid_corrected": sigmoid_corrected.tolist(),
                      "A": A, "gamma": gamma, "y_min": y_min},
@@ -308,61 +299,55 @@ class TestCollectReplicateDifferences:
         }
         x_common = np.linspace(0.0, 2.0, 20)
         result = collect_replicate_differences(
-            ["rep1", "rep2"], analysis_results, x_fit_ppm=x_common, compute_integrals=False
+            experiments, x_fit_ppm=x_common, compute_integrals=False
         )
-        assert np.allclose(result["sem_diff"], 0.0)
-        assert len(result["individual_diffs"]) == 2
-        # The two diff curves should be identical
-        np.testing.assert_allclose(result["individual_diffs"][0],
-                                   result["individual_diffs"][1], rtol=1e-10)
+        assert np.allclose(result["y_diff_sem"], 0.0)
+        assert result["y_diff_mean"].shape == (20,)
+        # y_diff_mean = y_lorentzian_mean - y_spline_mean
+        np.testing.assert_allclose(
+            result["y_diff_mean"],
+            result["y_lorentzian_mean"] - result["y_spline_mean"],
+            rtol=1e-12, atol=1e-15,
+        )
 
     def test_single_replicate(self):
         """Single replicate: SEM = 0, mean = its diff."""
         x_data = np.array([0.0, 2.0])
         sigmoid_corrected = np.array([0.6, 0.8])
         A, gamma, y_min = 1.0, 0.5, 0.4
-        analysis_results = {
+        experiments = {
             "rep": {"zero_corrected_ppm": x_data.tolist(),
                     "sigmoid_corrected": sigmoid_corrected.tolist(),
                     "A": A, "gamma": gamma, "y_min": y_min}
         }
         x_common = np.linspace(0.0, 2.0, 5)
         result = collect_replicate_differences(
-            ["rep"], analysis_results, x_fit_ppm=x_common, compute_integrals=False
+            experiments, x_fit_ppm=x_common, compute_integrals=False
         )
-        assert np.allclose(result["sem_diff"], 0.0)
-        assert result["mean_diff"].shape == (5,)
+        assert np.allclose(result["y_diff_sem"], 0.0)
+        assert result["y_diff_mean"].shape == (5,)
 
     def test_integrals_computation(self):
-        """Integrals of mean_diff should be computed correctly."""
+        """integrals_of_mean_curve should be a dict."""
         x_data = np.array([0.0, 1.0])
         sigmoid_corrected = np.array([0.5, 0.5])
         A, gamma, y_min = 1.0, 10.0, 0.5   # Lorentzian nearly flat
-        analysis_results = {
+        experiments = {
             "rep": {"zero_corrected_ppm": x_data.tolist(),
                     "sigmoid_corrected": sigmoid_corrected.tolist(),
                     "A": A, "gamma": gamma, "y_min": y_min}
         }
         x_common = np.linspace(0.0, 1.0, 100)
         result = collect_replicate_differences(
-            ["rep"], analysis_results, x_fit_ppm=x_common, compute_integrals=True
+            experiments, x_fit_ppm=x_common, compute_integrals=True
         )
-        assert "integrals" in result
-        # Verify that integral is exactly the mean of per‑replicate integrals?
-        # Here only one replicate, so it's the same.
-        # We'll just check type and shape.
-        assert isinstance(result["integrals"], dict)
-        # All regions completely inside [0,1]? Not all default regions lie there,
-        # but those that overlap will have some value. We don't test specific values.
+        assert "integrals_of_mean_curve" in result
+        assert isinstance(result["integrals_of_mean_curve"], dict)
 
     def test_integrals_consistency(self):
         """Integral of mean difference == mean of per-replicate integrals (same grid)."""
-        import copy
-
-        # Common grid
         x_common = np.linspace(-5, 5, 100)
 
-        # Two different replicates
         entry1 = {
             "zero_corrected_ppm": np.array([-3.0, 0.0, 4.0]),
             "sigmoid_corrected": np.array([0.6, 0.9, 0.7]),
@@ -374,42 +359,36 @@ class TestCollectReplicateDifferences:
             "A": 1.3, "gamma": 1.5, "y_min": 0.4,
         }
 
-        analysis_results = {"r1": entry1, "r2": entry2}
-        keys = ["r1", "r2"]
+        experiments = {"r1": entry1, "r2": entry2}
 
-        # Manually compute per-replicate diff curves and integrals
+        # Manual: per-replicate diff curves, then mean of their integrals
         per_replicate_integrals = []
-        for k in keys:
-            e = analysis_results[k]
+        for e in experiments.values():
             ppm = np.asarray(e["zero_corrected_ppm"])
-            sigmoid_corrected = np.asarray(e["sigmoid_corrected"])
-            A, gamma, y_min = e["A"], e["gamma"], e["y_min"]
+            sig = np.asarray(e["sigmoid_corrected"])
+            y_lor = constrained_lorentzian(x_common, e["A"], e["gamma"], e["y_min"])
+            y_spline = PchipInterpolator(ppm, sig)(x_common)
+            per_replicate_integrals.append(
+                compute_regions_integrals(x_common, y_lor - y_spline)
+            )
 
-            y_lor = constrained_lorentzian(x_common, A, gamma, y_min)
-            spline = PchipInterpolator(ppm, sigmoid_corrected)
-            y_spline = spline(x_common)
-            diff = y_lor - y_spline
-            integrals = compute_regions_integrals(x_common, diff)
-            per_replicate_integrals.append(integrals)
-
-        # Mean of per-replicate integrals
         regions = list(per_replicate_integrals[0].keys())
         mean_integrals_manual = {
             reg: float(np.mean([p[reg] for p in per_replicate_integrals]))
             for reg in regions
         }
 
-        # Now use collect_replicate_differences
         result = collect_replicate_differences(
-            keys, analysis_results, x_fit_ppm=x_common, compute_integrals=True
+            experiments, x_fit_ppm=x_common, compute_integrals=True
         )
 
-        # Compare
         for reg in regions:
-            assert np.isclose(result["integrals"][reg], mean_integrals_manual[reg],
-                            rtol=1e-10, atol=1e-15), \
-                f"Region {reg}: expected {mean_integrals_manual[reg]}, got {result['integrals'][reg]}"        
-
+            assert np.isclose(
+                result["integrals_of_mean_curve"][reg],
+                mean_integrals_manual[reg],
+                rtol=1e-10, atol=1e-15,
+            ), f"Region {reg}: expected {mean_integrals_manual[reg]}, " \
+               f"got {result['integrals_of_mean_curve'][reg]}"
 class TestEnforcePureGroupSources:
     # ---------- no-op cases ----------
 
