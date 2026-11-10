@@ -13,21 +13,30 @@ from termcolor import colored
 
 from constants import get_default_visibility
 from config import METABOLITE_REGIONS
+from theme import BIO_PALETTE, REFERENCE_COLOR
 
 def group_color(group, all_groups):
-    """Colore coerente per ogni gruppo.
-       Reference = nero. Poi group 1 = blu, group 2 = arancione, poi verde, rosso, viola, marrone."""
+    """
+    Consistent color for each group.
+
+    Reference: REFERENCE_COLOR (near-black).
+    Non-reference samples cycle through BIO_PALETTE (muted pastel tones,
+    BioRender-style) defined in theme.py.
+
+    If a group is not found in the list (e.g. when called outside a full
+    groups list), the first palette color is returned as a safe fallback.
+    """
     if group.get("is_reference", False):
-        return "black"
-    # trova la posizione di questo gruppo tra i NON-reference
+        return REFERENCE_COLOR
+
     non_refs = [g for g in all_groups if not g.get("is_reference", False)]
     idx = 0
     for k, g in enumerate(non_refs):
         if g is group or g.get("label") == group.get("label"):
             idx = k
             break
-    palette = ["blue", "orange", "green", "red", "purple", "brown"]
-    return palette[idx % len(palette)]
+
+    return BIO_PALETTE[idx % len(BIO_PALETTE)]
 
 def plot_z_spectrum(
     x, 
