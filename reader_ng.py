@@ -175,7 +175,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         plot_all_z_spectra(
             groups=groups,
             analysis_results=analysis_results,
-            folder_keys_per_group=folder_keys_per_group_cached,
             visibility=config.get("plot_visibility", get_default_visibility()),
             title=title_zs,
             window_title=title_zs,
@@ -576,7 +575,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     plot_all_z_spectra(
         groups=groups,
         analysis_results=analysis_results,
-        folder_keys_per_group=folder_keys_per_group,
         visibility=config.get("plot_visibility", get_default_visibility()),
         title=title_zs,
         window_title=title_zs,

@@ -444,7 +444,6 @@ def plot_group_difference(
 def plot_all_z_spectra(
     groups,
     analysis_results,
-    folder_keys_per_group,
     visibility=None,
     title=None,
     window_title=None,
