@@ -13,21 +13,36 @@ from termcolor import colored
 
 from constants import get_default_visibility
 from config import METABOLITE_REGIONS
+from theme import (
+    BIO_PALETTE,
+    REFERENCE_COLOR,
+    ELEMENT_COLORS,
+    style_checkbuttons,
+    style_button,
+)
 
 def group_color(group, all_groups):
-    """Colore coerente per ogni gruppo.
-       Reference = nero. Poi group 1 = blu, group 2 = arancione, poi verde, rosso, viola, marrone."""
+    """
+    Consistent color for each group.
+
+    Reference: REFERENCE_COLOR (near-black).
+    Non-reference samples cycle through BIO_PALETTE (muted pastel tones,
+    BioRender-style) defined in theme.py.
+
+    If a group is not found in the list (e.g. when called outside a full
+    groups list), the first palette color is returned as a safe fallback.
+    """
     if group.get("is_reference", False):
-        return "black"
-    # trova la posizione di questo gruppo tra i NON-reference
+        return REFERENCE_COLOR
+
     non_refs = [g for g in all_groups if not g.get("is_reference", False)]
     idx = 0
     for k, g in enumerate(non_refs):
         if g is group or g.get("label") == group.get("label"):
             idx = k
             break
-    palette = ["blue", "orange", "green", "red", "purple", "brown"]
-    return palette[idx % len(palette)]
+
+    return BIO_PALETTE[idx % len(BIO_PALETTE)]
 
 def plot_z_spectrum(
     x, 
@@ -56,8 +71,10 @@ def plot_z_spectrum(
         visibility = get_default_visibility()
             # Colore del gruppo: se fornito lo uso per dati e spline,
     # altrimenti mantengo i vecchi colori (dati blu, spline rossa)
-    data_color = color if color is not None else "b"
-    spline_color = color if color is not None else "r"
+    # Data/spline color: use the per-group color if provided (from
+    # group_color), otherwise fall back to the theme defaults.
+    data_color = color if color is not None else ELEMENT_COLORS["points"]
+    spline_color = color if color is not None else ELEMENT_COLORS["spline"]
     
     fig = plt.figure(num=window_title, figsize=(8, 5))
 
@@ -78,7 +95,7 @@ def plot_z_spectrum(
         A = lorentzian_envelope_results.get("A")
         gamma = lorentzian_envelope_results.get("gamma")
         y_lor = lorentzian_envelope_results["y"]
-        plt.plot(x_fit, y_lor, 'g--', linewidth=2,
+        plt.plot(x_fit, y_lor, 'g--', color=ELEMENT_COLORS["lorentzian"], linewidth=2,
                 label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
 
     # Sigmoid envelope: usa x_fit, non sigmoidal_envelope_results["x"].
@@ -87,14 +104,13 @@ def plot_z_spectrum(
         R = sigmoidal_envelope_results.get("R")
         tau = sigmoidal_envelope_results.get("tau")
         y_sig = sigmoidal_envelope_results["y"]
-        plt.plot(x_fit, y_sig, 'c--', linewidth=2,
-                    label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')
+        plt.plot(x_fit, y_sig, '-.', color=ELEMENT_COLORS["sigmoid"], linewidth=2,
+                    label=f'Sigmoid (L={L:.2f}, R={R:.2f}, τ={tau:.3f})')                
 
-    # Difference curve: se diff_x non è fornito (cache deduplicata),
-    # usa x_fit, che è la stessa griglia per costruzione.
+    # Difference curve
     if diff_y is not None and visibility.get("difference", True):
         x_diff = diff_x if diff_x is not None else x_fit
-        plt.plot(x_diff, diff_y, 'm-', linewidth=1.5, label=diff_label)
+        plt.plot(x_diff, diff_y, '-', color=ELEMENT_COLORS["diff"], linewidth=1.5, label=diff_label)
 
     # Metabolite regions
     if visibility.get("regions", True):
@@ -120,7 +136,7 @@ def plot_z_spectrum(
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    plt.grid(True)
+    plt.grid(False)
     if visibility["legend"].get("z-spectra", True):
         plt.legend()
     plt.show(block=False)
@@ -139,7 +155,7 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None,
     ax.invert_xaxis()
     ax.set_xlabel("ppm")
     ax.set_ylabel("Intensity")
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
     ax.set_title(title)
     rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])
     visibility_states: List = [line.get_visible() for line in lines]
@@ -188,6 +204,11 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None,
     # collected, their callbacks are disconnected, and the checkboxes/
     # buttons stop responding even though they're still visible on screen.
     fig._widgets = (checks, btn_all, btn_none)
+
+     # Apply the global widget theme (defined in theme.py)
+    style_checkbuttons(checks)
+    style_button(btn_all)
+    style_button(btn_none)
     plt.show(block=False)
     return fig
 
@@ -208,8 +229,9 @@ def plot_groups_comparison(group_stats, p_values, groups,
     x = np.arange(n_regions)
     bar_width = 0.8 / n_groups
     fig, ax = plt.subplots(num=window_title, figsize=figsize)
-    cmap = plt.get_cmap('tab10')
-    colors = [cmap(i % 10) for i in range(n_groups)]
+    # Use group_color so the bar chart respects the same palette
+    # (and the reference near-black) as the z-spectra plots.
+    colors = [group_color(grp, groups) for grp in groups]
     for i, grp in enumerate(groups):
         label = grp["label"]
         means = [group_stats[label]["integrals_mean"][reg] for reg in regions]
@@ -257,7 +279,7 @@ def plot_groups_comparison(group_stats, p_values, groups,
     ax.set_title(title)
     if visibility["legend"].get("integrals", True):
         ax.legend()
-    ax.grid(axis='y', alpha=0.3)
+    ax.grid(False)
     fig.tight_layout()
     plt.show(block=False)
     return fig
@@ -319,10 +341,10 @@ def plot_group_breakdown(group_label, group_stats, per_folder_integrals,
 
     fig, ax = plt.subplots(num=window_title, figsize=figsize)
 
-    # Colormap per le cartelle
-    cmap = plt.get_cmap('tab10')
-    folder_colors = [cmap(i % 10) for i in range(n_folders)]
-    color_avg = '#2c3e50'  # blu scuro per la media
+    # Folder colors from the global BIO_PALETTE; the average bar
+    # uses the theme's "mean" color (dark slate) for consistency.
+    folder_colors = [BIO_PALETTE[i % len(BIO_PALETTE)] for i in range(n_folders)]
+    color_avg = ELEMENT_COLORS["mean"]
 
     for j, reg in enumerate(regions):
         start_x = x[j] - total_width / 2
@@ -350,7 +372,7 @@ def plot_group_breakdown(group_label, group_stats, per_folder_integrals,
     ax.set_title(title)
     if visibility["legend"].get("integrals", True):
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(axis='y', alpha=0.3)
+    ax.grid(False)
     fig.tight_layout()
     plt.show(block=False)
     return fig
@@ -380,28 +402,27 @@ def plot_group_difference(
             x_pts   = np.array(group_data["x_data"])
             y_pts   = np.array(group_data["y_corrected_at_data_mean"])
             yerr_pts = np.array(group_data["y_corrected_at_data_sem"])
-            ax.errorbar(x_pts, y_pts, yerr=yerr_pts, fmt='o', color='b',
-                        markersize=5,
+            ax.errorbar(x_pts, y_pts, yerr=yerr_pts, fmt='o', color=ELEMENT_COLORS["points"],
+                        markersize=6,
                         label='Z-spectrum corrected (mean ± SEM)')
         elif "x_raw_mean_hz" in group_data and "y_raw_mean" in group_data:
             raw_ppm = np.array(group_data["x_raw_mean_hz"]) / group_data["bf1"]
             raw_vals = np.array(group_data["y_raw_mean"])
             raw_sd = np.array(group_data.get("y_raw_sd", [0] * len(raw_vals)))
-            ax.errorbar(raw_ppm, raw_vals, yerr=raw_sd, fmt='o', color='b',
+            ax.errorbar(raw_ppm, raw_vals, yerr=raw_sd, fmt='o', color=ELEMENT_COLORS["points"],
                         label='Raw mean (uncorrected)')
 
     # --- Spline fit (mean of per-replicate splines, on corrected data) ---
     if visibility.get("spline", True):
         spline_res = group_data.get("spline_fit_results", {})
         if spline_res.get("fit_successful") and spline_res.get("y_fit") is not None:
-            ax.plot(x_fit_ppm, spline_res["y_fit"], 'r-', linewidth=1.5,
+            ax.plot(x_fit_ppm, spline_res["y_fit"], '-', color=ELEMENT_COLORS["spline"], linewidth=1.5,
                     label=spline_res.get("fit_label", "Spline fit"))
-
     # --- Lorentzian envelope (mean of per-replicate envelopes) ---
     if visibility.get("lorentzian", True):
         lorentz_res = group_data.get("lorentzian_envelope_results")
         if lorentz_res and lorentz_res.get("y") is not None:
-            ax.plot(x_fit_ppm, lorentz_res["y"], 'g--', linewidth=2,
+            ax.plot(x_fit_ppm, lorentz_res["y"], color=ELEMENT_COLORS["lorentzian"],  linewidth=2,
                     label=lorentz_res.get("fit_label", "Lorentzian envelope"))
 
     # --- Mean difference curve ± SEM ---
@@ -409,10 +430,10 @@ def plot_group_difference(
     y_diff_sem  = np.array(group_data["y_diff_sem"])
 
     if visibility.get("difference", True):
-        ax.plot(x_fit_ppm, y_diff_mean, 'm-', linewidth=1.5,
+        ax.plot(x_fit_ppm, y_diff_mean, color=ELEMENT_COLORS["diff"], linewidth=1.5,
                 label='Mean diff (Lor−Spline)')
         ax.fill_between(x_fit_ppm, y_diff_mean - y_diff_sem, y_diff_mean + y_diff_sem,
-                        color='m', alpha=0.2, label='± SEM')
+                        color=ELEMENT_COLORS["diff"], alpha=0.15, label='± SEM')
 
     # --- Metabolite regions ---
     if visibility.get("regions", True):
@@ -435,7 +456,7 @@ def plot_group_difference(
     ax.set_xlabel("Saturation ppm")
     ax.set_ylabel("Intensity / Difference")
     ax.set_title(f"Group {group_label} – Averaged Difference")
-    ax.grid(True)
+    ax.grid(False)
     if visibility["legend"].get("z-spectra", True):
         ax.legend()
     plt.show(block=False)
@@ -560,7 +581,7 @@ def plot_all_z_spectra(
     ax.set_xlabel("Saturation ppm")
     ax.set_ylabel("Intensity / Difference")
     ax.set_title(title or "All groups – Averaged Difference")
-    ax.grid(True, alpha=0.3)
+    ax.grid(False)
 
     # Two legends: groups (upper right) + style (lower left)
     leg_groups = ax.legend(loc="upper right", title="Groups")
@@ -614,7 +635,7 @@ def plot_all_z_spectra(
     group_labels = [grp["label"] for grp in groups]
     n_group = len(group_labels)
 
-    right = 0.76
+    right = 0.74
     cb_style_ax = fig.add_axes([right, 0.50, 0.22, 0.04 * len(style_labels) + 0.03])
     cb_style = CheckButtons(cb_style_ax, style_labels, style_init)
 
@@ -676,5 +697,11 @@ def plot_all_z_spectra(
 
     fig.subplots_adjust(left=0.06, right=right - 0.01, top=0.95, bottom=0.08)
     fig._widgets = (cb_style, cb_group, btn_check, btn_uncheck)
+
+    # Apply the global widget theme (defined in theme.py)
+    style_checkbuttons(cb_style)
+    style_checkbuttons(cb_group)
+    style_button(btn_check)
+    style_button(btn_uncheck)
     plt.show(block=False)
     return fig

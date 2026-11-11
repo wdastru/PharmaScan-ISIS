@@ -52,6 +52,8 @@ from utils import (
     ask_user_for_ppm_range, ask_yes_no, get_git_hash
 )
 
+from theme import apply_theme
+
 print(f"Using nmrglue version: {ng.__version__}")
 
 CACHE_DIR.mkdir(exist_ok=True)
@@ -591,6 +593,11 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 # Entry point
 # ----------------------------------------------------------------------
 def main() -> None:
+    # Apply the global matplotlib theme BEFORE any plotting.
+    # This affects every figure created afterwards (both the live branch
+    # and the cache branch), because it sets plt.rcParams.
+    apply_theme()
+
     config_name, config_data = select_or_create_config()
     complete_config = ensure_complete_config(config_name, config_data)
     run_analysis(config_name, complete_config)
