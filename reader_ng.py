@@ -245,12 +245,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
                 
                 # Accumulate for the group-level plot
+                current_exp_spectra = []
                 for exp_idx in range(n_exp):
-                    group_spectra_to_plot.append({
+                    current_exp_spectra.append({
                         'ppm_axis': ppm_axis,
                         'spectrum': spectra[exp_idx],
-                        'label': f"{folder_name_short} | {exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}"
+                        'label': f"{exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}"
                     })
+                group_spectra_to_plot.append({
+                    'name': folder_name_short,
+                    'spectra': current_exp_spectra
+                })
                 if ppm_missing and grp_idx == 0 and folder == folders[0]:
                     # Show a temporary plot of the first folder so the user
                     # can select the ppm range interactively.
@@ -378,12 +383,17 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
                 
                 # Accumulate for the group-level plot
+                current_exp_spectra = []
                 for exp_idx in range(n_exp):
-                    group_spectra_to_plot.append({
+                    current_exp_spectra.append({
                         'ppm_axis': ppm_axis,
                         'spectrum': spectra[exp_idx],
-                        'label': f"{folder_name_short} | {exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}"
+                        'label': f"{exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}"
                     })
+                group_spectra_to_plot.append({
+                    'name': folder_name_short,
+                    'spectra': current_exp_spectra
+                })
 
                 if ppm_missing and grp_idx == 0 and folder == folders[0]:
                     # Show a temporary plot of the first folder so the user

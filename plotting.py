@@ -144,86 +144,117 @@ def plot_z_spectrum(
 
 def plot_spectra(title, spectra_data, visibility=None, window_title=None) -> Figure:
     """
-    Plot multiple 1D spectra on a single figure with interactive checkboxes.
-
-    Parameters
-    ----------
-    spectra_data : list of dict
-        Each dict has keys:
-          * 'ppm_axis'  : np.ndarray
-          * 'spectrum'  : np.ndarray (complex or real)
-          * 'label'     : str (used as checkbox label)
+    Plot multiple 1D spectra grouped by experiment (folder).
+    Each experiment gets its own column of checkboxes and a master toggle button.
     """
     if visibility is None:
         visibility = get_default_visibility()
 
-    fig, ax = plt.subplots(num=window_title, figsize=(12, 6))
-    lines: List[Line2D] = []
-    labels: List[str] = []
-
-    for item in spectra_data:
-        ppm_axis = item['ppm_axis']
-        spectrum = item['spectrum']
-        label = item['label']
-        
-        line: Line2D = ax.plot(ppm_axis, np.real(spectrum),
-                               label=label, alpha=0.7, linewidth=1.2)[0]
-        lines.append(line)
-        labels.append(label)
-
+    fig, ax = plt.subplots(num=window_title, figsize=(16, 8))
     ax.invert_xaxis()
     ax.set_xlabel("ppm")
     ax.set_ylabel("Intensity")
     ax.grid(False)
     ax.set_title(title)
 
-    rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])
-    visibility_states: List = [line.get_visible() for line in lines]
-    checks = CheckButtons(rax, labels, visibility_states)
-    _silent_update = False   # flag to block callback during programmatic changes
+    _silent_update = False
+    all_lines = []
 
-    def _on_check(label):
-        nonlocal _silent_update
-        if _silent_update:
-            return
-        idx = labels.index(label)
-        lines[idx].set_visible(not lines[idx].get_visible())
-        fig.canvas.draw_idle()
+    # 1. Plot all lines and store references
+    for exp in spectra_data:
+        exp_name = exp['name']
+        for spec in exp['spectra']:
+            line, = ax.plot(spec['ppm_axis'], np.real(spec['spectrum']),
+                            label=f"{exp_name} | {spec['label']}", alpha=0.7, linewidth=1.2)
+            all_lines.append({'line': line, 'exp_name': exp_name, 'label': spec['label']})
 
-    def _check_all(event):
-        nonlocal _silent_update
-        _silent_update = True
-        for i, line in enumerate(lines):
-            if not line.get_visible():
-                line.set_visible(True)
-                checks.set_active(i, True)
-        _silent_update = False
-        fig.canvas.draw_idle()
+    n_exp = len(spectra_data)
+    if n_exp == 0:
+        plt.show(block=False)
+        return fig
 
-    def _uncheck_all(event):
-        nonlocal _silent_update
-        _silent_update = True
-        for i, line in enumerate(lines):
-            if line.get_visible():
-                line.set_visible(False)
-                checks.set_active(i, False)
-        _silent_update = False
-        fig.canvas.draw_idle()
+    # 2. Layout parameters for the UI panel
+    panel_x_start = 0.76
+    panel_width = 0.23
+    col_w = panel_width / n_exp
+    
+    widgets_to_keep = []
 
-    checks.on_clicked(_on_check)
-    ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
-    btn_all = Button(ax_all, "Check all")
-    btn_all.on_clicked(_check_all)
-    ax_none = fig.add_axes([0.90, 0.90, 0.09, 0.05])
-    btn_none = Button(ax_none, "Uncheck all")
-    btn_none.on_clicked(_uncheck_all)
-    fig.tight_layout(rect=[0, 0, 0.80, 1])
+    # 3. Create columns for each experiment
+    for i, exp in enumerate(spectra_data):
+        exp_name = exp['name']
+        spec_labels = [s['label'] for s in exp['spectra']]
+        
+        # Truncate long folder names so they fit in the narrow column
+        display_name = exp_name if len(exp_name) <= 16 else exp_name[:13] + "…"
+        
+        # Master toggle button: uses the folder name as label.
+        # Clicking it toggles the entire column.
+        ax_master = fig.add_axes([panel_x_start + i*col_w, 0.90, col_w - 0.01, 0.05])
+        ax_master.set_axis_off()
+        btn_master = Button(ax_master, display_name)
+        btn_master.label.set_fontsize(7)  # Smaller font to fit the name
+        style_button(btn_master)
+        
+        # Column of individual checkboxes
+        ax_check = fig.add_axes([panel_x_start + i*col_w, 0.10, col_w - 0.01, 0.75])
+        
+        # Forza la rimozione totale degli assi prima di creare i checkbox
+        ax_check.set_axis_off()
+        
+        cb = CheckButtons(ax_check, spec_labels, [True] * len(spec_labels))
+        style_checkbuttons(cb)
+        
+        widgets_to_keep.extend([btn_master, cb])
 
-    fig._widgets = (checks, btn_all, btn_none)
-    style_checkbuttons(checks)
-    style_button(btn_all)
-    style_button(btn_none)
+        # Lines belonging to this specific experiment
+        exp_lines = [l for l in all_lines if l['exp_name'] == exp_name]
 
+        # Callback for individual checkboxes
+        def make_on_check(cb_widget, exp_lines):
+            def _on_check(label):
+                nonlocal _silent_update
+                if _silent_update: return
+                for item in exp_lines:
+                    if item['label'] == label:
+                        item['line'].set_visible(not item['line'].get_visible())
+                        break
+                fig.canvas.draw_idle()
+            return _on_check
+
+        cb.on_clicked(make_on_check(cb, exp_lines))
+
+        # Callback for the master "Toggle Col" button
+        def make_on_master(cb_widget, exp_lines):
+            def _on_master(event):
+                nonlocal _silent_update
+                if _silent_update: return
+                _silent_update = True
+                
+                # If any is visible, hide all. Else show all.
+                any_visible = any(l['line'].get_visible() for l in exp_lines)
+                target = not any_visible
+
+                # Get labels safely across matplotlib versions
+                labels = getattr(cb_widget, 'labels', getattr(cb_widget, '_labels', []))
+                label_texts = [t.get_text() for t in labels]
+
+                for l in exp_lines:
+                    l['line'].set_visible(target)
+                    if l['label'] in label_texts:
+                        idx = label_texts.index(l['label'])
+                        if cb_widget.get_status()[idx] != target:
+                            cb_widget.set_active(idx)
+                
+                _silent_update = False
+                fig.canvas.draw_idle()
+            return _on_master
+
+        btn_master.on_clicked(make_on_master(cb, exp_lines))
+
+    # Final layout adjustments
+    fig.subplots_adjust(left=0.06, right=panel_x_start - 0.01, top=0.95, bottom=0.08)
+    fig._widgets = tuple(widgets_to_keep)
     plt.show(block=False)
     return fig
 
