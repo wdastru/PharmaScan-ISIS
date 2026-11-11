@@ -78,22 +78,23 @@ def apply_theme() -> None:
         "xtick.labelsize":   9,
         "ytick.labelsize":   9,
 
-        # ---- spines: only left + bottom ----
+        # ---- spines: only left + bottom (GraphPad style: thicker and black) ----
         "axes.spines.top":    False,
         "axes.spines.right":  False,
         "axes.spines.left":   True,
         "axes.spines.bottom": True,
-        "axes.linewidth":     0.8,
+        "axes.linewidth":     1.2, # Assi più spessi
+        "axes.edgecolor":     "black",
 
         # ---- ticks: outward, no top/right ----
         "xtick.direction":    "out",
         "ytick.direction":    "out",
         "xtick.top":          False,
         "ytick.right":        False,
-        "xtick.major.size":   4,
-        "ytick.major.size":   4,
-        "xtick.major.width":  0.8,
-        "ytick.major.width":  0.8,
+        "xtick.major.size":   6,
+        "ytick.major.size":   6,
+        "xtick.major.width":  1.2,
+        "ytick.major.width":  1.2,
 
         # ---- grid: off by default; subtle when enabled ----
         "axes.grid":          False,
@@ -102,11 +103,11 @@ def apply_theme() -> None:
         "grid.linewidth":     0.5,
         "grid.alpha":         0.4,
 
-        # ---- lines: thin, solid, markers with thin white edge ----
-        "lines.linewidth":        1.5,
-        "lines.markersize":       5,
-        "lines.markeredgewidth":  1.2,
-        "lines.markeredgecolor":  "white",
+        # ---- lines: thicker, distinct markers ----
+        "lines.linewidth":        2.0, # Linee più spesse
+        "lines.markersize":       7,   # Marker più grandi
+        "lines.markeredgewidth":  1.5,
+        "lines.markeredgecolor":  "none",
 
         # ---- legend: no frame, tight ----
         "legend.frameon":        False,
@@ -136,9 +137,8 @@ def apply_theme() -> None:
 # ----------------------------------------------------------------------
 def style_checkbuttons(cb):
     """
-    Apply the PharmaScan-ISIS theme to a matplotlib CheckButtons widget.
+    Clean, minimal styling for CheckButtons (squares, but modern).
     """
-    # Forcefully remove ticks, spines, and axes lines
     cb.ax.set_xticks([])
     cb.ax.set_yticks([])
     cb.ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
@@ -146,35 +146,26 @@ def style_checkbuttons(cb):
         spine.set_visible(False)
     cb.ax.set_facecolor("none")
 
-    # --- Access internals across matplotlib versions ---
-    rects  = getattr(cb, "rectangles", None) or getattr(cb, "_rectangles", [])
-    lines  = getattr(cb, "lines", None) or getattr(cb, "_lines", [])
-    labels = getattr(cb, "labels", None) or getattr(cb, "_labels", [])
-
-    # Boxes and check marks
-    box_face    = "#FFFFFF"
-    box_edge    = "#C7CDD4"
-    check_color = ELEMENT_COLORS["points"]
+    # Access internals
+    rects  = getattr(cb, "rectangles", getattr(cb, "_rectangles", []))
+    lines  = getattr(cb, "lines", getattr(cb, "_lines", []))
+    labels = getattr(cb, "labels", getattr(cb, "_labels", []))
 
     for rect in rects:
-        rect.set_facecolor(box_face)
-        rect.set_edgecolor(box_edge)
+        rect.set_facecolor("white")
+        rect.set_edgecolor("#C7CDD4") # Grigio chiaro
         rect.set_linewidth(1.0)
-
+        
     for line in lines:
-        line.set_color(check_color)
-        line.set_linewidth(1.6)
+        line.set_color(ELEMENT_COLORS["points"])
+        line.set_linewidth(1.5)
 
-    # Labels
     for text in labels:
-        text.set_fontsize(9)
+        text.set_fontsize(10)
         text.set_color("#2C3E50")
-
+        text.set_fontweight("medium")
 
 def style_button(btn):
-    """
-    Apply the PharmaScan-ISIS theme to a matplotlib Button widget.
-    """
     btn.color      = "#F4F6F8"
     btn.hovercolor = "#E4E8EC"
     if btn.ax is not None:
@@ -184,5 +175,5 @@ def style_button(btn):
         for spine in btn.ax.spines.values():
             spine.set_visible(False)
             
-    btn.label.set_fontsize(7)
+    btn.label.set_fontsize(8)
     btn.label.set_color("#2C3E50")

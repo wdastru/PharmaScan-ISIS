@@ -88,7 +88,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     group_label=label,
                     group_data=grp_data,
                     visibility=config.get("plot_visibility", get_default_visibility()),
-                    window_title=f"Group {label} – Averaged Difference (da cache)"
+                    window_title=f"Group {label} – Averaged Difference (da cache)",
+                    color=group_color(grp, groups)
                 )
                 
         # ------------------------------------------------------------
@@ -609,7 +610,8 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 group_label=label,
                 group_data=analysis_results[label],
                 visibility=config.get("plot_visibility", get_default_visibility()),
-                window_title=f"Group {label} - Averaged Difference"
+                window_title=f"Group {label} - Averaged Difference",
+                color=group_color(grp, groups)
             )
 
     # ---- Statistics for the groups (mean ± std of per‑folder integrals) ----

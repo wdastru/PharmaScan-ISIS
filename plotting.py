@@ -78,12 +78,14 @@ def plot_z_spectrum(
     
     fig = plt.figure(num=window_title, figsize=(8, 5))
 
-    # Data points
+        # Data points
     if visibility.get("data", True):
         if y_std_data is not None:
-            plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color=data_color, label='Data')
+            plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color=data_color, 
+                         markersize=7, label='Data')
         else:
-            plt.plot(x, y, 'o', color=data_color, label='Data')
+            plt.plot(x, y, 'o', color=data_color, 
+                     markersize=7, label='Data')
                 
     # Spline fit
     if visibility.get("spline", True):
@@ -110,7 +112,8 @@ def plot_z_spectrum(
 
     # Difference curve
     if diff_x is not None and diff_y is not None and visibility.get("difference", True):
-        plt.plot(diff_x, diff_y, '-', color=ELEMENT_COLORS["diff"], linewidth=1.5, label=diff_label)
+        # Usa lo stesso colore della spline/gruppo per coerenza visiva
+        plt.plot(diff_x, diff_y, '-', color=spline_color, linewidth=1.5, label=diff_label)
 
     # Metabolite regions
     if visibility.get("regions", True):
@@ -150,7 +153,7 @@ def plot_spectra(title, spectra_data, visibility=None, window_title=None) -> Fig
     if visibility is None:
         visibility = get_default_visibility()
 
-    fig, ax = plt.subplots(num=window_title, figsize=(16, 8))
+    fig, ax = plt.subplots(num=window_title, figsize=(16, 10))
     ax.invert_xaxis()
     ax.set_xlabel("ppm")
     ax.set_ylabel("Intensity")
@@ -197,8 +200,8 @@ def plot_spectra(title, spectra_data, visibility=None, window_title=None) -> Fig
         style_button(btn_master)
         
         # Column of individual checkboxes
-        ax_check = fig.add_axes([panel_x_start + i*col_w, 0.10, col_w - 0.01, 0.75])
-        
+        ax_check = fig.add_axes([panel_x_start + i*col_w, 0.10, col_w - 0.01, 0.78])
+
         # Forza la rimozione totale degli assi prima di creare i checkbox
         ax_check.set_axis_off()
         
@@ -294,7 +297,7 @@ def plot_groups_comparison(group_stats, p_values, groups,
         # error_kw customizes the error bars to be subtle and themed
         ax.bar(x + offset, means, bar_width, yerr=stds, 
                label=label, color=colors[i], edgecolor='none',
-               error_kw={'ecolor': ELEMENT_COLORS["sd"], 'elinewidth': 1.0, 'capsize': 3})
+               error_kw={'ecolor': '#2C3E50', 'elinewidth': 1.5, 'capsize': 4})
     significance = {0.001: '***', 0.01: '**', 0.05: '*'}
     ref_label = next((grp["label"] for grp in groups if grp.get("is_reference")), None)
     if ref_label and p_values:
@@ -408,20 +411,19 @@ def plot_group_breakdown(group_label, group_stats, per_folder_integrals,
         start_x = x[j] - total_width / 2
         vals = folder_vals.get(reg, [])
 
-        # Barre delle cartelle (no black border)
+        # Barre delle cartelle
         for k, val in enumerate(vals):
             pos = start_x + k * (bar_width + gap_between_bars) + bar_width/2
             ax.bar(pos, val, bar_width,
                    color=folder_colors[k], edgecolor='none',
                    label=folder_names[k] if j == 0 else "")
 
-        # Barra della media (no black border, softer error bars)
+        # Barra della media
         pos_avg = start_x + n_folders * (bar_width + gap_between_bars) + extra_gap_before_avg + avg_bar_width/2
         ax.bar(pos_avg, means[j], avg_bar_width,
                yerr=stds[j], color=color_avg, edgecolor='none',
                label='Media ± SD' if j == 0 else "",
-               error_kw={'ecolor': ELEMENT_COLORS["sd"], 'elinewidth': 1.0, 'capsize': 3})
-
+               error_kw={'ecolor': '#2C3E50', 'elinewidth': 1.5, 'capsize': 4})
     ax.set_xticks(x)
     ax.set_xticklabels(regions, rotation=45, ha='right')
     ax.set_ylabel(ylabel)
@@ -440,6 +442,7 @@ def plot_group_difference(
     group_data: Dict[str, Any],
     visibility: Optional[Dict[str, bool]] = None,
     window_title: Optional[str] = None,
+    color: Optional[str] = None,
 ) -> Figure:
     """
     Plot the group-averaged z-spectrum, Lorentzian envelope, spline fit,
@@ -468,7 +471,7 @@ def plot_group_difference(
             y_pts = np.array(group_data["mean_corrected_at_data"])
             yerr_pts = np.array(group_data["sem_corrected_at_data"])
             ax.errorbar(x_pts, y_pts, yerr=yerr_pts, fmt='o', color=ELEMENT_COLORS["points"],
-                        markersize=6,
+                        markersize=7, capsize=3, elinewidth=1.2,
                         label='Z-spectrum corrected (mean ± SEM)')
         elif "sat_trans_hz" in group_data and "max_vals" in group_data:
             # Fallback: raw mean z-spectrum, uncorrected.
@@ -497,10 +500,12 @@ def plot_group_difference(
     sem_diff = np.array(group_data["sem_diff_y"])
 
     if visibility.get("difference", True):
-        ax.plot(x_common, mean_diff, '-', color=ELEMENT_COLORS["diff"], linewidth=1.5,
+        # Usa il colore del gruppo se fornito, altrimenti il default
+        diff_color = color if color is not None else ELEMENT_COLORS["diff"]
+        ax.plot(x_common, mean_diff, '-', color=diff_color, linewidth=1.5,
                 label='Mean diff (Lor−Spline)')
         ax.fill_between(x_common, mean_diff - sem_diff, mean_diff + sem_diff,
-                        color=ELEMENT_COLORS["diff"], alpha=0.15, label='± SEM')
+                        color=diff_color, alpha=0.15, label='± SEM')
 
     # --- Metabolite regions ---
     if visibility.get("regions", True):
@@ -590,13 +595,16 @@ def plot_all_z_spectra(
         y_pts = grp_data.get("mean_corrected_at_data")
         y_err = grp_data.get("sem_corrected_at_data")
         if x_pts is not None and y_pts is not None:
+            # Assegna un marker diverso a ogni gruppo
+            markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
+            marker_style = markers[groups.index(grp) % len(markers)]
+            
             eb = ax.errorbar(
                 np.asarray(x_pts), np.asarray(y_pts),
                 yerr=np.asarray(y_err) if y_err is not None else None,
-                fmt='o', color=color, markersize=4, alpha=0.5,
-                capsize=2, elinewidth=0.8,
+                fmt=marker_style, color=color, markersize=7, alpha=0.7,
+                capsize=3, elinewidth=1.2
             )
-            _register(label, "points", eb)
 
         # 2) Spline (mean). Carries the per-group label -> main legend.
         sp = grp_data.get("spline_fit_results", {})
@@ -696,10 +704,10 @@ def plot_all_z_spectra(
     n_group = len(group_labels)
 
     right = 0.74
-    cb_style_ax = fig.add_axes([right, 0.50, 0.22, 0.04 * len(style_labels) + 0.03])
+    cb_style_ax = fig.add_axes([right, 0.50, 0.22, 0.05 * len(style_labels) + 0.03])
     cb_style = CheckButtons(cb_style_ax, style_labels, style_init)
 
-    cb_group_ax = fig.add_axes([right, 0.10, 0.22, 0.04 * n_group + 0.03])
+    cb_group_ax = fig.add_axes([right, 0.10, 0.22, 0.05 * n_group + 0.03])
     cb_group = CheckButtons(cb_group_ax, group_labels, [True] * n_group)
 
     _silent = False
