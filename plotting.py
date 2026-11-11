@@ -278,13 +278,23 @@ def plot_groups_comparison(group_stats, p_values, groups,
     # Use group_color so the bar chart respects the same palette
     # (and the reference near-black) as the z-spectra plots.
     colors = [group_color(grp, groups) for grp in groups]
+    # Track the maximum height to add breathing room for p-value asterisks
+    global_y_max = 0.0
     for i, grp in enumerate(groups):
         label = grp["label"]
         means = [group_stats[label]["mean"][reg] for reg in regions]
         stds  = [group_stats[label]["std"][reg] for reg in regions]
         offset = (i - n_groups/2 + 0.5) * bar_width
-        ax.bar(x + offset, means, bar_width, yerr=stds, capsize=4,
-               label=label, color=colors[i], edgecolor='black')
+        
+        # Update global max (mean + error)
+        for m, s in zip(means, stds):
+            global_y_max = max(global_y_max, m + s)
+            
+        # edgecolor='none' removes the thick black border
+        # error_kw customizes the error bars to be subtle and themed
+        ax.bar(x + offset, means, bar_width, yerr=stds, 
+               label=label, color=colors[i], edgecolor='none',
+               error_kw={'ecolor': ELEMENT_COLORS["sd"], 'elinewidth': 1.0, 'capsize': 3})
     significance = {0.001: '***', 0.01: '**', 0.05: '*'}
     ref_label = next((grp["label"] for grp in groups if grp.get("is_reference")), None)
     if ref_label and p_values:
@@ -313,14 +323,18 @@ def plot_groups_comparison(group_stats, p_values, groups,
                 ref_idx = next(k for k, g in enumerate(groups) if g["label"] == ref_label)
                 y_ref = group_stats[ref_label]["mean"][reg] + group_stats[ref_label]["std"][reg]
                 y_this = group_stats[grp["label"]]["mean"][reg] + group_stats[grp["label"]]["std"][reg]
-                y_max = max(y_ref, y_this) * 1.05
+                
+                # Place the asterisk slightly above the highest bar in this cluster
+                y_offset = global_y_max * 0.03
+                y_pos = max(y_ref, y_this) + y_offset
+                
                 x_pos = x[j] + (i - n_groups/2 + 0.5) * bar_width
-                ax.text(x_pos, y_max, txt, ha='center', va='bottom',
-                        fontweight='bold', fontsize=9)
+                ax.text(x_pos, y_pos, txt, ha='center', va='bottom',
+                        fontweight='bold', fontsize=10, color="#2C3E50")
     ax.set_xticks(x)
     ax.set_xticklabels(regions, rotation=45, ha='right')
     ax.set_ylabel(ylabel)
-    ax.set_title(title)
+    ax.set_ylim(0, global_y_max * 1.15)
     if visibility["legend"].get("integrals", True):
         ax.legend()
     ax.grid(False)
@@ -394,19 +408,19 @@ def plot_group_breakdown(group_label, group_stats, per_folder_integrals,
         start_x = x[j] - total_width / 2
         vals = folder_vals.get(reg, [])
 
-        # Barre delle cartelle
+        # Barre delle cartelle (no black border)
         for k, val in enumerate(vals):
             pos = start_x + k * (bar_width + gap_between_bars) + bar_width/2
             ax.bar(pos, val, bar_width,
-                   color=folder_colors[k], edgecolor='black', linewidth=0.5,
+                   color=folder_colors[k], edgecolor='none',
                    label=folder_names[k] if j == 0 else "")
 
-        # Barra della media
+        # Barra della media (no black border, softer error bars)
         pos_avg = start_x + n_folders * (bar_width + gap_between_bars) + extra_gap_before_avg + avg_bar_width/2
         ax.bar(pos_avg, means[j], avg_bar_width,
-               yerr=stds[j], capsize=4,
-               color=color_avg, edgecolor='black', linewidth=0.8,
-               label='Media ± SD' if j == 0 else "")
+               yerr=stds[j], color=color_avg, edgecolor='none',
+               label='Media ± SD' if j == 0 else "",
+               error_kw={'ecolor': ELEMENT_COLORS["sd"], 'elinewidth': 1.0, 'capsize': 3})
 
     ax.set_xticks(x)
     ax.set_xticklabels(regions, rotation=45, ha='right')
