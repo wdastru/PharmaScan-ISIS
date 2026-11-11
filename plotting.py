@@ -142,42 +142,62 @@ def plot_z_spectrum(
     plt.show(block=False)
     return fig
 
-def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None, window_title=None) -> Figure:
+def plot_spectra(title, spectra_data, visibility=None, window_title=None) -> Figure:
+    """
+    Plot multiple 1D spectra on a single figure with interactive checkboxes.
+
+    Parameters
+    ----------
+    spectra_data : list of dict
+        Each dict has keys:
+          * 'ppm_axis'  : np.ndarray
+          * 'spectrum'  : np.ndarray (complex or real)
+          * 'label'     : str (used as checkbox label)
+    """
+    if visibility is None:
+        visibility = get_default_visibility()
+
     fig, ax = plt.subplots(num=window_title, figsize=(12, 6))
-    lines:List[Line2D] = []
-    labels = []
-    for exp_idx in range(n_exp):
-        line: Line2D = ax.plot(ppm_axis, np.real(spectra[exp_idx]),
-                        label=f"{exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}",
-                        alpha=0.7, linewidth=1.2)[0]
+    lines: List[Line2D] = []
+    labels: List[str] = []
+
+    for item in spectra_data:
+        ppm_axis = item['ppm_axis']
+        spectrum = item['spectrum']
+        label = item['label']
+        
+        line: Line2D = ax.plot(ppm_axis, np.real(spectrum),
+                               label=label, alpha=0.7, linewidth=1.2)[0]
         lines.append(line)
-        labels.append(line.get_label())
+        labels.append(label)
+
     ax.invert_xaxis()
     ax.set_xlabel("ppm")
     ax.set_ylabel("Intensity")
     ax.grid(False)
     ax.set_title(title)
+
     rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])
     visibility_states: List = [line.get_visible() for line in lines]
     checks = CheckButtons(rax, labels, visibility_states)
     _silent_update = False   # flag to block callback during programmatic changes
 
     def _on_check(label):
-        nonlocal _silent_update          # needed because we're in a nested function
+        nonlocal _silent_update
         if _silent_update:
-            return                        # skip if we're doing a programmatic update
+            return
         idx = labels.index(label)
         lines[idx].set_visible(not lines[idx].get_visible())
         fig.canvas.draw_idle()
 
     def _check_all(event):
         nonlocal _silent_update
-        _silent_update = True             # block callbacks
+        _silent_update = True
         for i, line in enumerate(lines):
             if not line.get_visible():
                 line.set_visible(True)
                 checks.set_active(i, True)
-        _silent_update = False            # re-enable
+        _silent_update = False
         fig.canvas.draw_idle()
 
     def _uncheck_all(event):
@@ -198,17 +218,12 @@ def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None,
     btn_none = Button(ax_none, "Uncheck all")
     btn_none.on_clicked(_uncheck_all)
     fig.tight_layout(rect=[0, 0, 0.80, 1])
-    # Keep strong references to the widgets on the figure itself.
-    # Without this, `checks`, `btn_all`, and `btn_none` are only referenced
-    # by local variables; once this function returns they get garbage
-    # collected, their callbacks are disconnected, and the checkboxes/
-    # buttons stop responding even though they're still visible on screen.
-    fig._widgets = (checks, btn_all, btn_none)
 
-     # Apply the global widget theme (defined in theme.py)
+    fig._widgets = (checks, btn_all, btn_none)
     style_checkbuttons(checks)
     style_button(btn_all)
     style_button(btn_none)
+
     plt.show(block=False)
     return fig
 
