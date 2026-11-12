@@ -110,7 +110,7 @@ def plot_z_spectrum(
         A = lorentzian_envelope_results.get("A")
         gamma = lorentzian_envelope_results.get("gamma")
         y_lor = lorentzian_envelope_results["y"]
-        plt.plot(x_fit, y_lor, 'g--', color=ELEMENT_COLORS["lorentzian"], linewidth=2,
+        plt.plot(x_fit, y_lor, '--', color=ELEMENT_COLORS["lorentzian"], linewidth=2,
                 label=f'Lorentzian (A={A:.3f}, γ={gamma:.3f})')
 
     # Sigmoid envelope: usa x_fit, non sigmoidal_envelope_results["x"].
