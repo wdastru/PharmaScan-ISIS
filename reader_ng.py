@@ -111,7 +111,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     group_data=gd["summary"],
                     visibility=config.get("plot_visibility", get_default_visibility()),
                     window_title=f"Group {label} – Averaged Difference (da cache)",
-                    color=group_color(grp, groups)
+                    color=group_color(label=label, all_groups=groups)
                 )
 
         # 2. Z-spectra per esperimento
@@ -133,7 +133,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                         diff_y=res["diff_y"],
                         diff_label="Lorentzian envelope - Spline fit",
                         visibility=config.get("plot_visibility", get_default_visibility()),
-                        color=group_color(groups[grp_idx], groups),
+                        color=group_color(label=label, all_groups=groups),
                         window_title=f"Spline fit: {key} (da cache)"
                     )
 
@@ -176,7 +176,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # ------------------------------------------------------------
         title_zs = "All groups - Averaged Difference (da cache)"
         plot_all_z_spectra(
-            groups=groups,
+            all_groups=groups,
             analysis_results=analysis_results,
             visibility=config.get("plot_visibility", get_default_visibility()),
             title=title_zs,
@@ -307,7 +307,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_y=res["diff_y"],
                     diff_label="Lorentzian envelope - Spline fit",
                     visibility=config.get("plot_visibility", get_default_visibility()),
-                    color=group_color(grp, groups),
+                    color=group_color(label=label, all_groups=groups),
                     window_title=f" {label}: spline fit for {folder_name_short}"
                 )
             
@@ -428,7 +428,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_y=res["diff_y"],
                     diff_label="Lorentzian envelope - Spline fit",
                     visibility=config.get("plot_visibility", get_default_visibility()),
-                    color=group_color(grp, groups),
+                    color=group_color(label=label, all_groups=groups),
                     window_title=f" {label}: spline fit for {folder_name_short}"
                 )
             
@@ -506,7 +506,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     diff_y=res["diff_y"],
                     diff_label="Lorentzian envelope - Spline fit",
                     visibility=config.get("plot_visibility", get_default_visibility()),
-                    color=group_color(grp, groups),
+                    color=group_color(label=label, all_groups=groups),
                     window_title=f"{label}: spline fit for file {key}"
                 )
 
@@ -557,7 +557,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 group_data=groups_data[label]["summary"],
                 visibility=config.get("plot_visibility", get_default_visibility()),
                 window_title=f"Group {label} - Averaged Difference",
-                color=group_color(grp, groups)
+                color=group_color(label=label, all_groups=groups)
             )
 
     # ------------------------------------------------------------------

@@ -21,27 +21,40 @@ from theme import (
     style_button,
 )
 
-def group_color(group, all_groups):
+def group_color(label, all_groups):
     """
     Consistent color for each group.
+
+    Parameters
+    ----------
+    label : str
+        Label of the group (must appear in `all_groups`).
+    all_groups : list of dict
+        Full list of group dicts. Used both to detect the reference group
+        and to compute the index of this group among the non-reference ones.
 
     Reference: REFERENCE_COLOR (near-black).
     Non-reference samples cycle through BIO_PALETTE (muted pastel tones,
     BioRender-style) defined in theme.py.
 
-    If a group is not found in the list (e.g. when called outside a full
-    groups list), the first palette color is returned as a safe fallback.
+    Raises
+    ------
+    KeyError
+        If `label` does not match any group in `all_groups`.
     """
-    if group.get("is_reference", False):
+    grp = next((g for g in all_groups if g["label"] == label), None)
+    if grp is None:
+        raise KeyError(f"Unknown group label: {label!r}")
+
+    if grp.get("is_reference", False):
         return REFERENCE_COLOR
 
     non_refs = [g for g in all_groups if not g.get("is_reference", False)]
-    idx = 0
-    for k, g in enumerate(non_refs):
-        if g is group or g.get("label") == group.get("label"):
-            idx = k
-            break
+    idx = next(i for i, g in enumerate(non_refs) if g["label"] == label)
 
+    # Cycle through the palette: groups beyond len(BIO_PALETTE) reuse colors
+    # from the start instead of raising IndexError. Predictable and visually
+    # acceptable, since >10 non-reference groups is rare in practice.
     return BIO_PALETTE[idx % len(BIO_PALETTE)]
 
 def plot_z_spectrum(
@@ -279,7 +292,7 @@ def plot_groups_comparison(group_stats, p_values, groups,
     fig, ax = plt.subplots(num=window_title, figsize=figsize)
     # Use group_color so the bar chart respects the same palette
     # (and the reference near-black) as the z-spectra plots.
-    colors = [group_color(grp, groups) for grp in groups]
+    colors = [group_color(grp["label"], groups) for grp in groups]
     # Track the maximum height to add breathing room for p-value asterisks
     global_y_max = 0.0
     for i, grp in enumerate(groups):
@@ -569,7 +582,7 @@ def plot_all_z_spectra(
 
     for grp in groups:
         label = grp["label"]
-        color = group_color(grp, groups)
+        color = group_color(label=label, all_groups=groups)
         grp_data = (
             analysis_results.get("groups", {})
                         .get(label, {})
