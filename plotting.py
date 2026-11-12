@@ -78,12 +78,14 @@ def plot_z_spectrum(
     
     fig = plt.figure(num=window_title, figsize=(8, 5))
 
-    # Data points
+        # Data points
     if visibility.get("data", True):
         if y_std_data is not None:
-            plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color=data_color, label='Data')
+            plt.errorbar(x, y, yerr=np.array(y_std_data), fmt='o', color=data_color, 
+                         markersize=7, label='Data')
         else:
-            plt.plot(x, y, 'o', color=data_color, label='Data')
+            plt.plot(x, y, 'o', color=data_color, 
+                     markersize=7, label='Data')
                 
     # Spline fit
     if visibility.get("spline", True):
@@ -110,7 +112,7 @@ def plot_z_spectrum(
     # Difference curve
     if diff_y is not None and visibility.get("difference", True):
         x_diff = diff_x if diff_x is not None else x_fit
-        plt.plot(x_diff, diff_y, '-', color=ELEMENT_COLORS["diff"], linewidth=1.5, label=diff_label)
+        plt.plot(x_diff, diff_y, '-', color=ELEMENT_COLORS["spline"], linewidth=1.5, label=diff_label)
 
     # Metabolite regions
     if visibility.get("regions", True):
@@ -142,73 +144,119 @@ def plot_z_spectrum(
     plt.show(block=False)
     return fig
 
-def plot_spectra(title, spectra, n_exp, ppm_axis, sat_trans_hz, visibility=None, window_title=None) -> Figure:
-    fig, ax = plt.subplots(num=window_title, figsize=(12, 6))
-    lines:List[Line2D] = []
-    labels = []
-    for exp_idx in range(n_exp):
-        line: Line2D = ax.plot(ppm_axis, np.real(spectra[exp_idx]),
-                        label=f"{exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}",
-                        alpha=0.7, linewidth=1.2)[0]
-        lines.append(line)
-        labels.append(line.get_label())
+def plot_spectra(title, spectra_data, visibility=None, window_title=None) -> Figure:
+    """
+    Plot multiple 1D spectra grouped by experiment (folder).
+    Each experiment gets its own column of checkboxes and a master toggle button.
+    """
+    if visibility is None:
+        visibility = get_default_visibility()
+
+    fig, ax = plt.subplots(num=window_title, figsize=(16, 10))
     ax.invert_xaxis()
     ax.set_xlabel("ppm")
     ax.set_ylabel("Intensity")
     ax.grid(False)
     ax.set_title(title)
-    rax = fig.add_axes([0.80, 0.15, 0.19, 0.70])
-    visibility_states: List = [line.get_visible() for line in lines]
-    checks = CheckButtons(rax, labels, visibility_states)
-    _silent_update = False   # flag to block callback during programmatic changes
 
-    def _on_check(label):
-        nonlocal _silent_update          # needed because we're in a nested function
-        if _silent_update:
-            return                        # skip if we're doing a programmatic update
-        idx = labels.index(label)
-        lines[idx].set_visible(not lines[idx].get_visible())
-        fig.canvas.draw_idle()
+    _silent_update = False
+    all_lines = []
 
-    def _check_all(event):
-        nonlocal _silent_update
-        _silent_update = True             # block callbacks
-        for i, line in enumerate(lines):
-            if not line.get_visible():
-                line.set_visible(True)
-                checks.set_active(i, True)
-        _silent_update = False            # re-enable
-        fig.canvas.draw_idle()
+    # 1. Plot all lines and store references
+    for exp in spectra_data:
+        exp_name = exp['name']
+        for spec in exp['spectra']:
+            line, = ax.plot(spec['ppm_axis'], np.real(spec['spectrum']),
+                            label=f"{exp_name} | {spec['label']}", alpha=0.7, linewidth=1.2)
+            all_lines.append({'line': line, 'exp_name': exp_name, 'label': spec['label']})
 
-    def _uncheck_all(event):
-        nonlocal _silent_update
-        _silent_update = True
-        for i, line in enumerate(lines):
-            if line.get_visible():
-                line.set_visible(False)
-                checks.set_active(i, False)
-        _silent_update = False
-        fig.canvas.draw_idle()
+    n_exp = len(spectra_data)
+    if n_exp == 0:
+        plt.show(block=False)
+        return fig
 
-    checks.on_clicked(_on_check)
-    ax_all = fig.add_axes([0.80, 0.90, 0.09, 0.05])
-    btn_all = Button(ax_all, "Check all")
-    btn_all.on_clicked(_check_all)
-    ax_none = fig.add_axes([0.90, 0.90, 0.09, 0.05])
-    btn_none = Button(ax_none, "Uncheck all")
-    btn_none.on_clicked(_uncheck_all)
-    fig.tight_layout(rect=[0, 0, 0.80, 1])
-    # Keep strong references to the widgets on the figure itself.
-    # Without this, `checks`, `btn_all`, and `btn_none` are only referenced
-    # by local variables; once this function returns they get garbage
-    # collected, their callbacks are disconnected, and the checkboxes/
-    # buttons stop responding even though they're still visible on screen.
-    fig._widgets = (checks, btn_all, btn_none)
+    # 2. Layout parameters for the UI panel
+    panel_x_start = 0.76
+    panel_width = 0.23
+    col_w = panel_width / n_exp
+    
+    widgets_to_keep = []
 
-     # Apply the global widget theme (defined in theme.py)
-    style_checkbuttons(checks)
-    style_button(btn_all)
-    style_button(btn_none)
+    # 3. Create columns for each experiment
+    for i, exp in enumerate(spectra_data):
+        exp_name = exp['name']
+        spec_labels = [s['label'] for s in exp['spectra']]
+        
+        # Truncate long folder names so they fit in the narrow column
+        display_name = exp_name if len(exp_name) <= 16 else exp_name[:13] + "…"
+        
+        # Master toggle button: uses the folder name as label.
+        # Clicking it toggles the entire column.
+        ax_master = fig.add_axes([panel_x_start + i*col_w, 0.90, col_w - 0.01, 0.05])
+        ax_master.set_axis_off()
+        btn_master = Button(ax_master, display_name)
+        btn_master.label.set_fontsize(7)  # Smaller font to fit the name
+        style_button(btn_master)
+        
+        # Column of individual checkboxes
+        ax_check = fig.add_axes([panel_x_start + i*col_w, 0.10, col_w - 0.01, 0.78])
+
+        # Forza la rimozione totale degli assi prima di creare i checkbox
+        ax_check.set_axis_off()
+        
+        cb = CheckButtons(ax_check, spec_labels, [True] * len(spec_labels))
+        style_checkbuttons(cb)
+        
+        widgets_to_keep.extend([btn_master, cb])
+
+        # Lines belonging to this specific experiment
+        exp_lines = [l for l in all_lines if l['exp_name'] == exp_name]
+
+        # Callback for individual checkboxes
+        def make_on_check(cb_widget, exp_lines):
+            def _on_check(label):
+                nonlocal _silent_update
+                if _silent_update: return
+                for item in exp_lines:
+                    if item['label'] == label:
+                        item['line'].set_visible(not item['line'].get_visible())
+                        break
+                fig.canvas.draw_idle()
+            return _on_check
+
+        cb.on_clicked(make_on_check(cb, exp_lines))
+
+        # Callback for the master "Toggle Col" button
+        def make_on_master(cb_widget, exp_lines):
+            def _on_master(event):
+                nonlocal _silent_update
+                if _silent_update: return
+                _silent_update = True
+                
+                # If any is visible, hide all. Else show all.
+                any_visible = any(l['line'].get_visible() for l in exp_lines)
+                target = not any_visible
+
+                # Get labels safely across matplotlib versions
+                labels = getattr(cb_widget, 'labels', getattr(cb_widget, '_labels', []))
+                label_texts = [t.get_text() for t in labels]
+
+                for l in exp_lines:
+                    l['line'].set_visible(target)
+                    if l['label'] in label_texts:
+                        idx = label_texts.index(l['label'])
+                        if cb_widget.get_status()[idx] != target:
+                            cb_widget.set_active(idx)
+                
+                _silent_update = False
+                fig.canvas.draw_idle()
+            return _on_master
+
+        btn_master.on_clicked(make_on_master(cb, exp_lines))
+
+    # Final layout adjustments
+    fig.subplots_adjust(left=0.06, right=panel_x_start - 0.01, top=0.95, bottom=0.08)
+    fig._widgets = tuple(widgets_to_keep)
     plt.show(block=False)
     return fig
 
@@ -232,13 +280,23 @@ def plot_groups_comparison(group_stats, p_values, groups,
     # Use group_color so the bar chart respects the same palette
     # (and the reference near-black) as the z-spectra plots.
     colors = [group_color(grp, groups) for grp in groups]
+    # Track the maximum height to add breathing room for p-value asterisks
+    global_y_max = 0.0
     for i, grp in enumerate(groups):
         label = grp["label"]
         means = [group_stats[label]["integrals_mean"][reg] for reg in regions]
         stds  = [group_stats[label]["integrals_std"][reg]  for reg in regions]
         offset = (i - n_groups/2 + 0.5) * bar_width
-        ax.bar(x + offset, means, bar_width, yerr=stds, capsize=4,
-               label=label, color=colors[i], edgecolor='black')
+        
+        # Update global max (mean + error)
+        for m, s in zip(means, stds):
+            global_y_max = max(global_y_max, m + s)
+            
+        # edgecolor='none' removes the thick black border
+        # error_kw customizes the error bars to be subtle and themed
+        ax.bar(x + offset, means, bar_width, yerr=stds, 
+               label=label, color=colors[i], edgecolor='none',
+               error_kw={'ecolor': '#2C3E50', 'elinewidth': 1.5, 'capsize': 4})
     significance = {0.001: '***', 0.01: '**', 0.05: '*'}
     ref_label = next((grp["label"] for grp in groups if grp.get("is_reference")), None)
     if ref_label and p_values:
@@ -270,13 +328,16 @@ def plot_groups_comparison(group_stats, p_values, groups,
                 y_this = (group_stats[grp["label"]]["integrals_mean"][reg]
                           + group_stats[grp["label"]]["integrals_std"][reg])                
                 y_max = max(y_ref, y_this) * 1.05
+                # Place the asterisk slightly above the highest bar in this cluster
+                y_offset = global_y_max * 0.03
+                y_pos = max(y_ref, y_this) + y_offset
                 x_pos = x[j] + (i - n_groups/2 + 0.5) * bar_width
-                ax.text(x_pos, y_max, txt, ha='center', va='bottom',
-                        fontweight='bold', fontsize=9)
+                ax.text(x_pos, y_pos, txt, ha='center', va='bottom',
+                        fontweight='bold', fontsize=10, color="#2C3E50")
     ax.set_xticks(x)
     ax.set_xticklabels(regions, rotation=45, ha='right')
     ax.set_ylabel(ylabel)
-    ax.set_title(title)
+    ax.set_ylim(0, global_y_max * 1.15)
     if visibility["legend"].get("integrals", True):
         ax.legend()
     ax.grid(False)
@@ -354,16 +415,15 @@ def plot_group_breakdown(group_label, group_stats, per_folder_integrals,
         for k, val in enumerate(vals):
             pos = start_x + k * (bar_width + gap_between_bars) + bar_width/2
             ax.bar(pos, val, bar_width,
-                   color=folder_colors[k], edgecolor='black', linewidth=0.5,
+                   color=folder_colors[k], edgecolor='none',
                    label=folder_names[k] if j == 0 else "")
 
         # Barra della media
         pos_avg = start_x + n_folders * (bar_width + gap_between_bars) + extra_gap_before_avg + avg_bar_width/2
         ax.bar(pos_avg, means[j], avg_bar_width,
-               yerr=stds[j], capsize=4,
-               color=color_avg, edgecolor='black', linewidth=0.8,
-               label='Media ± SD' if j == 0 else "")
-
+               yerr=stds[j], color=color_avg, edgecolor='none',
+               label='Media ± SD' if j == 0 else "",
+               error_kw={'ecolor': '#2C3E50', 'elinewidth': 1.5, 'capsize': 4})
     ax.set_xticks(x)
     ax.set_xticklabels(regions, rotation=45, ha='right')
     ax.set_ylabel(ylabel)
@@ -382,6 +442,7 @@ def plot_group_difference(
     group_data: Dict[str, Any],
     visibility: Optional[Dict[str, bool]] = None,
     window_title: Optional[str] = None,
+    color: Optional[str] = None,
 ) -> Figure:
     if visibility is None:
         visibility = get_default_visibility()
@@ -403,7 +464,7 @@ def plot_group_difference(
             y_pts   = np.array(group_data["y_corrected_at_data_mean"])
             yerr_pts = np.array(group_data["y_corrected_at_data_sem"])
             ax.errorbar(x_pts, y_pts, yerr=yerr_pts, fmt='o', color=ELEMENT_COLORS["points"],
-                        markersize=6,
+                        markersize=7, capsize=3, elinewidth=1.2,
                         label='Z-spectrum corrected (mean ± SEM)')
         elif "x_raw_mean_hz" in group_data and "y_raw_mean" in group_data:
             raw_ppm = np.array(group_data["x_raw_mean_hz"]) / group_data["bf1"]
@@ -530,13 +591,16 @@ def plot_all_z_spectra(
         y_pts = grp_data.get("y_corrected_at_data_mean")
         y_err = grp_data.get("y_corrected_at_data_sem")
         if x_pts is not None and y_pts is not None:
+            # Assegna un marker diverso a ogni gruppo
+            markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
+            marker_style = markers[groups.index(grp) % len(markers)]
+            
             eb = ax.errorbar(
                 np.asarray(x_pts), np.asarray(y_pts),
                 yerr=np.asarray(y_err) if y_err is not None else None,
-                fmt='o', color=color, markersize=4, alpha=0.5,
-                capsize=2, elinewidth=0.8,
+                fmt=marker_style, color=color, markersize=7, alpha=0.7,
+                capsize=3, elinewidth=1.2
             )
-            _register(label, "points", eb)
 
         # 2) Spline (media)
         sp = grp_data.get("spline_fit_results", {})
@@ -636,10 +700,10 @@ def plot_all_z_spectra(
     n_group = len(group_labels)
 
     right = 0.74
-    cb_style_ax = fig.add_axes([right, 0.50, 0.22, 0.04 * len(style_labels) + 0.03])
+    cb_style_ax = fig.add_axes([right, 0.50, 0.22, 0.05 * len(style_labels) + 0.03])
     cb_style = CheckButtons(cb_style_ax, style_labels, style_init)
 
-    cb_group_ax = fig.add_axes([right, 0.10, 0.22, 0.04 * n_group + 0.03])
+    cb_group_ax = fig.add_axes([right, 0.10, 0.22, 0.05 * n_group + 0.03])
     cb_group = CheckButtons(cb_group_ax, group_labels, [True] * n_group)
 
     _silent = False

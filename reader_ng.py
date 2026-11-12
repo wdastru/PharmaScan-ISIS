@@ -111,6 +111,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     group_data=gd["summary"],
                     visibility=config.get("plot_visibility", get_default_visibility()),
                     window_title=f"Group {label} – Averaged Difference (da cache)",
+                    color=group_color(grp, groups)
                 )
 
         # 2. Z-spectra per esperimento
@@ -199,6 +200,9 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
 
         # ---------- PV (Paravision Bruker) ----------
         if source_type == "pv":
+
+            folders = entries
+            group_spectra_to_plot = []  # Accumulator for this group's spectra
             for folder in entries:
                 base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
                 folder_name_short = base_name
@@ -231,15 +235,28 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
 
                 spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
-                plot_spectra(
-                    title=f"{label} - {folder_name_short}",
-                    spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
-                    sat_trans_hz=sat_trans_hz,
-                    visibility=config.get("plot_visibility", get_default_visibility()),
-                    window_title=f"{label}: Spectra  for {folder_name_short}",
-                )
-
-                if ppm_missing and grp_idx == 0 and folder == entries[0]:
+                
+                # Accumulate for the group-level plot
+                current_exp_spectra = []
+                for exp_idx in range(n_exp):
+                    current_exp_spectra.append({
+                        'ppm_axis': ppm_axis,
+                        'spectrum': spectra[exp_idx],
+                        'label': f"{exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}"
+                    })
+                group_spectra_to_plot.append({
+                    'name': folder_name_short,
+                    'spectra': current_exp_spectra
+                })
+                if ppm_missing and grp_idx == 0 and folder == folders[0]:
+                    # Show a temporary plot of the first folder so the user
+                    # can select the ppm range interactively.
+                    plot_spectra(
+                        title=f"{label} - Select ppm range",
+                        spectra_data=group_spectra_to_plot,
+                        visibility=config.get("plot_visibility", get_default_visibility()),
+                        window_title=f"{label}: Select ppm range"
+                    )
                     plt.pause(0.05)
                     start_ppm, end_ppm = ask_user_for_ppm_range()
                     config["start_ppm"] = start_ppm
@@ -293,10 +310,19 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     color=group_color(grp, groups),
                     window_title=f" {label}: spline fit for {folder_name_short}"
                 )
-
-        # ---------- TS (TopSpin Bruker) ----------
-        elif source_type == "ts":
-            for folder in entries:
+            
+            # After all folders of this PV group, plot all spectra together
+            if group_spectra_to_plot:
+                plot_spectra(
+                    title=f"{label} - All Spectra",
+                    spectra_data=group_spectra_to_plot,
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f"{label}: All Spectra"
+                )
+        elif source_type == "ts":   # Topspin BRUKER data
+            folders = entries
+            group_spectra_to_plot = []  # Accumulator for this group's spectra
+            for folder in folders:
                 base_name = f"{folder.parent.name[:12]}…{folder.parent.name[-12:]}-{folder.stem}"
                 folder_name_short = base_name
                 counter = 1
@@ -331,15 +357,29 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 dic, data, uc, ppm_axis, n_exp, bf1 = load_spectra(folder)
 
                 spectra = process_spectra(data, dic, n_exp, lb_Hz=lb_Hz)
-                plot_spectra(
-                    title=f"{label} - {folder_name_short}",
-                    spectra=spectra, n_exp=n_exp, ppm_axis=ppm_axis,
-                    sat_trans_hz=sat_trans_hz,
-                    visibility=config.get("plot_visibility", get_default_visibility()),
-                    window_title=f"{label}: Spectra  for {folder_name_short}",
-                )
+                
+                # Accumulate for the group-level plot
+                current_exp_spectra = []
+                for exp_idx in range(n_exp):
+                    current_exp_spectra.append({
+                        'ppm_axis': ppm_axis,
+                        'spectrum': spectra[exp_idx],
+                        'label': f"{exp_idx:>2} : {sat_trans_hz[exp_idx]:.2f}"
+                    })
+                group_spectra_to_plot.append({
+                    'name': folder_name_short,
+                    'spectra': current_exp_spectra
+                })
 
-                if ppm_missing and grp_idx == 0 and folder == entries[0]:
+                if ppm_missing and grp_idx == 0 and folder == folders[0]:
+                    # Show a temporary plot of the first folder so the user
+                    # can select the ppm range interactively.
+                    plot_spectra(
+                        title=f"{label} - Select ppm range",
+                        spectra_data=group_spectra_to_plot,
+                        visibility=config.get("plot_visibility", get_default_visibility()),
+                        window_title=f"{label}: Select ppm range"
+                    )
                     plt.pause(0.05)
                     start_ppm, end_ppm = ask_user_for_ppm_range()
                     config["start_ppm"] = start_ppm
@@ -393,10 +433,18 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                     color=group_color(grp, groups),
                     window_title=f" {label}: spline fit for {folder_name_short}"
                 )
-
-        # ---------- Text files ----------
-        else:  # source_type == "text"
-            for file_idx, folder in enumerate(entries):
+            
+            # After all folders of this TS group, plot all spectra together
+            if group_spectra_to_plot:
+                plot_spectra(
+                    title=f"{label} - All Spectra",
+                    spectra_data=group_spectra_to_plot,
+                    visibility=config.get("plot_visibility", get_default_visibility()),
+                    window_title=f"{label}: All Spectra"
+                )
+        else:   # source_type == "text": txt data files (sat_trans_hz vs max_vals)
+            files = entries
+            for file_idx, folder in enumerate(files):
                 base_name = folder.stem
                 key = base_name
                 counter = 1
@@ -511,6 +559,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 group_data=groups_data[label]["summary"],
                 visibility=config.get("plot_visibility", get_default_visibility()),
                 window_title=f"Group {label} - Averaged Difference",
+                color=group_color(grp, groups)
             )
 
     # ------------------------------------------------------------------
