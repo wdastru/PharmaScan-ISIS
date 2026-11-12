@@ -176,7 +176,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
         # ------------------------------------------------------------
         title_zs = "All groups - Averaged Difference (da cache)"
         plot_all_z_spectra(
-            all_groups=groups,
+            groups=groups,
             analysis_results=analysis_results,
             visibility=config.get("plot_visibility", get_default_visibility()),
             title=title_zs,
@@ -632,7 +632,7 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
     save_cache(config_name, config, analysis_results)
     save_analysis_results(analysis_results=analysis_results, config_name=config_name)
 
-    print("\nTutti i grafici sono stati creati. Premi Invio per uscire.")
+    print("Press Enter to exit...")
     input()
     plt.close("all")
 

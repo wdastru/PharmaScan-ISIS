@@ -8,12 +8,14 @@ import hashlib
 import os
 from pathlib import Path
 from typing import Optional, Dict, Any
+import copy
 
 from joblib import dump, load
 from termcolor import colored
 
 from constants import CACHE_DIR, CACHE_VERSION
 from config import METABOLITE_REGIONS
+from export import dedup_x
 
 def _cache_path(config_name: str, config: Dict[str, Any]) -> Path:
     # Se il nome è vuoto (nessuna configurazione salvata), usa un hash
@@ -81,6 +83,12 @@ def load_cache(config_name: str, config: Dict[str, Any]) -> Optional[dict]:
 
 def save_cache(config_name: str, config: Dict[str, Any], analysis_results: dict) -> None:
     cache_path = _cache_path(config_name, config)
-    payload = {"key": _build_cache_key(config), "analysis_results": analysis_results}
+    # Deduplicate before writing so the cache has the same schema as
+    # save_analysis_results (fit_x present, "x"/"x_fit"/"diff_x" removed).
+    # Work on a copy: analysis_results in memory is still needed by the
+    # live branch and must stay un-deduplicated.
+    payload_ar = copy.deepcopy(analysis_results)
+    dedup_x(payload_ar)
+    payload = {"key": _build_cache_key(config), "analysis_results": payload_ar}
     dump(payload, cache_path, compress=3)
     print(f"Cache salvata per '{config_name}' in {cache_path.name}")
