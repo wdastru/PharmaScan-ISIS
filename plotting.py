@@ -118,14 +118,18 @@ def plot_z_spectrum(
     if visibility.get("regions", True):
         ax = plt.gca()
         cmap = plt.get_cmap('tab10')
-        colors = [cmap(i % 10) for i in range(len(METABOLITE_REGIONS))]
         for idx, (name, region) in enumerate(METABOLITE_REGIONS.items()):
             if region["ppm"] is not None and len(region["ppm"]) == 2:
                 start, end = region["ppm"]
-                ax.axvspan(start, end, facecolor=colors[idx], alpha=0.25, edgecolor='none', label=name)
+                ax.axvspan(start, end, facecolor=cmap(idx % 10), 
+                           alpha=0.15, edgecolor='none')
+                
+                # Testo in diagonale SOTTO l'asse X
+                ax.text((start + end) / 2, -0.06, name,
+                        ha='center', va='top', rotation=45,
+                        fontsize=10, fontweight='bold', color="#000000",
+                        alpha=0.9, transform=ax.get_xaxis_transform())
             else:
-                # Do not terminate the whole application from a plotting
-                # helper: skip the malformed region and keep drawing the rest.
                 print(colored(
                     f"Warning: region '{name}' is not defined properly; skipping.",
                     "yellow"
@@ -333,7 +337,7 @@ def plot_groups_comparison(group_stats, p_values, groups,
                 y_pos = max(y_ref, y_this) + y_offset
                 x_pos = x[j] + (i - n_groups/2 + 0.5) * bar_width
                 ax.text(x_pos, y_pos, txt, ha='center', va='bottom',
-                        fontweight='bold', fontsize=10, color="#2C3E50")
+                        fontweight='bold', fontsize=10, color="#000000")
     ax.set_xticks(x)
     ax.set_xticklabels(regions, rotation=45, ha='right')
     ax.set_ylabel(ylabel)
@@ -444,8 +448,17 @@ def plot_group_difference(
     window_title: Optional[str] = None,
     color: Optional[str] = None,
 ) -> Figure:
+    """
+    Plot the group-averaged z-spectrum, Lorentzian envelope, spline fit,
+    and mean difference curve ± SEM, all on the common ppm grid.
+    
+    Uses the group's specific color for all elements to maintain visual coherence.
+    """
     if visibility is None:
         visibility = get_default_visibility()
+
+    # Usa il colore del gruppo per TUTTO il grafico. Se non fornito, usa lo slate di default.
+    c = color if color is not None else ELEMENT_COLORS["points"]
 
     fig, ax = plt.subplots(num=window_title, figsize=(8, 5))
 
@@ -470,20 +483,21 @@ def plot_group_difference(
             raw_ppm = np.array(group_data["x_raw_mean_hz"]) / group_data["bf1"]
             raw_vals = np.array(group_data["y_raw_mean"])
             raw_sd = np.array(group_data.get("y_raw_sd", [0] * len(raw_vals)))
-            ax.errorbar(raw_ppm, raw_vals, yerr=raw_sd, fmt='o', color=ELEMENT_COLORS["points"],
+            ax.errorbar(x=raw_ppm, y=raw_vals, yerr=raw_sd, fmt='o', color=ELEMENT_COLORS["points"],
+                        markersize=7, capsize=3, elinewidth=1.2,
                         label='Raw mean (uncorrected)')
 
-    # --- Spline fit (mean of per-replicate splines, on corrected data) ---
+    # --- Spline fit ---
     if visibility.get("spline", True):
         spline_res = group_data.get("spline_fit_results", {})
         if spline_res.get("fit_successful") and spline_res.get("y_fit") is not None:
-            ax.plot(x_fit_ppm, spline_res["y_fit"], '-', color=ELEMENT_COLORS["spline"], linewidth=1.5,
+            ax.plot(x_fit_ppm, spline_res["y_fit"], '-', color=ELEMENT_COLORS["spline"], linewidth=2.0,
                     label=spline_res.get("fit_label", "Spline fit"))
     # --- Lorentzian envelope (mean of per-replicate envelopes) ---
     if visibility.get("lorentzian", True):
         lorentz_res = group_data.get("lorentzian_envelope_results")
         if lorentz_res and lorentz_res.get("y") is not None:
-            ax.plot(x_fit_ppm, lorentz_res["y"], color=ELEMENT_COLORS["lorentzian"],  linewidth=2,
+            ax.plot(x_fit_ppm, lorentz_res["y"], '--', color=ELEMENT_COLORS["lorentzian"],  linewidth=2, alpha=0.7,
                     label=lorentz_res.get("fit_label", "Lorentzian envelope"))
 
     # --- Mean difference curve ± SEM ---
@@ -491,22 +505,26 @@ def plot_group_difference(
     y_diff_sem  = np.array(group_data["y_diff_sem"])
 
     if visibility.get("difference", True):
-        ax.plot(x_fit_ppm, y_diff_mean, color=ELEMENT_COLORS["diff"], linewidth=1.5,
+        ax.plot(x_fit_ppm, y_diff_mean, ':', color=ELEMENT_COLORS["diff"], linewidth=2.0,
                 label='Mean diff (Lor−Spline)')
         ax.fill_between(x_fit_ppm, y_diff_mean - y_diff_sem, y_diff_mean + y_diff_sem,
                         color=ELEMENT_COLORS["diff"], alpha=0.15, label='± SEM')
 
-    # --- Metabolite regions ---
+    # --- Metabolite regions (NO LEGEND ENTRY) ---
     if visibility.get("regions", True):
         cmap = plt.get_cmap('tab10')
         for idx, (name, region) in enumerate(METABOLITE_REGIONS.items()):
             if region["ppm"] is not None and len(region["ppm"]) == 2:
                 start, end = region["ppm"]
                 ax.axvspan(start, end, facecolor=cmap(idx % 10),
-                           alpha=0.25, edgecolor='none', label=name)
+                           alpha=0.15, edgecolor='none')
+                
+                # Testo in diagonale SOTTO l'asse X
+                ax.text((start + end) / 2, -0.06, name,
+                        ha='center', va='top', rotation=45,
+                        fontsize=10, fontweight='bold', color='#000000',
+                        alpha=0.9, transform=ax.get_xaxis_transform())
             else:
-                # Same as plot_z_spectrum: do not abort the app from a
-                # plotting helper. Skip the malformed region.
                 print(colored(
                     f"Warning: region '{name}' is not defined properly; skipping.",
                     "yellow"
@@ -516,10 +534,14 @@ def plot_group_difference(
     ax.invert_xaxis()
     ax.set_xlabel("Saturation ppm")
     ax.set_ylabel("Intensity / Difference")
-    ax.set_title(f"Group {group_label} – Averaged Difference")
+    ax.set_title(f"Group {group_label} – Averaged Difference", color='black', fontweight='bold')
     ax.grid(False)
+    
+    # Sposta la legenda fuori dal grafico in alto a destra per non coprire i dati
     if visibility["legend"].get("z-spectra", True):
-        ax.legend()
+        ax.legend(loc='upper right', bbox_to_anchor=(1.35, 1.0))
+        
+    plt.tight_layout()
     plt.show(block=False)
     return fig
 
@@ -638,8 +660,14 @@ def plot_all_z_spectra(
         if region.get("ppm") and len(region["ppm"]) == 2:
             s, e = region["ppm"]
             p = ax.axvspan(s, e, facecolor=cmap(idx % 10),
-                           alpha=0.15, edgecolor="none")
+                           alpha=0.10, edgecolor="none")
             region_patches.append(p)
+            
+            # Testo in diagonale SOTTO l'asse X
+            ax.text((s + e) / 2, -0.06, name,
+                    ha='center', va='top', rotation=45,
+                    fontsize=10, fontweight='bold', color='#000000',
+                    alpha=0.9, transform=ax.get_xaxis_transform())
 
     ax.invert_xaxis()
     ax.set_xlabel("Saturation ppm")
