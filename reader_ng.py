@@ -333,8 +333,6 @@ def run_analysis(config_name: str, config: Dict[str, Any]) -> None:
                 work_offset_hz = extract_parameters(folder, "acqu2")
                 sat_trans_hz = extract_parameters(folder, "fq2list")
 
-                analysis_results[folder_name_short]["sat_trans_hz"] = sat_trans_hz
-
                 if group_meta[label].get("work_offset_hz") is None:
                     group_meta[label]["work_offset_hz"] = work_offset_hz
                 else:
